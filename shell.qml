@@ -1,6 +1,7 @@
 
 import Quickshell
 import QtQuick
+import qs.config as Config
 
 PanelWindow {
     id: root
@@ -40,26 +41,26 @@ PanelWindow {
         }
 
         height: 70
-        radius: 22
-        color: "#E6161C2D"
+        radius: Config.Theme.radiusPanel
+        color: Config.Theme.surface
         border.width: 1
-        border.color: "#3A3A54"
+        border.color: Config.Theme.border
 
         Rectangle {
             id: emblem
             width: 44
             height: 44
-            radius: 14
+            radius: Config.Theme.radiusEmblem
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
             anchors.leftMargin: 18
-            color: "#EEB7D8"
+            color: Config.Theme.brandAccent
 
             Text {
                 anchors.centerIn: parent
                 text: "✦"
-                color: "#242033"
-                font.pixelSize: 24
+                color: Config.Theme.brandAccentFg
+                font.pixelSize: Config.Theme.fontSizeEmblem
             }
         }
 
@@ -67,20 +68,20 @@ PanelWindow {
             anchors.left: emblem.right
             anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 3
+            spacing: Config.Theme.spacingLeftColumn
 
             Text {
                 text: "GPS"
-                color: "#B9BBD0"
-                font.pixelSize: 10
+                color: Config.Theme.textPrimary
+                font.pixelSize: Config.Theme.fontSizeGps
                 font.bold: true
-                font.letterSpacing: 1.5
+                font.letterSpacing: Config.Theme.letterSpacingGps
             }
 
             Text {
                 text: "Your space. Your rules."
-                color: "#F6F1FA"
-                font.pixelSize: 18
+                color: Config.Theme.textOnAccent
+                font.pixelSize: Config.Theme.fontSizeTagline
                 font.bold: true
             }
         }
@@ -89,21 +90,21 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 2
+            spacing: Config.Theme.spacingRightColumn
 
             Text {
                 anchors.right: parent.right
                 text: root.clockText
-                color: "#F6F1FA"
-                font.pixelSize: 22
+                color: Config.Theme.textOnAccent
+                font.pixelSize: Config.Theme.fontSizeClock
                 font.bold: true
             }
 
             Text {
                 anchors.right: parent.right
                 text: root.dateText
-                color: "#B9BBD0"
-                font.pixelSize: 11
+                color: Config.Theme.textPrimary
+                font.pixelSize: Config.Theme.fontSizeDate
             }
         }
     }
