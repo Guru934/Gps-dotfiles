@@ -17,20 +17,6 @@ PanelWindow {
     color: "transparent"
     exclusiveZone: 0
 
-    property string clockText: Qt.formatTime(new Date(), "hh:mm")
-    property string dateText: Qt.formatDate(new Date(), "ddd, dd MMM")
-
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-
-        onTriggered: {
-            root.clockText = Qt.formatTime(new Date(), "hh:mm")
-            root.dateText = Qt.formatDate(new Date(), "ddd, dd MMM")
-        }
-    }
-
     Rectangle {
         anchors {
             top: parent.top
@@ -54,26 +40,11 @@ PanelWindow {
             anchors.leftMargin: 18
         }
 
-        Column {
+        ClockCard {
+            id: clockCard
             anchors.right: parent.right
             anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingRightColumn
-
-            Text {
-                anchors.right: parent.right
-                text: root.clockText
-                color: Theme.textOnAccent
-                font.pixelSize: Theme.fontSizeClock
-                font.bold: true
-            }
-
-            Text {
-                anchors.right: parent.right
-                text: root.dateText
-                color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeDate
-            }
         }
     }
 }
