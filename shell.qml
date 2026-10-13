@@ -2,6 +2,7 @@
 import Quickshell
 import QtQuick
 import qs.config
+import qs.components
 
 PanelWindow {
     id: root
@@ -46,44 +47,11 @@ PanelWindow {
         border.width: 1
         border.color: Theme.border
 
-        Rectangle {
-            id: emblem
-            width: 44
-            height: 44
-            radius: Theme.radiusEmblem
+        BrandMark {
+            id: brandMark
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
             anchors.leftMargin: 18
-            color: Theme.brandAccent
-
-            Text {
-                anchors.centerIn: parent
-                text: "✦"
-                color: Theme.brandAccentFg
-                font.pixelSize: Theme.fontSizeEmblem
-            }
-        }
-
-        Column {
-            anchors.left: emblem.right
-            anchors.leftMargin: 14
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingLeftColumn
-
-            Text {
-                text: "GPS"
-                color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeGps
-                font.bold: true
-                font.letterSpacing: Theme.letterSpacingGps
-            }
-
-            Text {
-                text: "Your space. Your rules."
-                color: Theme.textOnAccent
-                font.pixelSize: Theme.fontSizeTagline
-                font.bold: true
-            }
         }
 
         Column {
