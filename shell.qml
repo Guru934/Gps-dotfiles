@@ -1,7 +1,7 @@
 
 import Quickshell
 import QtQuick
-import qs.config as Config
+import qs.config
 
 PanelWindow {
     id: root
@@ -41,26 +41,26 @@ PanelWindow {
         }
 
         height: 70
-        radius: Config.Theme.radiusPanel
-        color: Config.Theme.surface
+        radius: Theme.radiusPanel
+        color: Theme.surface
         border.width: 1
-        border.color: Config.Theme.border
+        border.color: Theme.border
 
         Rectangle {
             id: emblem
             width: 44
             height: 44
-            radius: Config.Theme.radiusEmblem
+            radius: Theme.radiusEmblem
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
             anchors.leftMargin: 18
-            color: Config.Theme.brandAccent
+            color: Theme.brandAccent
 
             Text {
                 anchors.centerIn: parent
                 text: "✦"
-                color: Config.Theme.brandAccentFg
-                font.pixelSize: Config.Theme.fontSizeEmblem
+                color: Theme.brandAccentFg
+                font.pixelSize: Theme.fontSizeEmblem
             }
         }
 
@@ -68,20 +68,20 @@ PanelWindow {
             anchors.left: emblem.right
             anchors.leftMargin: 14
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Config.Theme.spacingLeftColumn
+            spacing: Theme.spacingLeftColumn
 
             Text {
                 text: "GPS"
-                color: Config.Theme.textPrimary
-                font.pixelSize: Config.Theme.fontSizeGps
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeGps
                 font.bold: true
-                font.letterSpacing: Config.Theme.letterSpacingGps
+                font.letterSpacing: Theme.letterSpacingGps
             }
 
             Text {
                 text: "Your space. Your rules."
-                color: Config.Theme.textOnAccent
-                font.pixelSize: Config.Theme.fontSizeTagline
+                color: Theme.textOnAccent
+                font.pixelSize: Theme.fontSizeTagline
                 font.bold: true
             }
         }
@@ -90,21 +90,21 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Config.Theme.spacingRightColumn
+            spacing: Theme.spacingRightColumn
 
             Text {
                 anchors.right: parent.right
                 text: root.clockText
-                color: Config.Theme.textOnAccent
-                font.pixelSize: Config.Theme.fontSizeClock
+                color: Theme.textOnAccent
+                font.pixelSize: Theme.fontSizeClock
                 font.bold: true
             }
 
             Text {
                 anchors.right: parent.right
                 text: root.dateText
-                color: Config.Theme.textPrimary
-                font.pixelSize: Config.Theme.fontSizeDate
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeDate
             }
         }
     }
