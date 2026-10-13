@@ -16,7 +16,7 @@ Build a cohesive, polished, keyboard-friendly Wayland desktop experience that fe
 - Rounded cards and balanced negative space; avoid turning the entire screen into cards.
 - Smooth, short transitions. No always-moving animations just for decoration.
 - Clear information hierarchy and consistent iconography / typography.
-- 16:10 canvas first (the laptop's 1920×1200 WUXGA panel), but layouts must adapt to monitor dimensions and scaling.
+- Physical display: 1920×1200 WUXGA at scale 1.5 and 165 Hz. For QML layout planning, use the scaled logical canvas of 1280×800 as the primary target; use physical 1920×1200 only for screenshots/export. Layouts must adapt to scale and future external monitors.
 
 ### Interaction principles
 - Keyboard-first for search, app launch, switching, and power actions.
@@ -37,7 +37,7 @@ Research was performed on the provided GitHub projects and related upstream refe
 - [Awesome Hyprland shell list](https://github.com/hyprland-community/awesome-hyprland): lists QuickShell alongside Waybar, AGS, Eww, Fabric, Ignis and other alternatives. Since QuickShell is already installed and the prototype runs, do not change frameworks without a concrete limitation.
 - [Rofi source/documentation](https://github.com/davatorium/rofi): upstream has Wayland mode. Test the installed package and theme first. If Rofi's interaction and theming meet the need, reuse Rofi instead of rebuilding fuzzy search, desktop-entry indexing, window switching, and launcher keyboard semantics from scratch.
 - [Fuzzel](https://codeberg.org/dnkl/fuzzel): already seen on the initial `rice` setup screen as an installed launcher. It is a reasonable fallback for a lightweight drun-style launcher if Rofi behaves poorly on this Wayland setup.
-- Existing local tool context: QuickShell 0.3.2, Hyprland 0.56.2, Kitty, Fish, Thunar, Fuzzel, PipeWire, and UPower were verified in the session. UPower exposes battery and AC devices. Do a real package/service audit before planning additional installs.
+- Verified local state (2026-10-13): QuickShell 0.3.2, Hyprland 0.56.2, Kitty, Fish, Thunar, Fuzzel, PipeWire/WirePlumber, UPower, NetworkManager, power-profiles-daemon, `brightnessctl`, `playerctl`, `wpctl`, `grim`, `slurp`, `swappy`, and `hypridle` are available. UPower exposes battery and AC devices. User services for the GTK portal and Hyprland portal are running. System services for NetworkManager, UPower, and polkit are running. `rice` is not in `wheel`; sudo is denied. The installed command inventory did not find any of the checked wallpaper or notification tools. No graphical Polkit authentication agent process was found. `hypridle` is installed but was not running in the observed process list. The Hyprland Lua config originally referred to `hyprlauncher` and `dolphin`; both commands/packages were confirmed absent. In the `rice` account only, the settings were changed to `menu = "fuzzel"` and `fileManager = "thunar"`, the backup `hyprland.lua.bak-before-gps-tool-fix` was created, and `Super+R` / `Super+E` were tested successfully after `hyprctl reload`.
 - Avoid blindly following dotfiles install scripts. They may replace configs, alter system packages, add autostart rules, or assume another distribution.
 
 ### Key conclusion
@@ -137,7 +137,12 @@ Status: `[x]` verified; `[~]` active; `[ ]` TODO; `[!]` decision/blocker.
 - [x] Build a starter GPS panel with clock/date/brand.
 - [x] Initialise Git and commit known-good starter: `140e10c`.
 - [x] Confirm QuickShell loads the starter under 0.3.2 without the previous Qt mismatch warning.
-- [x] Record initial QuickShell RSS: 183,716 KiB (~179 MiB).
+- [x] Record initial QuickShell RSS: 183,716 KiB (~179 MiB; process only, not full session).
+- [x] Record monitor: `eDP-1`, 1920×1200 physical, scale 1.5, 165 Hz; plan QML against 1280×800 logical coordinates.
+- [x] Audit core services: PipeWire/WirePlumber, NetworkManager, UPower, power-profiles-daemon, portal and Hyprland portal active; `polkitd` active.
+- [x] Verify `brightnessctl`, `playerctl`, `wpctl`, `grim`, `slurp`, `swappy`, `hypridle`, and `fuzzel` commands are available.
+- [x] Confirm no checked wallpaper/notification utility was found and no graphical Polkit agent process was found at audit time.
+- [x] Confirm `hyprlauncher` and `dolphin` are absent; update `rice` Hyprland settings to Fuzzel and Thunar, create a backup, reload and successfully test `Super+R` / `Super+E`.
 - [ ] Measure whole-session idle RAM/CPU consistently, with and without GPS; record baseline methodology.
 - [ ] Ensure `.gitignore` ignores local logs/build output and commit planning docs.
 - [ ] Verify fresh-login start/stop workflow; GPS must remain manually launched during development.
@@ -145,7 +150,7 @@ Status: `[x]` verified; `[~]` active; `[ ]` TODO; `[!]` decision/blocker.
 ### Phase 1 — Define product and visual design (do before adding widgets)
 - [ ] Collect 8–12 screenshots/reference examples from the supplied repositories plus Rofi-style launchers.
 - [ ] Choose a main visual direction: dark graphite with lavender/pink accents; document an alternative palette.
-- [ ] Sketch 1920×1200 layout for panel, launcher, dashboard/quick settings, notification, and power menu.
+- [ ] Sketch a 1280×800 logical-coordinate layout (physical output is 1920×1200 @ scale 1.5) for panel, launcher, dashboard/quick settings, notification, and power menu.
 - [ ] Define design tokens for colour, typography, spacing, radii, borders, surfaces, hover/focus, shadows/blur, and animation.
 - [ ] Decide what belongs on the panel versus hidden in dashboard; avoid permanent clutter.
 - [ ] Define keyboard/mouse behaviours: Escape, focus restore, click-away, global shortcuts, multi-monitor behaviour.
@@ -172,13 +177,13 @@ Status: `[x]` verified; `[~]` active; `[ ]` TODO; `[!]` decision/blocker.
 - [ ] Measure RSS, whole-session RAM and idle CPU after each addition.
 
 ### Phase 4 — Rofi-style launcher
-- [ ] Audit whether Rofi is installed and inspect package/version.
-- [ ] Test existing Rofi in Wayland mode; verify application launch, keyboard selection, fuzzy filter, window mode and theme.
+- [x] Verify `hyprlauncher` and `dolphin` are absent; change only `rice` config to Fuzzel and Thunar with a backup.
+- [ ] Test Fuzzel’s filtering, keyboard navigation, theme/customization, close/focus behavior and startup cost. Rofi is not installed; evaluate whether installing it later is justified, using `guru` for system package operations.
 - [ ] Compare Rofi versus existing Fuzzel based on user-visible test, not internet reputation.
 - [ ] Prefer using and theming Rofi if it satisfies functionality and aesthetics.
 - [ ] Build a custom QuickShell launcher only if it provides clear value: rich app cards, custom GPS integration, search providers or integrated dashboard.
 - [ ] For a custom launcher, use desktop-entry metadata and safe process APIs; never concatenate untrusted app data into shell strings.
-- [ ] Add the Hyprland shortcut only after reliable manual testing; preserve escape/focus/launcher close behaviour.
+- [x] Map `Super+R` to Fuzzel and `Super+E` to Thunar in the `rice` config; reload and test both. Keep the backup for rollback.
 
 ### Phase 5 — Dashboard / quick settings
 - [ ] Build reusable cards, section headers, status pills, icon labels, sliders, focus and hover states.
@@ -250,9 +255,10 @@ When using another AI, provide:
 
 ## 8. Immediate TODO (next session)
 
-1. [ ] **Pause feature coding** until the product direction is agreed.
-2. [ ] Capture/pick visual references: card-style dashboard + Rofi-inspired launcher.
-3. [ ] Audit current relevant tools: `rofi`, Fuzzel, wallpaper, notification, portal, polkit, lock/idle, brightness, NetworkManager/MPRIS.
-4. [ ] Draft one 1920×1200 wireframe and design tokens.
-5. [ ] Commit this roadmap.
-6. [ ] Only then modularize the current `shell.qml` and implement the MVP in small steps.
+1. [x] Audit launcher and file-manager commands; use Fuzzel and Thunar in the `rice` Hyprland config. Backup exists, reload succeeded, and both shortcuts work.
+2. [ ] Capture/pick visual references: card-style dashboard + Rofi-inspired keyboard launcher.
+3. [ ] Test Fuzzel search/navigation/style and decide whether Rofi merits a later comparison; do not install it just for completeness.
+4. [ ] Agree on the 1280×800 logical-coordinate wireframe and design tokens.
+5. [ ] Decide which wallpaper tool, notification daemon, and graphical Polkit agent are actually needed. The system `polkitd` is running, but no graphical agent was observed. `hypridle` is installed but not seen running; no locker was found in the earlier command inventory.
+6. [ ] Replace the project roadmap/TODO with the updated audited documents and commit them.
+7. [ ] Only then modularize `shell.qml` and implement one MVP component at a time.
