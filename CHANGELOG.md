@@ -24,7 +24,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Font family not explicitly set (uses system default)
 - Design tokens centralized in `config/Theme.qml` singleton; no further tokens added
 - Full-session memory baseline not measured (process RSS ~179 MiB)
-- `exclusiveZone: 0` means panel does not reserve screen space — may overlap fullscreen windows
+- `exclusiveZone: 0` was removed from `GpsPanel.qml`; Hyprland layer/window geometry checks show the 1280×52 panel with tiled windows beginning at y=74, while `general:gaps_out` is 20. Full-screen behavior has not been separately verified.
 - No hot-reload verification for future theme singleton
 - WIP battery card experiment preserved in git stash (not applied)
 
