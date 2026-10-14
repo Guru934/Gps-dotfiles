@@ -4,13 +4,15 @@ import qs.config
 Item {
     id: root
 
+    property bool showTagline: false
+
     implicitWidth: emblemBox.width + 14 + brandTexts.implicitWidth
     implicitHeight: Math.max(emblemBox.height, brandTexts.implicitHeight)
 
     Rectangle {
         id: emblemBox
-        width: 44
-        height: 44
+        width: 30
+        height: 30
         radius: Theme.radiusEmblem
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
@@ -44,6 +46,7 @@ Item {
             color: Theme.textOnAccent
             font.pixelSize: Theme.fontSizeTagline
             font.bold: true
+            visible: root.showTagline
         }
     }
 }

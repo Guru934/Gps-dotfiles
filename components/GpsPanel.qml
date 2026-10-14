@@ -11,21 +11,20 @@ PanelWindow {
         right: true
     }
 
-    implicitHeight: 94
+    implicitHeight: 52
     color: "transparent"
-    exclusiveZone: 0
 
     Rectangle {
         anchors {
             top: parent.top
             left: parent.left
             right: parent.right
-            topMargin: 12
+            topMargin: 8
             leftMargin: 16
             rightMargin: 16
         }
 
-        height: 70
+        height: 44
         radius: Theme.radiusPanel
         color: Theme.surface
         border.width: 1
