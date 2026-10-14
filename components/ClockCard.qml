@@ -2,35 +2,51 @@ import Quickshell
 import QtQuick
 import qs.config
 
-Item {
+Rectangle {
     id: root
 
+    height: Theme.pillHeight
+    width: clockRow.implicitWidth + 14
+    radius: Theme.radiusPill
+    color: Theme.card
+    border.width: 1
+    border.color: Theme.border
+
     SystemClock {
-        id: clock
+        id: sysClock
         precision: SystemClock.Minutes
     }
 
-    implicitWidth: clockTexts.implicitWidth
-    implicitHeight: clockTexts.implicitHeight
-
-    Column {
-        id: clockTexts
-        anchors.fill: parent
-        spacing: Theme.spacingRightColumn
+    Row {
+        id: clockRow
+        anchors.centerIn: parent
+        spacing: 5
 
         Text {
-            anchors.right: parent.right
-            text: Qt.formatTime(clock.date, "hh:mm")
-            color: Theme.textPrimary
-            font.pixelSize: Theme.fontSizeClock
+            anchors.verticalCenter: parent.verticalCenter
+            text: Qt.formatDate(sysClock.date, "ddd, dd MMM")
+            color: Theme.textMuted
+            font.family: Theme.fontUi
+            font.pixelSize: Theme.fontSizeDate
+        }
+
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "·"
+            color: Theme.brandAccent
+            font.family: Theme.fontUi
+            font.pixelSize: 12
             font.bold: true
         }
 
         Text {
-            anchors.right: parent.right
-            text: Qt.formatDate(clock.date, "ddd, dd MMM")
-            color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeDate
+            anchors.verticalCenter: parent.verticalCenter
+            text: Qt.formatTime(sysClock.date, "hh:mm")
+            color: Theme.textMain
+            font.family: Theme.fontMono
+            font.pixelSize: Theme.fontSizeClock
+            font.bold: true
+            font.features: { "tnum": 1 }
         }
     }
 }
