@@ -51,38 +51,24 @@ PanelWindow {
             }
         }
 
-        // Middle Zone: Active Window Title (or Workspace status when empty)
-        Item {
-            anchors {
-                left: leftCluster.right
-                right: rightCluster.left
-                leftMargin: 12
-                rightMargin: 12
-                verticalCenter: parent.verticalCenter
-            }
-            height: Theme.pillHeight
-
-            Text {
-                anchors.centerIn: parent
-                width: Math.min(implicitWidth, parent.width)
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                readonly property bool hasWindow: Hyprland.activeToplevel !== null
-                    && Hyprland.activeToplevel.title !== ""
-                readonly property int wsId: Hyprland.focusedWorkspace !== null
-                    ? Hyprland.focusedWorkspace.id
-                    : 1
-                text: hasWindow
-                    ? Hyprland.activeToplevel.title
-                    : ("Workspace " + wsId + "  ·  Desktop")
-                color: hasWindow ? Theme.textMain : Theme.textMuted
-                font.family: Theme.fontUi
-                font.pixelSize: 12
-                font.bold: hasWindow
-            }
+        // True Screen-Centered Window Title (Hidden when no window is focused)
+        Text {
+            id: windowTitle
+            readonly property bool hasWindow: Hyprland.activeToplevel !== null
+                && Hyprland.activeToplevel.title !== ""
+            visible: hasWindow
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, 360)
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            text: hasWindow ? Hyprland.activeToplevel.title : ""
+            color: Theme.textMain
+            font.family: Theme.fontUi
+            font.pixelSize: 12
+            font.bold: true
         }
 
-        // Right Cluster: StatusPills
+        // Right Cluster: Consolidated StatusPills
         StatusPills {
             id: rightCluster
             hub: root.hub

@@ -7,7 +7,7 @@ Row {
     required property var hub
     spacing: 6
 
-    // 1. Standalone Media Pill (Click = Play/Pause, Scroll = Prev/Next Track)
+    // 1. Unambiguous Media Pill (Hidden when stopped; 󰎆 = Playing, 󰏤 = Paused)
     Rectangle {
         visible: root.hub !== null && root.hub.mediaStatus !== "Stopped" && root.hub.mediaTitle !== ""
         height: Theme.pillHeight
@@ -24,21 +24,21 @@ Row {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: (root.hub && root.hub.mediaStatus === "Playing") ? "󰐊" : "󰏤"
-                color: Theme.brandAccent
+                text: (root.hub && root.hub.mediaStatus === "Playing") ? "󰎆" : "󰏤"
+                color: (root.hub && root.hub.mediaStatus === "Playing") ? Theme.brandAccent : Theme.textMuted
                 font.family: Theme.fontMono
                 font.pixelSize: 13
             }
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(implicitWidth, 110)
+                width: Math.min(implicitWidth, 120)
                 elide: Text.ElideRight
                 text: root.hub ? root.hub.mediaTitle : ""
-                color: Theme.textMain
+                color: (root.hub && root.hub.mediaStatus === "Playing") ? Theme.textMain : Theme.textMuted
                 font.family: Theme.fontUi
                 font.pixelSize: 11
-                font.bold: true
+                font.bold: (root.hub && root.hub.mediaStatus === "Playing")
             }
         }
 
@@ -47,6 +47,13 @@ Row {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
+            onEntered: if (root.hub) root.hub.setTooltip(
+                (root.hub.mediaStatus === "Playing" ? "Playing: " : "Paused: ")
+                + root.hub.mediaTitle
+                + (root.hub.mediaArtist !== "" ? " — " + root.hub.mediaArtist : "")
+                + "  (Click: Play/Pause · Scroll: Prev/Next)"
+            )
+            onExited: if (root.hub) root.hub.clearTooltip()
             onClicked: if (root.hub) root.hub.mediaPlayPause()
             onWheel: event => {
                 if (!root.hub) return
@@ -58,10 +65,10 @@ Row {
         }
     }
 
-    // 2. Unified Hardware Status Island (Wi-Fi + Brightness + Audio + Battery)
+    // 2. Merged Hardware Pill: [ 󰖩  ·  󰕾 95%  ·  󰂄 80% ]
     Rectangle {
         height: Theme.pillHeight
-        width: hwRow.implicitWidth + 12
+        width: hwRow.implicitWidth + 14
         radius: Theme.radiusPill
         color: Theme.card
         border.width: 1
@@ -70,41 +77,24 @@ Row {
         Row {
             id: hwRow
             anchors.centerIn: parent
-            spacing: 2
+            spacing: 4
 
-            // A. Network Segment
+            // A. Compact Wi-Fi Icon (SSID shown on hover tooltip or in Control Center)
             Rectangle {
                 height: 22
-                width: netSeg.implicitWidth + 10
+                width: 24
                 radius: 6
                 color: netMouse.containsMouse ? Theme.cardHover : "transparent"
                 anchors.verticalCenter: parent.verticalCenter
 
-                Row {
-                    id: netSeg
+                Text {
                     anchors.centerIn: parent
-                    spacing: 5
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: (!root.hub || root.hub.netType === "wifi")
-                            ? "󰖩"
-                            : (root.hub.netType === "ethernet" ? "󰈀" : "󰖪")
-                        color: (root.hub && root.hub.netType === "disconnected") ? Theme.statusWarn : Theme.brandAccent
-                        font.family: Theme.fontMono
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(implicitWidth, 82)
-                        elide: Text.ElideRight
-                        text: root.hub ? root.hub.netName : "Offline"
-                        color: Theme.textMain
-                        font.family: Theme.fontUi
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
+                    text: (!root.hub || root.hub.netType === "wifi")
+                        ? "󰖩"
+                        : (root.hub.netType === "ethernet" ? "󰈀" : "󰖪")
+                    color: (root.hub && root.hub.netType === "disconnected") ? Theme.statusWarn : Theme.brandAccent
+                    font.family: Theme.fontMono
+                    font.pixelSize: 13
                 }
 
                 MouseArea {
@@ -112,63 +102,17 @@ Row {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    onEntered: if (root.hub) root.hub.setTooltip(
+                        "Network: " + root.hub.netName + " (" + root.hub.netDevice + ") · Click for Control Center"
+                    )
+                    onExited: if (root.hub) root.hub.clearTooltip()
                     onClicked: if (root.hub) root.hub.toggleDashboard()
                 }
             }
 
             Rectangle { width: 1; height: 12; color: Theme.border; anchors.verticalCenter: parent.verticalCenter }
 
-            // B. Brightness Segment (Scroll Wheel -> nvidia_wmi_ec_backlight)
-            Rectangle {
-                height: 22
-                width: brightSeg.implicitWidth + 10
-                radius: 6
-                color: brightMouse.containsMouse ? Theme.cardHover : "transparent"
-                anchors.verticalCenter: parent.verticalCenter
-
-                Row {
-                    id: brightSeg
-                    anchors.centerIn: parent
-                    spacing: 4
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "󰃠"
-                        color: Theme.brandAccent
-                        font.family: Theme.fontMono
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: (root.hub ? root.hub.brightnessPct : 10) + "%"
-                        color: Theme.textMain
-                        font.family: Theme.fontMono
-                        font.pixelSize: 11
-                        font.bold: true
-                        font.features: { "tnum": 1 }
-                    }
-                }
-
-                MouseArea {
-                    id: brightMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: if (root.hub) root.hub.toggleDashboard()
-                    onWheel: event => {
-                        if (!root.hub) return
-                        if (event.angleDelta.y > 0)
-                            root.hub.stepBrightness(5)
-                        else if (event.angleDelta.y < 0)
-                            root.hub.stepBrightness(-5)
-                    }
-                }
-            }
-
-            Rectangle { width: 1; height: 12; color: Theme.border; anchors.verticalCenter: parent.verticalCenter }
-
-            // C. Audio Segment (Click = Mute, Scroll Wheel = Volume)
+            // B. Audio Volume (Click = Mute, Scroll = Volume)
             Rectangle {
                 height: 22
                 width: audioSeg.implicitWidth + 10
@@ -192,7 +136,7 @@ Row {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: (root.hub ? root.hub.volumePct : 0) + "%"
-                        color: Theme.textMain
+                        color: (root.hub && root.hub.isMuted) ? Theme.textMuted : Theme.textMain
                         font.family: Theme.fontMono
                         font.pixelSize: 11
                         font.bold: true
@@ -205,6 +149,10 @@ Row {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    onEntered: if (root.hub) root.hub.setTooltip(
+                        "Volume: " + root.hub.volumePct + "% · Click to Mute · Scroll to adjust"
+                    )
+                    onExited: if (root.hub) root.hub.clearTooltip()
                     onClicked: if (root.hub) root.hub.toggleMute()
                     onWheel: event => {
                         if (!root.hub) return
@@ -218,12 +166,12 @@ Row {
 
             Rectangle { width: 1; height: 12; color: Theme.border; anchors.verticalCenter: parent.verticalCenter }
 
-            // D. Battery Segment
+            // C. Battery & Power (Scroll = Adjust Brightness with OSD!)
             Rectangle {
                 height: 22
                 width: batSeg.implicitWidth + 10
                 radius: 6
-                color: "transparent"
+                color: batMouse.containsMouse ? Theme.cardHover : "transparent"
                 anchors.verticalCenter: parent.verticalCenter
 
                 Row {
@@ -251,6 +199,27 @@ Row {
                         font.features: { "tnum": 1 }
                     }
                 }
+
+                MouseArea {
+                    id: batMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: if (root.hub) root.hub.setTooltip(
+                        (root.hub.onAcPower ? "AC Power · " : "Battery · ")
+                        + root.hub.batteryPct + "%  |  Brightness: "
+                        + root.hub.brightnessPct + "% (Scroll here to adjust)"
+                    )
+                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onClicked: if (root.hub) root.hub.toggleDashboard()
+                    onWheel: event => {
+                        if (!root.hub) return
+                        if (event.angleDelta.y > 0)
+                            root.hub.stepBrightness(5)
+                        else if (event.angleDelta.y < 0)
+                            root.hub.stepBrightness(-5)
+                    }
+                }
             }
         }
     }
@@ -259,7 +228,7 @@ Row {
     ClockCard {
     }
 
-    // 4. Control Center Toggle Button (◉)
+    // 4. Control Center / Quick Settings Button (󰒓)
     Rectangle {
         width: Theme.pillHeight
         height: Theme.pillHeight
@@ -272,11 +241,10 @@ Row {
 
         Text {
             anchors.centerIn: parent
-            text: "◉"
+            text: "󰒓"
             color: (root.hub && root.hub.dashboardOpen) ? Theme.brandAccentFg : Theme.brandAccent
             font.family: Theme.fontMono
             font.pixelSize: 13
-            font.bold: true
         }
 
         MouseArea {
@@ -284,6 +252,8 @@ Row {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
+            onEntered: if (root.hub) root.hub.setTooltip("Control Center & Power Menu")
+            onExited: if (root.hub) root.hub.clearTooltip()
             onClicked: if (root.hub) root.hub.toggleDashboard()
         }
     }

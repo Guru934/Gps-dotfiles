@@ -9,11 +9,12 @@ import qs.components
 Scope {
     id: root
 
-    // UI Overlay States
+    // UI Overlay & Tooltip States
     property bool dashboardOpen: false
     property bool powerMenuOpen: false
     property string pendingPowerAction: ""
     property var pendingPowerCmd: []
+    property string tooltipText: ""
 
     // OSD State
     property bool osdVisible: false
@@ -28,6 +29,19 @@ Scope {
     property string mediaStatus: "Stopped"
     property string mediaArtist: ""
     property string mediaTitle: ""
+
+    // Automatically remove the clashing cyan Hyprland droplet & sync borders on load
+    Component.onCompleted: {
+        Quickshell.execDetached([
+            "hyprctl", "--batch",
+            "keyword misc:disable_hyprland_logo true ; "
+            + "keyword misc:disable_splash_rendering true ; "
+            + "keyword misc:background_color 0x111522 ; "
+            + "keyword general:col.active_border rgba(eeb7d8ee) rgba(9ce5c0ee) 45deg ; "
+            + "keyword general:col.inactive_border rgba(3a3a54aa) ; "
+            + "keyword decoration:rounding 12"
+        ])
+    }
 
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
@@ -99,7 +113,15 @@ Scope {
         onTriggered: Quickshell.execDetached(["sh", "-c", "grim -g \"$(slurp)\" - | swappy -f -"])
     }
 
-    // Parsers & Action Helpers
+    // Tooltip & OSD Helpers
+    function setTooltip(text) {
+        root.tooltipText = text
+    }
+
+    function clearTooltip() {
+        root.tooltipText = ""
+    }
+
     function showOsd(icon, val) {
         root.osdIcon = icon
         root.osdValue = Math.max(0, Math.min(100, Math.round(val)))
@@ -161,7 +183,7 @@ Scope {
         const clamped = Math.max(5, Math.min(100, Math.round(targetPct)))
         root.brightnessPct = clamped
         Quickshell.execDetached(["brightnessctl", "-q", "set", clamped + "%"])
-        root.showOsd("󰃠", clamped)
+        root.showOsd("󰖨", clamped)
     }
 
     function stepBrightness(deltaPct) {
@@ -203,6 +225,7 @@ Scope {
     }
 
     function toggleDashboard() {
+        root.tooltipText = ""
         root.powerMenuOpen = false
         root.dashboardOpen = !root.dashboardOpen
         if (root.dashboardOpen) {
@@ -213,6 +236,7 @@ Scope {
     }
 
     function openPowerMenu() {
+        root.tooltipText = ""
         root.dashboardOpen = false
         root.pendingPowerAction = ""
         root.powerMenuOpen = true
@@ -223,7 +247,7 @@ Scope {
     }
 
     // Modular Surfaces
-    WallpaperLayer { hub: root }
+    // WallpaperLayer { hub: root }
     GpsPanel       { hub: root }
     ControlCenter  { hub: root }
     PowerMenu      { hub: root }
