@@ -8,6 +8,7 @@ Use this as the frequently updated checklist. The full rationale, architecture, 
 - [x] Fish is the login shell.
 - [x] QuickShell 0.3.2 loads GPS without the previous Qt mismatch warning; Caelestia still works in `guru`.
 - [x] Starter `shell.qml` with GPS brand, tagline, and live clock/date committed as `140e10c`.
+- [x] Component extractions complete: `BrandMark.qml` (`641bb75`), `ClockCard.qml` (`5865ca6`), `GpsPanel.qml` (`194df20`), theme singleton fix (`5fd2f59`).
 - [x] Initial QuickShell RSS measurement: 183,716 KiB (~179 MiB, process only). Full-session memory baseline remains outstanding.
 - [x] Local Git repository and roadmap/TODO commits exist; most recent known docs commit: `199783a`.
 - [x] WIP battery-card experiment is preserved in `git stash` as `WIP: unreviewed GPS battery card experiment`; do not `stash pop` until design is agreed.
@@ -16,6 +17,7 @@ Use this as the frequently updated checklist. The full rationale, architecture, 
 - [x] Active services observed: PipeWire, WirePlumber, NetworkManager, UPower, power-profiles-daemon, `polkitd`, XDG portal and Hyprland portal.
 - [x] No checked wallpaper or notification utility was found; no graphical Polkit authentication-agent process was found at audit time. `hypridle` was installed but not seen running.
 - [x] Confirmed `hyprlauncher` and `dolphin` are absent. Changed `rice` Hyprland config to Fuzzel/Thunar, saved `hyprland.lua.bak-before-gps-tool-fix`, reloaded Hyprland, and verified `Super+R` and `Super+E` both work.
+- [x] Display: `eDP-1`, physical 1920×1200, scale 1.5, 165 Hz. Design QML layouts on a 1280×800 logical canvas.
 
 ## Next actions — do these in order
 
@@ -29,7 +31,7 @@ Use this as the frequently updated checklist. The full rationale, architecture, 
 - [ ] Decide missing utilities deliberately: one wallpaper tool, one notification daemon, one graphical Polkit agent, and a compatible locker/idle flow. Check repo/package compatibility before installing, only from `guru` after review.
 - [ ] Capture a repeatable baseline with GPS stopped/running: whole-session memory, `qs` RSS, idle CPU and visual smoothness.
 - [ ] Copy the updated audited `ROADMAP.md`/`TODO.md` from the latest downloads into `~/Projects/my-rice`, review the diff, then commit the updated plan.
-- [ ] Only after design agreement: modularize `shell.qml`, set theme tokens and build one verified component per task.
+- [ ] Only after design agreement: build one verified component per task. (Component extractions — `GpsPanel`, `ClockCard`, `BrandMark` — are complete; theme tokens already extracted.)
 
 ## Per-task engineering rule
 

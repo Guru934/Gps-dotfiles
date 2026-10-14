@@ -2,7 +2,7 @@
 
 > **Project:** GPS Desktop, a custom CachyOS + Hyprland desktop shell built with QuickShell / Qt Quick (QML).
 > **Workspace:** `/home/rice/Projects/my-rice`
-> **Status:** Planning / prototype stage. Working starter panel exists and is checkpointed in local Git as `140e10c`.
+> **Status:** Prototyping complete — GPS panel, brand mark, clock card extracted and modular; working baseline at `194df20`.
 > **Brand:** GPS (provisional; user selected it instead of “Sekai”).
 > **Primary requirement:** develop in the unprivileged `rice` account while keeping the `guru` daily-driver desktop untouched.
 
@@ -161,7 +161,7 @@ Status: `[x]` verified; `[~]` active; `[ ]` TODO; `[!]` decision/blocker.
 - [ ] Convert this document into a maintained roadmap/TODO in Git.
 - [ ] Add CHANGELOG and a small `run-gps.fish` dev script with logs; no autostart or config modification.
 - [ ] Define a small, consistent commit workflow: inspect diff, `git diff --check`, run manual test, commit.
-- [ ] Split code only when helpful: `GpsPanel`, `ClockCard`, common `Theme` tokens, then service adapters.
+- [x] Split code only when helpful: `GpsPanel`, `ClockCard`, common `Theme` tokens, then service adapters.
 - [ ] Ensure each module has loading/unavailable/error states and no made-up values.
 
 ### Phase 3 — MVP status panel

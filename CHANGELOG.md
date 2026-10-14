@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - `README.md` — run, debug, git checkpoint and rollback instructions
 - `CHANGELOG.md` — this file
+- `Theme.qml` — Singleton design tokens with `import qs.config` pattern (commit `5fd2f59`)
+- `BrandMark.qml` — GPS emblem + tagline component extracted from shell.qml (commit `641bb75`)
+- `ClockCard.qml` — clock (hh:mm) + date (ddd, dd MMM) component extracted from shell.qml (commit `5865ca6`)
+- `GpsPanel.qml` — PanelWindow + BrandMark + ClockCard composition extracted from shell.qml (commit `194df20`)
+
+### Changed
+- `shell.qml` — reduced to minimal entry point importing `qs.components` and instantiating `GpsPanel` (commit `194df20`)
+- `components/` directory created with modular QML components
+
+### Known Limitations
+- No workspace indicator, battery, audio, or network status yet
+- No launcher, dashboard, power menu, or notifications
+- Font family not explicitly set (uses system default)
+- Design tokens centralized in `config/Theme.qml` singleton; no further tokens added
+- Full-session memory baseline not measured (process RSS ~179 MiB)
+- `exclusiveZone: 0` means panel does not reserve screen space — may overlap fullscreen windows
+- No hot-reload verification for future theme singleton
+- WIP battery card experiment preserved in git stash (not applied)
 
 ## [0.1.0] - 2026-10-13
 

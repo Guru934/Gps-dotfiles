@@ -63,23 +63,30 @@ git stash list            # preserved WIP battery experiment (do not pop)
 - Preserve existing git stash (`WIP: unreviewed GPS battery card experiment`)
 - GPS remains manually launched until recovery tested
 
-## Project Structure (Planned)
+## Project Structure (completed)
+
+The following components have been extracted from `shell.qml` into the `components/` directory:
+
+- `GpsPanel.qml` — `PanelWindow` with `BrandMark` + `ClockCard` composition (extracted in commit `194df20`)
+- `BrandMark.qml` — GPS emblem + tagline (extracted in commit `641bb75`)
+- `ClockCard.qml` — clock (hh:mm) + date (ddd, dd MMM) (extracted in commit `5865ca6`)
+
+The root `shell.qml` now instantiates `GpsPanel` only.
 
 ```
 my-rice/
-├── shell.qml              # entry point
+├── shell.qml              # entry point: imports qs.components; instantiates GpsPanel
 ├── README.md
 ├── CHANGELOG.md
 ├── ROADMAP.md
 ├── TODO.md
 ├── WIREFRAME.md
 ├── config/
-│   ├── qmldir
-│   └── Theme.qml          # design tokens (singleton)
+│   └── Theme.qml          # design tokens (Singleton)
 └── components/
-    ├── GpsPanel.qml       # top-level panel
-    ├── BrandMark.qml      # GPS emblem + tagline
-    └── ClockCard.qml      # clock + date
+    ├── GpsPanel.qml
+    ├── BrandMark.qml
+    └── ClockCard.qml
 ```
 
 ## References
