@@ -97,6 +97,13 @@ Scope {
         function close() { dashboard.isOpen = false }
     }
 
+    IpcHandler {
+        target: "notifcenter"
+        function toggle() { notifCenter.toggle() }
+        function open() { notifCenter.open = true }
+        function close() { notifCenter.open = false }
+    }
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
