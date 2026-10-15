@@ -403,6 +403,7 @@ PanelWindow {
         property bool expanded: false
         width: parent ? parent.width : 400; height: expanded ? 220 : 116; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border
         Row {
+            width: parent.width - 28
             anchors.left: parent.left; anchors.leftMargin: 14; anchors.verticalCenter: parent.verticalCenter; spacing: 14
             Rectangle {
                 width: expanded ? 110 : 70; height: expanded ? 110 : 70; radius: width / 2; color: "#172D32"; border.width: 2; border.color: Theme.brandAccent

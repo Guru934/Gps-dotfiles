@@ -7,7 +7,7 @@ Rectangle {
     id: root
 
     property var hub: null
-    readonly property bool horiz: root.hub !== null && root.hub.isHorizontal
+    readonly property bool horiz: root.hub !== null && root.hub.isHorizontal === true
 
     width: horiz ? (wsRow.implicitWidth + 12) : Theme.sideButtonSize
     height: horiz ? Theme.sideButtonSize : (wsCol.implicitHeight + 12)

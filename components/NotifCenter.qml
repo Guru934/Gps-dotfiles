@@ -37,7 +37,10 @@ PanelWindow {
     }
 
     function toggle() { root.open = !root.open }
-    function close() { root.open = false }
+    function close() {
+        taskInput.focus = false
+        root.open = false
+    }
     function addTask() {
         const value = root.taskDraft.trim()
         if (!value) return
@@ -57,7 +60,7 @@ PanelWindow {
         id: autoCloseTimer
         interval: 350
         repeat: false
-        onTriggered: root.open = false
+        onTriggered: root.close()
     }
 
     anchors { top: true; bottom: true; left: true }
@@ -79,6 +82,10 @@ PanelWindow {
         color: Theme.surface
         border.width: 1
         border.color: Theme.brandAccent
+
+        onVisibleChanged: {
+            if (!visible) taskInput.focus = false
+        }
 
         MouseArea {
             anchors.fill: parent
