@@ -5,8 +5,8 @@ import qs.config
 Rectangle {
     id: root
 
-    width: Theme.sideButtonSize
-    height: Theme.sideButtonSize
+    width: 36
+    height: 36
     radius: Theme.radiusPill
     color: brandMouse.containsMouse ? Theme.cardHover : Theme.brandAccent
     border.width: 1
@@ -14,13 +14,13 @@ Rectangle {
 
     Behavior on color { ColorAnimation { duration: 120 } }
 
-    Text {
+    Image {
         anchors.centerIn: parent
-        text: "✦"
-        color: brandMouse.containsMouse ? Theme.brandAccent : Theme.brandAccentFg
-        font.family: Theme.fontUi
-        font.pixelSize: 16
-        font.bold: true
+        source: Qt.resolvedUrl("../assets/rice-logo.svg")
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        scale: brandMouse.containsMouse ? 1.08 : 1.0
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutBack; easing.overshoot: 1.4 } }
     }
 
     MouseArea {

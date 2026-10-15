@@ -378,6 +378,12 @@ Scope {
         openPopup("settings")
     }
 
+    function runCenterAction(action) {
+        if (action === "wall") cycleWallpaper()
+        else if (action === "clip") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openClipboard"])
+        else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openNotificationCenter"])
+    }
+
     function cycleWallpaper() {
         root.wallpaperMode = (root.wallpaperMode + 1) % 3
         Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/cycle-wall.fish"])
@@ -598,7 +604,7 @@ Scope {
     }
 
     // Modular Surfaces
-    GpsPanel           { hub: root }
+    LeftRail           { hub: root }
     ControlCenter      { hub: root }
     PowerMenu          { hub: root }
     OsdOverlay         { hub: root }

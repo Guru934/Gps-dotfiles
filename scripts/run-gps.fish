@@ -1,6 +1,9 @@
 #!/usr/bin/env fish
 # === GPS Desktop Left Sidebar + Tide Island Launcher ===
 
+set -gx LC_CTYPE C.UTF-8
+set -g __done_enabled 0
+
 # 1. Stop old instances and clear stale logs
 pkill -f "my-rice/shell.qml" 2>/dev/null; or true
 pkill -f "share/tide-island" 2>/dev/null; or true
