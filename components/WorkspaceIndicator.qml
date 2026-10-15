@@ -6,14 +6,20 @@ import qs.config
 Rectangle {
     id: root
 
-    width: Theme.sideButtonSize
-    height: wsCol.implicitHeight + 10
+    property var hub: null
+    readonly property bool horiz: root.hub !== null && root.hub.isHorizontal
+
+    width: horiz ? (wsRow.implicitWidth + 12) : Theme.sideButtonSize
+    height: horiz ? Theme.sideButtonSize : (wsCol.implicitHeight + 12)
     radius: Theme.radiusPill
     color: Theme.card
     border.width: 1
     border.color: Theme.border
 
-    readonly property int currentWs: (Hyprland.focusedWorkspace !== null)
+    Behavior on color { ColorAnimation { duration: 250 } }
+    Behavior on border.color { ColorAnimation { duration: 250 } }
+
+    readonly property int currentWs: Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.id
         ? Hyprland.focusedWorkspace.id
         : 1
 
@@ -35,6 +41,7 @@ Rectangle {
 
     Column {
         id: wsCol
+        visible: !root.horiz
         anchors.centerIn: parent
         spacing: 4
 
@@ -42,38 +49,37 @@ Rectangle {
             model: [1, 2, 3, 4, 5]
 
             Rectangle {
+                id: wsVItem
                 required property int modelData
-                readonly property bool isFocused: root.currentWs === modelData
-                readonly property bool isOccupied: root.isWorkspaceOccupied(modelData)
+                readonly property bool isFocused: root.currentWs === wsVItem.modelData
+                readonly property bool isOccupied: root.isWorkspaceOccupied(wsVItem.modelData)
 
-                width: 26
+                width: 28
                 height: isFocused ? 28 : 22
-                radius: 6
-                color: isFocused
-                    ? Theme.brandAccent
-                    : (wsHover.hovered ? Theme.cardHover : "transparent")
+                radius: 7
+                color: isFocused ? Theme.brandAccent : (wsVHover.hovered ? Theme.cardHover : "transparent")
 
                 Behavior on height { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-                Behavior on color { ColorAnimation { duration: 110 } }
+                Behavior on color { ColorAnimation { duration: 150 } }
 
-                HoverHandler { id: wsHover }
+                HoverHandler { id: wsVHover }
 
                 Text {
                     anchors.centerIn: parent
-                    text: parent.modelData
-                    color: parent.isFocused
+                    text: wsVItem.modelData
+                    color: wsVItem.isFocused
                         ? Theme.brandAccentFg
-                        : (parent.isOccupied ? Theme.textMain : Theme.textMuted)
+                        : (wsVItem.isOccupied ? Theme.textMain : Theme.textMuted)
                     font.family: Theme.fontMono
-                    font.pixelSize: 11
-                    font.bold: parent.isFocused || parent.isOccupied
+                    font.pixelSize: 12
+                    font.bold: true
                 }
 
                 Rectangle {
-                    visible: parent.isOccupied && !parent.isFocused
-                    width: 2
+                    visible: wsVItem.isOccupied && !wsVItem.isFocused
+                    width: 3
                     height: 8
-                    radius: 1
+                    radius: 1.5
                     color: Theme.brandAccent
                     anchors {
                         left: parent.left
@@ -85,19 +91,57 @@ Rectangle {
         }
     }
 
+    Row {
+        id: wsRow
+        visible: root.horiz
+        anchors.centerIn: parent
+        spacing: 4
+
+        Repeater {
+            model: [1, 2, 3, 4, 5]
+
+            Rectangle {
+                id: wsHItem
+                required property int modelData
+                readonly property bool isFocused: root.currentWs === wsHItem.modelData
+                readonly property bool isOccupied: root.isWorkspaceOccupied(wsHItem.modelData)
+
+                width: isFocused ? 28 : 22
+                height: 26
+                radius: 7
+                color: isFocused ? Theme.brandAccent : (wsHHover.hovered ? Theme.cardHover : "transparent")
+
+                HoverHandler { id: wsHHover }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: wsHItem.modelData
+                    color: wsHItem.isFocused
+                        ? Theme.brandAccentFg
+                        : (wsHItem.isOccupied ? Theme.textMain : Theme.textMuted)
+                    font.family: Theme.fontMono
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+            }
+        }
+    }
+
     MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
 
-        function selectFromY(yPos) {
-            const ratio = Math.max(0.0, Math.min(0.999, (yPos - 5) / Math.max(1, root.height - 10)))
+        function selectFromPos(xPos, yPos) {
+            const ratio = root.horiz
+                ? Math.max(0.0, Math.min(0.999, (xPos - 6) / Math.max(1, root.width - 12)))
+                : Math.max(0.0, Math.min(0.999, (yPos - 6) / Math.max(1, root.height - 12)))
             const ws = Math.floor(ratio * 5) + 1
             root.switchTo(ws)
         }
 
-        onPressed: mouse => selectFromY(mouse.y)
+        onPressed: mouse => selectFromPos(mouse.x, mouse.y)
         onPositionChanged: mouse => {
-            if (pressed) selectFromY(mouse.y)
+            if (pressed) selectFromPos(mouse.x, mouse.y)
         }
         onWheel: event => {
             if (event.angleDelta.y > 0)

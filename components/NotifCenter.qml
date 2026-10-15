@@ -144,7 +144,6 @@ PanelWindow {
                         verticalAlignment: TextInput.AlignVCenter
                         color: Theme.textMain
                         placeholderText: "Add an objective…"
-                        placeholderTextColor: Theme.textMuted
                         font.family: Theme.fontUi
                         font.pixelSize: 11
                         text: root.taskDraft

@@ -10,6 +10,8 @@ PanelWindow {
     property var dashboard: null
     property var wallpaperCarousel: null
 
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+
     anchors { top: true; bottom: true; left: true }
     // A positive fixed width prevents layer-shell from stretching the rail.
     implicitWidth: 54
