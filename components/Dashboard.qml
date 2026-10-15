@@ -114,9 +114,20 @@ PanelWindow {
                     width: parent.width; height: 122; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border
                     Column {
                         anchors.fill: parent; anchors.margins: 12; spacing: 8
-                        Row { width: parent.width; Text { text: "5h 42m"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 25; font.bold: true }; Item { width: parent.width - 170; height: 1 }; Text { text: "target 7h"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 } }
+                        Row {
+                            width: parent.width
+                            Text { text: "5h 42m"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 25; font.bold: true }
+                            Item { width: parent.width - 170; height: 1 }
+                            Text { text: "target 7h"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }
+                        }
                         Text { text: "+12m vs yesterday"; color: Theme.statusGood; font.family: Theme.fontUi; font.pixelSize: 10 }
-                        Row { width: parent.width; height: 12; spacing: 2; BarSegment { ratio: .48; color: Theme.brandAccent }; BarSegment { ratio: .28; color: "#C084FC" }; BarSegment { ratio: .15; color: "#FFD47B" }; BarSegment { ratio: .09; color: "#F28FAD" } }
+                        Row {
+                            width: parent.width; height: 12; spacing: 2
+                            BarSegment { ratio: .48; color: Theme.brandAccent }
+                            BarSegment { ratio: .28; color: "#C084FC" }
+                            BarSegment { ratio: .15; color: "#FFD47B" }
+                            BarSegment { ratio: .09; color: "#F28FAD" }
+                        }
                         Text { text: "ghostty 48%   ·   zen-browser 28%   ·   spotify 15%   ·   obsidian 9%"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8; elide: Text.ElideRight; width: parent.width }
                     }
                 }
@@ -153,9 +164,22 @@ PanelWindow {
             SectionLabel { text: "PIPEWIRE MEDIA" }
             MediaMini { expanded: true }
             Rectangle { width: parent.width; height: 8; radius: 4; color: Theme.card; Rectangle { width: parent.width * .42; height: parent.height; radius: 4; color: Theme.brandAccent } }
-            Row { width: parent.width; Text { text: "01:42"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }; Item { width: parent.width - 90; height: 1 }; Text { text: "04:18"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 } }
+            Row {
+                width: parent.width
+                Text { text: "01:42"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }
+                Item { width: parent.width - 90; height: 1 }
+                Text { text: "04:18"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }
+            }
             Text { text: "LIVE LYRIC FEED"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.1 }
-            Rectangle { width: parent.width; height: 250; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border; Column { anchors.centerIn: parent; spacing: 12; Text { text: "I know the night is young"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }; Text { text: "but I can feel the morning"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 17; font.bold: true }; Text { text: "moving through the city lights"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 } } }
+            Rectangle {
+                width: parent.width; height: 250; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border
+                Column {
+                    anchors.centerIn: parent; spacing: 12
+                    Text { text: "I know the night is young"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
+                    Text { text: "but I can feel the morning"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 17; font.bold: true }
+                    Text { text: "moving through the city lights"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
+                }
+            }
         }
     }
 
@@ -191,10 +215,70 @@ PanelWindow {
 
     component SectionLabel: Text { color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.1 }
     component BarSegment: Rectangle { property real ratio: .25; width: parent ? parent.width * ratio - 2 : 20; height: 12; radius: 4 }
-    component TelemetryCard: Rectangle { property string title: ""; property string device: ""; property string value: ""; property string detail: ""; width: 126; height: 74; radius: 10; color: Theme.card; border.width: 1; border.color: Theme.border; Column { anchors.fill: parent; anchors.margins: 8; spacing: 3; Text { text: title; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }; Text { text: device; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }; Text { text: value + "  ·  " + detail; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 } } }
-    component ToggleCard: Rectangle { property string label: ""; property string value: ""; property bool enabledState: false; signal toggled(); width: 195; height: 48; radius: 10; color: enabledState ? "#243B3A" : Theme.card; border.width: 1; border.color: enabledState ? Theme.brandAccent : Theme.border; Column { anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter; spacing: 2; Text { text: label; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }; Text { text: value; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 } }; Rectangle { anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; width: 28; height: 16; radius: 8; color: enabledState ? Theme.brandAccent : Theme.border; Rectangle { x: enabledState ? 14 : 2; y: 2; width: 12; height: 12; radius: 6; color: enabledState ? Theme.brandAccentFg : Theme.textMuted; Behavior on x { NumberAnimation { duration: 120 } } } }; MouseArea { anchors.fill: parent; onClicked: parent.toggled() } }
-    component RouteCard: Rectangle { property string title: ""; property string detail: ""; property bool active: false; width: parent ? parent.width : 400; height: 58; radius: 10; color: Theme.card; border.width: 1; border.color: active ? Theme.brandAccent : Theme.border; Column { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; spacing: 3; Text { text: title; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }; Text { text: detail; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 } }; Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: active ? "DEFAULT" : "STANDBY"; color: active ? Theme.brandAccent : Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true } }
-    component InfoRow: Row { property string label: ""; property string value: ""; property color accent: Theme.textMuted; width: parent ? parent.width : 400; height: 28; Text { text: label; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10 }; Item { width: parent.width - valueText.implicitWidth - 8; height: 1 }; Text { id: valueText; text: value; color: accent; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true } }
-    component ToolButton: Rectangle { property string label: ""; property string command: ""; signal triggered(); width: parent ? parent.width : 400; height: 48; radius: 10; color: mouse.containsMouse ? Theme.cardHover : Theme.card; border.width: 1; border.color: mouse.containsMouse ? Theme.brandAccent : Theme.border; Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: label; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }; Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: command; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9 }; MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; onClicked: parent.triggered() } }
-    component MediaMini: Rectangle { property bool expanded: false; width: parent ? parent.width : 400; height: expanded ? 220 : 116; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border; Row { anchors.left: parent.left; anchors.leftMargin: 14; anchors.verticalCenter: parent.verticalCenter; spacing: 14; Rectangle { width: expanded ? 110 : 70; height: expanded ? 110 : 70; radius: width / 2; color: "#172D32"; border.width: 2; border.color: Theme.brandAccent; Text { anchors.centerIn: parent; text: "◉"; color: Theme.brandAccent; font.pixelSize: expanded ? 42 : 28 } }; Column { width: parent.width - (expanded ? 160 : 100); anchors.verticalCenter: parent.verticalCenter; spacing: 7; Text { text: "HOME"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true }; Text { text: "Odyssey"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 10 }; Text { text: expanded ? "We are moving through the night…\nA synchronized lyric feed is ready." : "♫  live lyrics · PipeWire"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; wrapMode: Text.WordWrap } } } }
+    component TelemetryCard: Rectangle {
+        property string title: ""; property string device: ""; property string value: ""; property string detail: ""
+        width: 126; height: 74; radius: 10; color: Theme.card; border.width: 1; border.color: Theme.border
+        Column {
+            anchors.fill: parent; anchors.margins: 8; spacing: 3
+            Text { text: title; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
+            Text { text: device; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }
+            Text { text: value + "  ·  " + detail; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 }
+        }
+    }
+    component ToggleCard: Rectangle {
+        property string label: ""; property string value: ""; property bool enabledState: false; signal toggled()
+        width: 195; height: 48; radius: 10; color: enabledState ? "#243B3A" : Theme.card; border.width: 1; border.color: enabledState ? Theme.brandAccent : Theme.border
+        Column {
+            anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter; spacing: 2
+            Text { text: label; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }
+            Text { text: value; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 }
+        }
+        Rectangle {
+            anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+            width: 28; height: 16; radius: 8; color: enabledState ? Theme.brandAccent : Theme.border
+            Rectangle { x: enabledState ? 14 : 2; y: 2; width: 12; height: 12; radius: 6; color: enabledState ? Theme.brandAccentFg : Theme.textMuted; Behavior on x { NumberAnimation { duration: 120 } } }
+        }
+        MouseArea { anchors.fill: parent; onClicked: parent.toggled() }
+    }
+    component RouteCard: Rectangle {
+        property string title: ""; property string detail: ""; property bool active: false
+        width: parent ? parent.width : 400; height: 58; radius: 10; color: Theme.card; border.width: 1; border.color: active ? Theme.brandAccent : Theme.border
+        Column {
+            anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; spacing: 3
+            Text { text: title; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
+            Text { text: detail; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }
+        }
+        Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: active ? "DEFAULT" : "STANDBY"; color: active ? Theme.brandAccent : Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
+    }
+    component InfoRow: Row {
+        property string label: ""; property string value: ""; property color accent: Theme.textMuted
+        width: parent ? parent.width : 400; height: 28
+        Text { text: label; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10 }
+        Item { width: parent.width - valueText.implicitWidth - 8; height: 1 }
+        Text { id: valueText; text: value; color: accent; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true }
+    }
+    component ToolButton: Rectangle {
+        property string label: ""; property string command: ""; signal triggered()
+        width: parent ? parent.width : 400; height: 48; radius: 10; color: mouse.containsMouse ? Theme.cardHover : Theme.card; border.width: 1; border.color: mouse.containsMouse ? Theme.brandAccent : Theme.border
+        Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: label; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
+        Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: command; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9 }
+        MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; onClicked: parent.triggered() }
+    }
+    component MediaMini: Rectangle {
+        property bool expanded: false
+        width: parent ? parent.width : 400; height: expanded ? 220 : 116; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border
+        Row {
+            anchors.left: parent.left; anchors.leftMargin: 14; anchors.verticalCenter: parent.verticalCenter; spacing: 14
+            Rectangle {
+                width: expanded ? 110 : 70; height: expanded ? 110 : 70; radius: width / 2; color: "#172D32"; border.width: 2; border.color: Theme.brandAccent
+                Text { anchors.centerIn: parent; text: "◉"; color: Theme.brandAccent; font.pixelSize: expanded ? 42 : 28 }
+            }
+            Column {
+                width: parent.width - (expanded ? 160 : 100); anchors.verticalCenter: parent.verticalCenter; spacing: 7
+                Text { text: "HOME"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true }
+                Text { text: "Odyssey"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 10 }
+                Text { text: expanded ? "We are moving through the night…\nA synchronized lyric feed is ready." : "♫  live lyrics · PipeWire"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            }
+        }
+    }
 }

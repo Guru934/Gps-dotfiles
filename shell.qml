@@ -2,7 +2,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
-import Quickshell.Services.Notifications
 import QtQuick
 import qs.config
 import qs.components
@@ -624,14 +623,10 @@ Scope {
         screenshotTimer.start()
     }
 
-    // Modular Surfaces
+    // Active shell surfaces. Tide Island remains the notification D-Bus owner.
     LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }
     Dashboard          { id: dashboard; hub: root }
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
-    ControlCenter      { hub: root }
-    PowerMenu          { hub: root }
-    OsdOverlay         { hub: root }
-    // NotificationToasts { hub: root }
 }

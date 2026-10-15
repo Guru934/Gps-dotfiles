@@ -123,7 +123,7 @@ PanelWindow {
                                     cache: true
                                 }
                                 Rectangle { anchors.fill: parent; color: delta === 0 ? "#22000000" : "#66000000" }
-                                Text { anchors { left: parent.left; bottom: parent.bottom; leftMargin: 14; bottomMargin: 12 }; text: fileUrl.toString().split("/").pop(); color: "#F4FFFFFF"; font.family: Theme.fontUi; font.pixelSize: 10; elide: Text.ElideRight; width: parent.width - 28 }
+                                Text { anchors { left: parent.left; bottom: parent.bottom; leftMargin: 14; bottomMargin: 12 } text: fileUrl.toString().split("/").pop(); color: "#F4FFFFFF"; font.family: Theme.fontUi; font.pixelSize: 10; elide: Text.ElideRight; width: parent.width - 28 }
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
