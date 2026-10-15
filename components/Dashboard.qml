@@ -31,14 +31,9 @@ PanelWindow {
     margins { top: 8; bottom: 8; right: 10 }
     implicitWidth: 440
     color: "transparent"
-    visible: opacity > 0.01
-    opacity: root.isOpen ? 1 : 0
-    x: root.isOpen ? 0 : 460
+    visible: root.isOpen
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.keyboardFocus: root.isOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-
-    Behavior on x { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
-    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     Shortcut { sequence: "Super+D"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: root.isOpen; onActivated: root.close() }

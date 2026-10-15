@@ -40,13 +40,10 @@ PanelWindow {
     implicitWidth: 840
     implicitHeight: 520
     color: "transparent"
-    visible: opacity > 0.01
-    opacity: root.isOpen ? 1 : 0
+    visible: root.isOpen
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.isOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-
-    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     Shortcut { sequence: "Super+W"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
 

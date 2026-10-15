@@ -13,12 +13,9 @@ PanelWindow {
     implicitWidth: 440
     implicitHeight: 96
     color: "transparent"
-    visible: opacity > 0.01
-    opacity: root.toastOpen ? 1 : 0
+    visible: root.toastOpen
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-
-    Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
     Timer {
         id: dismissTimer
