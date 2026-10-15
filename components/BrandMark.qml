@@ -5,66 +5,29 @@ import qs.config
 Rectangle {
     id: root
 
-    property bool showTagline: false
-    property bool interactive: true
-
-    height: Theme.pillHeight
-    width: brandRow.implicitWidth + 14
+    width: Theme.sideButtonSize
+    height: Theme.sideButtonSize
     radius: Theme.radiusPill
-    color: (root.interactive && brandMouse.containsMouse) ? Theme.cardHover : Theme.card
+    color: brandMouse.containsMouse ? Theme.cardHover : Theme.brandAccent
     border.width: 1
-    border.color: (root.interactive && brandMouse.containsMouse) ? Theme.brandAccent : Theme.border
+    border.color: Theme.brandAccent
 
     Behavior on color { ColorAnimation { duration: 120 } }
 
-    Row {
-        id: brandRow
+    Text {
         anchors.centerIn: parent
-        spacing: 6
-
-        Rectangle {
-            width: 18
-            height: 18
-            radius: Theme.radiusEmblem
-            color: Theme.brandAccent
-            anchors.verticalCenter: parent.verticalCenter
-
-            Text {
-                anchors.centerIn: parent
-                text: "✦"
-                color: Theme.brandAccentFg
-                font.family: Theme.fontUi
-                font.pixelSize: Theme.fontSizeEmblem
-                font.bold: true
-            }
-        }
-
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: "GPS"
-            color: Theme.textMain
-            font.family: Theme.fontUi
-            font.pixelSize: Theme.fontSizeGps
-            font.bold: true
-            font.letterSpacing: Theme.letterSpacingGps
-        }
-
-        Text {
-            visible: root.showTagline
-            anchors.verticalCenter: parent.verticalCenter
-            text: "· Your space. Your rules."
-            color: Theme.textMuted
-            font.family: Theme.fontUi
-            font.pixelSize: Theme.fontSizeTagline
-        }
+        text: "✦"
+        color: brandMouse.containsMouse ? Theme.brandAccent : Theme.brandAccentFg
+        font.family: Theme.fontUi
+        font.pixelSize: 16
+        font.bold: true
     }
 
     MouseArea {
         id: brandMouse
-        enabled: root.interactive
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: Quickshell.execDetached(["rofi", "-show", "drun"])
+        onClicked: Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "rofi", "-show", "drun"])
     }
 }

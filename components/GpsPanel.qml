@@ -1,5 +1,4 @@
 import Quickshell
-import Quickshell.Hyprland
 import QtQuick
 import qs.config
 
@@ -8,74 +7,57 @@ PanelWindow {
 
     property var hub: null
 
+    // Anchored to the LEFT side of the screen (reserves 58px automatically)
     anchors {
         top: true
+        bottom: true
         left: true
-        right: true
     }
 
-    implicitHeight: Theme.panelWindowHeight
+    implicitWidth: Theme.sidebarWindowWidth
     color: "transparent"
 
     Rectangle {
         id: barSurface
         anchors {
             top: parent.top
+            bottom: parent.bottom
             left: parent.left
-            right: parent.right
             topMargin: 8
-            leftMargin: 12
-            rightMargin: 12
+            bottomMargin: 8
+            leftMargin: 8
         }
-        height: Theme.panelBarHeight
+        width: Theme.sidebarBarWidth
         radius: Theme.radiusPanel
         color: Theme.surface
         border.width: 1
         border.color: Theme.border
 
-        // Left Cluster: BrandMark + Workspaces
-        Row {
-            id: leftCluster
+        // Top Cluster: GPS Launcher + Vertical Workspaces
+        Column {
+            id: topCluster
             anchors {
-                left: parent.left
-                leftMargin: 7
-                verticalCenter: parent.verticalCenter
+                top: parent.top
+                topMargin: 8
+                horizontalCenter: parent.horizontalCenter
             }
-            spacing: 6
+            spacing: 8
 
             BrandMark {
-                showTagline: false
             }
 
             WorkspaceIndicator {
             }
         }
 
-        // True Screen-Centered Window Title (Hidden when no window is focused)
-        Text {
-            id: windowTitle
-            readonly property bool hasWindow: Hyprland.activeToplevel !== null
-                && Hyprland.activeToplevel.title !== ""
-            visible: hasWindow
-            anchors.centerIn: parent
-            width: Math.min(implicitWidth, 360)
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-            text: hasWindow ? Hyprland.activeToplevel.title : ""
-            color: Theme.textMain
-            font.family: Theme.fontUi
-            font.pixelSize: 12
-            font.bold: true
-        }
-
-        // Right Cluster: Consolidated StatusPills
+        // Bottom Cluster: StatusPills
         StatusPills {
-            id: rightCluster
+            id: bottomCluster
             hub: root.hub
             anchors {
-                right: parent.right
-                rightMargin: 7
-                verticalCenter: parent.verticalCenter
+                bottom: parent.bottom
+                bottomMargin: 8
+                horizontalCenter: parent.horizontalCenter
             }
         }
     }

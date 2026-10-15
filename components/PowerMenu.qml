@@ -9,14 +9,14 @@ PanelWindow {
     visible: root.hub !== null && root.hub.powerMenuOpen
 
     anchors {
-        top: true
-        right: true
+        bottom: true
+        left: true
     }
 
     exclusionMode: ExclusionMode.Ignore
     margins {
-        top: 54
-        right: 12
+        bottom: 8
+        left: 62
     }
 
     implicitWidth: 280

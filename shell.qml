@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
+import Quickshell.Services.Notifications
 import QtQuick
 import qs.config
 import qs.components
@@ -9,45 +10,90 @@ import qs.components
 Scope {
     id: root
 
-    // UI Overlay & Tooltip States
+    // UI Popup Routing: "wifi", "bt", "battery", "clock", or "settings"
     property bool dashboardOpen: false
+    property string activePopup: "settings"
     property bool powerMenuOpen: false
     property string pendingPowerAction: ""
     property var pendingPowerCmd: []
     property string tooltipText: ""
+
+    // Set to true once Tide Island is running so Tide Island owns top-center notifications/OSD
+    property bool tideIslandActive: true
+
+    // Wallpaper & DND State
+    property int wallpaperMode: 0
+    property bool dndEnabled: false
+
+    // Notification Toast State
+    property bool toastVisible: false
+    property string toastApp: ""
+    property string toastSummary: ""
+    property string toastBody: ""
+    property bool toastUrgent: false
 
     // OSD State
     property bool osdVisible: false
     property string osdIcon: "󰕾"
     property int osdValue: 0
 
-    // Network, Brightness, and Media State
+    // Calendar & Pomodoro Timer State
+    property int calYear: new Date().getFullYear()
+    property int calMonth: new Date().getMonth()
+    property string calTitle: ""
+    property var calCells: []
+
+    property bool pomoRunning: false
+    property string pomoPhase: "Pomodoro Focus"
+    property int pomoTargetSec: 25 * 60
+    property int pomoRemainingSec: 25 * 60
+    readonly property string pomoDisplay: {
+        const m = Math.floor(pomoRemainingSec / 60)
+        const s = pomoRemainingSec % 60
+        return (m < 10 ? "0" + m : "" + m) + ":" + (s < 10 ? "0" + s : "" + s)
+    }
+    readonly property string pomoShortText: Math.ceil(pomoRemainingSec / 60) + "m"
+
+    // Wi-Fi State
+    property bool wifiEnabled: true
+    property bool wifiScanning: false
     property string netType: "disconnected"
     property string netName: "Offline"
     property string netDevice: "wlan0"
+    property var wifiNetworks: []
+
+    // Bluetooth State
+    property bool btPowered: false
+    property bool btScanning: false
+    property string btConnectedName: ""
+    property var btDevices: []
+
+    // Brightness, Power Profile, and Media State
     property int brightnessPct: 10
+    property string powerProfile: "balanced"
     property string mediaStatus: "Stopped"
     property string mediaArtist: ""
     property string mediaTitle: ""
 
-    // Automatically remove the clashing cyan Hyprland droplet & sync borders on load
     Component.onCompleted: {
+        root.rebuildCalendar()
         Quickshell.execDetached([
             "hyprctl", "--batch",
             "keyword misc:disable_hyprland_logo true ; "
             + "keyword misc:disable_splash_rendering true ; "
-            + "keyword misc:background_color 0x111522 ; "
+            + "keyword misc:background_color 0x0e121d ; "
             + "keyword general:col.active_border rgba(eeb7d8ee) rgba(9ce5c0ee) 45deg ; "
             + "keyword general:col.inactive_border rgba(3a3a54aa) ; "
             + "keyword decoration:rounding 12"
         ])
     }
 
+    // NotificationServer handled by Tide Island
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
 
-    // Audio & Battery Computed Properties
     readonly property var audioSink: Pipewire.defaultAudioSink
     readonly property bool audioReady: audioSink !== null && audioSink.audio !== null
     readonly property bool isMuted: audioReady ? audioSink.audio.muted : false
@@ -61,7 +107,28 @@ Scope {
     }
     readonly property bool onAcPower: !UPower.onBattery
 
-    // Processes: Network (nmcli), Brightness (brightnessctl), Media (playerctl)
+    // Pomodoro 1-second countdown timer (only runs when pomoRunning is true)
+    Timer {
+        interval: 1000
+        running: root.pomoRunning
+        repeat: true
+        onTriggered: {
+            if (root.pomoRemainingSec > 1) {
+                root.pomoRemainingSec -= 1
+            } else {
+                root.pomoRemainingSec = 0
+                root.pomoRunning = false
+                root.toastApp = "Pomodoro Timer"
+                root.toastSummary = "✦ " + root.pomoPhase + " Complete!"
+                root.toastBody = "Time for a break or your next session."
+                root.toastUrgent = true
+                root.toastVisible = true
+                toastTimer.restart()
+            }
+        }
+    }
+
+    // Processes: Wi-Fi, Bluetooth, Brightness, Power Profiles, Media
     Process {
         id: nmcliProc
         command: ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]
@@ -72,11 +139,79 @@ Scope {
     }
 
     Process {
+        id: wifiRadioProc
+        command: ["nmcli", "radio", "wifi"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.wifiEnabled = (this.text.trim() === "enabled")
+            }
+        }
+    }
+
+    Process {
+        id: wifiListProc
+        command: ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.wifiScanning = false
+                root.parseWifiList(this.text)
+            }
+        }
+    }
+
+    Process {
+        id: wifiRescanProc
+        command: ["nmcli", "device", "wifi", "rescan"]
+        onExited: wifiListProc.running = true
+    }
+
+    Process {
+        id: btStatusProc
+        command: [
+            "sh", "-c",
+            "bluetoothctl show | grep -q '\''Powered: yes'\'' && echo '\''ON'\'' || echo '\''OFF'\''; "
+            + "bluetoothctl devices | while read -r _ mac name; do "
+            + "  if [ -n \"$mac\" ]; then "
+            + "    conn=$(bluetoothctl info \"$mac\" | grep -q '\''Connected: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
+            + "    echo \"$conn|$mac|$name\"; "
+            + "  fi; "
+            + "done"
+        ]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.btScanning = false
+                root.parseBtOutput(this.text)
+            }
+        }
+    }
+
+    Process {
+        id: btScanProc
+        command: ["sh", "-c", "bluetoothctl --timeout 4 scan on >/dev/null 2>&1"]
+        onExited: btStatusProc.running = true
+    }
+
+    Process {
         id: brightReadProc
         command: ["brightnessctl", "-m"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: root.parseBrightness(this.text)
+        }
+    }
+
+    Process {
+        id: profileReadProc
+        command: ["powerprofilesctl", "get"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const mode = this.text.trim()
+                if (mode !== "") root.powerProfile = mode
+            }
         }
     }
 
@@ -90,12 +225,16 @@ Scope {
     }
 
     Timer {
-        interval: 3000
+        interval: 4000
         running: true
         repeat: true
         onTriggered: {
             if (!nmcliProc.running) nmcliProc.running = true
             if (!mediaReadProc.running) mediaReadProc.running = true
+            if (root.dashboardOpen) {
+                if (root.activePopup === "battery" && !profileReadProc.running) profileReadProc.running = true
+                if (root.activePopup === "bt" && !btStatusProc.running) btStatusProc.running = true
+            }
         }
     }
 
@@ -107,24 +246,247 @@ Scope {
     }
 
     Timer {
+        id: toastTimer
+        interval: 4500
+        repeat: false
+        onTriggered: root.toastVisible = false
+    }
+
+    Timer {
         id: screenshotTimer
         interval: 180
         repeat: false
         onTriggered: Quickshell.execDetached(["sh", "-c", "grim -g \"$(slurp)\" - | swappy -f -"])
     }
 
-    // Tooltip & OSD Helpers
-    function setTooltip(text) {
-        root.tooltipText = text
+    // ------------------------------------------------------------------------
+    // CALENDAR & POMODORO FUNCTIONS
+    // ------------------------------------------------------------------------
+    function rebuildCalendar() {
+        const months = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        root.calTitle = months[root.calMonth] + " " + root.calYear
+
+        const now = new Date()
+        const firstDay = new Date(root.calYear, root.calMonth, 1)
+        const startOffset = (firstDay.getDay() + 6) % 7 // Monday = 0
+        const daysInMonth = new Date(root.calYear, root.calMonth + 1, 0).getDate()
+        const daysInPrev = new Date(root.calYear, root.calMonth, 0).getDate()
+
+        const cells = []
+        for (let i = 0; i < 42; i++) {
+            const dNum = i - startOffset + 1
+            let label = ""
+            let inMonth = false
+            let isToday = false
+
+            if (dNum < 1) {
+                label = "" + (daysInPrev + dNum)
+            } else if (dNum > daysInMonth) {
+                label = "" + (dNum - daysInMonth)
+            } else {
+                label = "" + dNum
+                inMonth = true
+                isToday = (
+                    dNum === now.getDate() &&
+                    root.calMonth === now.getMonth() &&
+                    root.calYear === now.getFullYear()
+                )
+            }
+            cells.push({ label: label, inMonth: inMonth, isToday: isToday })
+        }
+        root.calCells = cells
     }
 
-    function clearTooltip() {
+    function changeCalendarMonth(delta) {
+        let m = root.calMonth + delta
+        let y = root.calYear
+        if (m < 0) { m = 11; y -= 1 }
+        else if (m > 11) { m = 0; y += 1 }
+        root.calMonth = m
+        root.calYear = y
+        root.rebuildCalendar()
+    }
+
+    function resetCalendar() {
+        const now = new Date()
+        root.calYear = now.getFullYear()
+        root.calMonth = now.getMonth()
+        root.rebuildCalendar()
+    }
+
+    function togglePomodoro() {
+        if (root.pomoRemainingSec <= 0) {
+            root.pomoRemainingSec = root.pomoTargetSec
+        }
+        root.pomoRunning = !root.pomoRunning
+    }
+
+    function resetPomodoro() {
+        root.pomoRunning = false
+        root.pomoRemainingSec = root.pomoTargetSec
+    }
+
+    function setPomodoroPreset(mins, title) {
+        root.pomoRunning = false
+        root.pomoPhase = title
+        root.pomoTargetSec = mins * 60
+        root.pomoRemainingSec = mins * 60
+    }
+
+    function addPomodoroMinutes(mins) {
+        root.pomoRemainingSec += mins * 60
+        root.pomoTargetSec = Math.max(root.pomoTargetSec, root.pomoRemainingSec)
+    }
+
+    // ------------------------------------------------------------------------
+    // ISOLATED POPUP ROUTER
+    // ------------------------------------------------------------------------
+    function setTooltip(text) { root.tooltipText = text }
+    function clearTooltip() { root.tooltipText = "" }
+    function dismissToast() { root.toastVisible = false }
+
+    function openPopup(kind) {
         root.tooltipText = ""
+        root.powerMenuOpen = false
+        if (root.dashboardOpen && root.activePopup === kind) {
+            root.dashboardOpen = false
+            return
+        }
+        root.activePopup = kind
+        root.dashboardOpen = true
+
+        if (kind === "wifi") {
+            nmcliProc.running = true
+            wifiRadioProc.running = true
+            wifiListProc.running = true
+        } else if (kind === "bt") {
+            btStatusProc.running = true
+        } else if (kind === "battery") {
+            profileReadProc.running = true
+        } else if (kind === "clock") {
+            root.rebuildCalendar()
+        } else if (kind === "settings") {
+            brightReadProc.running = true
+            mediaReadProc.running = true
+        }
+    }
+
+    function toggleDashboard() {
+        openPopup("settings")
+    }
+
+    function cycleWallpaper() {
+        root.wallpaperMode = (root.wallpaperMode + 1) % 3
+        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/cycle-wall.fish"])
+    }
+
+    // Wi-Fi Actions
+    function toggleWifiPower() {
+        const next = root.wifiEnabled ? "off" : "on"
+        root.wifiEnabled = !root.wifiEnabled
+        Quickshell.execDetached(["nmcli", "radio", "wifi", next])
+        nmcliProc.running = true
+        wifiListProc.running = true
+    }
+
+    function rescanWifi() {
+        root.wifiScanning = true
+        wifiRescanProc.running = true
+    }
+
+    function connectWifi(ssid) {
+        if (!ssid) return
+        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+        nmcliProc.running = true
+        wifiListProc.running = true
+    }
+
+    function disconnectWifi() {
+        Quickshell.execDetached(["nmcli", "device", "disconnect", root.netDevice])
+        nmcliProc.running = true
+        wifiListProc.running = true
+    }
+
+    function parseWifiList(raw) {
+        const lines = raw.trim().split("\n")
+        const seen = {}
+        const result = []
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i]
+            if (!line) continue
+            const parts = line.split(":")
+            if (parts.length < 3) continue
+            const inUse = (parts[0].trim() === "*")
+            const ssid = parts[1].trim()
+            const sig = parseInt(parts[2], 10) || 0
+            if (!ssid || seen[ssid]) continue
+            seen[ssid] = true
+            result.push({
+                active: inUse,
+                ssid: ssid,
+                signal: sig
+            })
+            if (result.length >= 6) break
+        }
+        root.wifiNetworks = result
+    }
+
+    // Bluetooth Actions
+    function toggleBtPower() {
+        const next = root.btPowered ? "off" : "on"
+        root.btPowered = !root.btPowered
+        Quickshell.execDetached(["bluetoothctl", "power", next])
+        btStatusProc.running = true
+    }
+
+    function scanBluetooth() {
+        root.btScanning = true
+        btScanProc.running = true
+    }
+
+    function toggleBtDevice(mac, isConnected) {
+        if (!mac) return
+        const action = isConnected ? "disconnect" : "connect"
+        Quickshell.execDetached(["bluetoothctl", action, mac])
+        btStatusProc.running = true
+    }
+
+    function parseBtOutput(raw) {
+        const lines = raw.trim().split("\n")
+        if (lines.length === 0) return
+        root.btPowered = (lines[0].trim() === "ON")
+        const devs = []
+        let firstConnected = ""
+        for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split("|")
+            if (parts.length < 3) continue
+            const conn = (parts[0] === "1")
+            const mac = parts[1]
+            const name = parts.slice(2).join("|")
+            if (conn && firstConnected === "") firstConnected = name
+            devs.push({
+                connected: conn,
+                mac: mac,
+                name: name
+            })
+        }
+        root.btConnectedName = firstConnected
+        root.btDevices = devs
+    }
+
+    function setPowerProfile(mode) {
+        root.powerProfile = mode
+        Quickshell.execDetached(["powerprofilesctl", "set", mode])
+        profileReadProc.running = true
     }
 
     function showOsd(icon, val) {
+        if (root.tideIslandActive) return
         root.osdIcon = icon
-        root.osdValue = Math.max(0, Math.min(100, Math.round(val)))
+        root.osdValue = Math.max(0, Math.min(150, Math.round(val)))
         root.osdVisible = true
         osdTimer.restart()
     }
@@ -192,7 +554,7 @@ Scope {
 
     function setVolumeRatio(ratio) {
         if (!root.audioReady) return
-        const clamped = Math.max(0.0, Math.min(1.0, ratio))
+        const clamped = Math.max(0.0, Math.min(1.5, ratio))
         root.audioSink.audio.muted = false
         root.audioSink.audio.volume = clamped
         root.showOsd("󰕾", clamped * 100)
@@ -224,17 +586,6 @@ Scope {
         mediaReadProc.running = true
     }
 
-    function toggleDashboard() {
-        root.tooltipText = ""
-        root.powerMenuOpen = false
-        root.dashboardOpen = !root.dashboardOpen
-        if (root.dashboardOpen) {
-            nmcliProc.running = true
-            brightReadProc.running = true
-            mediaReadProc.running = true
-        }
-    }
-
     function openPowerMenu() {
         root.tooltipText = ""
         root.dashboardOpen = false
@@ -247,9 +598,9 @@ Scope {
     }
 
     // Modular Surfaces
-    // WallpaperLayer { hub: root }
-    GpsPanel       { hub: root }
-    ControlCenter  { hub: root }
-    PowerMenu      { hub: root }
-    OsdOverlay     { hub: root }
+    GpsPanel           { hub: root }
+    ControlCenter      { hub: root }
+    PowerMenu          { hub: root }
+    OsdOverlay         { hub: root }
+    // NotificationToasts { hub: root }
 }

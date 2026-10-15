@@ -1,3 +1,4 @@
+import Quickshell
 import Quickshell.Hyprland
 import QtQuick
 import qs.config
@@ -5,12 +6,16 @@ import qs.config
 Rectangle {
     id: root
 
-    height: Theme.pillHeight
-    width: wsRow.implicitWidth + 10
+    width: Theme.sideButtonSize
+    height: wsCol.implicitHeight + 10
     radius: Theme.radiusPill
     color: Theme.card
     border.width: 1
     border.color: Theme.border
+
+    readonly property int currentWs: (Hyprland.focusedWorkspace !== null)
+        ? Hyprland.focusedWorkspace.id
+        : 1
 
     function isWorkspaceOccupied(wsId) {
         const list = Hyprland.workspaces.values
@@ -21,8 +26,15 @@ Rectangle {
         return false
     }
 
-    Row {
-        id: wsRow
+    function switchTo(targetId) {
+        const clamped = Math.max(1, Math.min(5, targetId))
+        if (clamped !== root.currentWs) {
+            Hyprland.dispatch("workspace " + clamped)
+        }
+    }
+
+    Column {
+        id: wsCol
         anchors.centerIn: parent
         spacing: 4
 
@@ -31,23 +43,23 @@ Rectangle {
 
             Rectangle {
                 required property int modelData
-                readonly property bool isFocused: Hyprland.focusedWorkspace !== null
-                    && Hyprland.focusedWorkspace.id === modelData
+                readonly property bool isFocused: root.currentWs === modelData
                 readonly property bool isOccupied: root.isWorkspaceOccupied(modelData)
 
-                width: isFocused ? 30 : 22
-                height: 22
+                width: 26
+                height: isFocused ? 28 : 22
                 radius: 6
                 color: isFocused
                     ? Theme.brandAccent
-                    : (wsMouse.containsMouse ? Theme.cardHover : "transparent")
+                    : (wsHover.hovered ? Theme.cardHover : "transparent")
 
-                Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                Behavior on color { ColorAnimation { duration: 120 } }
+                Behavior on height { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+                Behavior on color { ColorAnimation { duration: 110 } }
+
+                HoverHandler { id: wsHover }
 
                 Text {
                     anchors.centerIn: parent
-                    anchors.verticalCenterOffset: (parent.isOccupied && !parent.isFocused) ? -2 : 0
                     text: parent.modelData
                     color: parent.isFocused
                         ? Theme.brandAccentFg
@@ -57,34 +69,41 @@ Rectangle {
                     font.bold: parent.isFocused || parent.isOccupied
                 }
 
-                // Sleek 8x2px underline bar that never collides with the digit
                 Rectangle {
                     visible: parent.isOccupied && !parent.isFocused
-                    width: 8
-                    height: 2
+                    width: 2
+                    height: 8
                     radius: 1
                     color: Theme.brandAccent
                     anchors {
-                        bottom: parent.bottom
-                        bottomMargin: 2
-                        horizontalCenter: parent.horizontalCenter
-                    }
-                }
-
-                MouseArea {
-                    id: wsMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Hyprland.dispatch("workspace " + parent.modelData)
-                    onWheel: event => {
-                        if (event.angleDelta.y > 0)
-                            Hyprland.dispatch("workspace e-1")
-                        else if (event.angleDelta.y < 0)
-                            Hyprland.dispatch("workspace e+1")
+                        left: parent.left
+                        leftMargin: 2
+                        verticalCenter: parent.verticalCenter
                     }
                 }
             }
+        }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+
+        function selectFromY(yPos) {
+            const ratio = Math.max(0.0, Math.min(0.999, (yPos - 5) / Math.max(1, root.height - 10)))
+            const ws = Math.floor(ratio * 5) + 1
+            root.switchTo(ws)
+        }
+
+        onPressed: mouse => selectFromY(mouse.y)
+        onPositionChanged: mouse => {
+            if (pressed) selectFromY(mouse.y)
+        }
+        onWheel: event => {
+            if (event.angleDelta.y > 0)
+                root.switchTo(root.currentWs - 1)
+            else if (event.angleDelta.y < 0)
+                root.switchTo(root.currentWs + 1)
         }
     }
 }
