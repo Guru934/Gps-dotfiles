@@ -3,6 +3,7 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
 import QtQuick
+import Quickshell.Wayland
 import qs.config
 import qs.components
 
@@ -624,6 +625,20 @@ Scope {
     }
 
     // Active shell surfaces. Tide Island remains the notification D-Bus owner.
+    PanelWindow {
+        id: dashboardEdgeSensor
+        anchors { top: true; bottom: true; right: true }
+        implicitWidth: 4
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onEntered: dashboard.isOpen = true
+        }
+    }
+
     LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }

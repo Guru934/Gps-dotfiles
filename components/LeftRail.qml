@@ -34,15 +34,27 @@ PanelWindow {
         Column {
             anchors.centerIn: parent
             spacing: 6
-            RailButton { glyph: "󰸉"; tooltip: "Wallpaper carousel (Super+W)"; onClicked: if (root.wallpaperCarousel) root.wallpaperCarousel.toggle() }
-            RailButton { glyph: "󰅌"; tooltip: "Clipboard (Super+V)"; onClicked: Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openClipboard"]) }
+            RailButton { glyph: "󰖩"; tooltip: "Wi-Fi connect"; onClicked: Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", root.hub && root.hub.netName !== "Offline" ? root.hub.netName : ""]) }
+            RailButton { glyph: "󰂯"; tooltip: "Bluetooth"; onClicked: Quickshell.execDetached(["rofi-bluetooth"]) }
+            RailButton { glyph: "󰕾"; tooltip: "Audio mute"; onClicked: Quickshell.execDetached(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]) }
             RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: if (root.notifications) root.notifications.toggle() }
+            RailButton { glyph: "󰸉"; tooltip: "Wallpaper carousel (Super+W)"; onClicked: if (root.wallpaperCarousel) root.wallpaperCarousel.toggle() }
+            RailButton { glyph: "󰒓"; tooltip: "Dashboard settings (Super+D)"; onClicked: if (root.dashboard) root.dashboard.toggle() }
         }
 
         Column {
             anchors { bottom: parent.bottom; bottomMargin: 10; horizontalCenter: parent.horizontalCenter }
             spacing: 6
-            RailButton { glyph: "󰍜"; tooltip: "Dashboard (Super+D)"; onClicked: if (root.dashboard) root.dashboard.toggle() }
+            Text {
+                width: 36
+                horizontalAlignment: Text.AlignHCenter
+                text: Qt.formatTime(new Date(), "HH\nmm")
+                color: Theme.textMuted
+                font.family: Theme.fontMono
+                font.pixelSize: 9
+                lineHeight: 0.9
+            }
+            RailButton { glyph: "󰐥"; tooltip: "Power menu"; onClicked: Quickshell.execDetached(["rofi", "-show", "power-menu"]) }
         }
     }
 

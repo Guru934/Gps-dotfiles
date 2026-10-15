@@ -1,12 +1,13 @@
 import Quickshell
 import QtQuick
+import QtQuick.Layouts
 import qs.config
 
 Rectangle {
     id: root
 
-    width: 36
-    height: 36
+    width: 32
+    height: 32
     radius: Theme.radiusPill
     color: brandMouse.containsMouse ? Theme.cardHover : Theme.brandAccent
     border.width: 1
@@ -16,6 +17,9 @@ Rectangle {
 
     Image {
         anchors.centerIn: parent
+        width: 20
+        height: 20
+        Layout.alignment: Qt.AlignHCenter
         source: Qt.resolvedUrl("../assets/rice-logo.svg")
         fillMode: Image.PreserveAspectFit
         smooth: true

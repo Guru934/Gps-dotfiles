@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Io
 import QtQuick
 import Quickshell.Services.Pipewire
 import qs.config
@@ -17,6 +18,8 @@ PanelWindow {
     property bool dndOn: false
     property bool sunsetOn: false
     property bool flightOn: false
+    property string cpuModel: "Detecting CPU…"
+    property string gpuModel: "Detecting GPU…"
     readonly property var tabs: ["Home", "Media", "System", "Tools"]
 
     function toggle() { root.isOpen = !root.isOpen }
@@ -34,6 +37,30 @@ PanelWindow {
     visible: root.isOpen
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.keyboardFocus: root.isOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+    Process {
+        id: cpuProbe
+        command: ["sh", "-c", "awk -F: '/^model name/{gsub(/^ /, \"\", $2); print $2; exit}' /proc/cpuinfo"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const model = this.text.trim()
+                if (model !== "") root.cpuModel = model
+            }
+        }
+    }
+
+    Process {
+        id: gpuProbe
+        command: ["sh", "-c", "lspci | grep -Ei 'vga|3d|display' | head -n 1"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const model = this.text.trim()
+                if (model !== "") root.gpuModel = model
+            }
+        }
+    }
 
     Shortcut { sequence: "Super+D"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: root.isOpen; onActivated: root.close() }
@@ -135,8 +162,8 @@ PanelWindow {
                 SectionLabel { text: "HARDWARE TELEMETRY" }
                 Row {
                     width: parent.width; spacing: 6
-                    TelemetryCard { title: "CPU"; device: "Ryzen 9"; value: "24.8%"; detail: "48°C" }
-                    TelemetryCard { title: "GPU"; device: "RTX 4080"; value: "144 FPS"; detail: "51°C" }
+                    TelemetryCard { title: "CPU"; device: root.cpuModel; value: "online"; detail: "/proc/cpuinfo" }
+                    TelemetryCard { title: "GPU"; device: root.gpuModel; value: "online"; detail: "lspci" }
                     TelemetryCard { title: "RAM"; device: "DDR5"; value: "13%"; detail: "4.2 / 32GB" }
                 }
 
