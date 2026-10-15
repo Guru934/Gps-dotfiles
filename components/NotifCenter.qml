@@ -138,17 +138,26 @@ PanelWindow {
                     border.width: 1
                     border.color: Theme.border
                     TextInput {
+                        id: taskInput
                         anchors.fill: parent
                         anchors.leftMargin: 10
                         anchors.rightMargin: 8
                         verticalAlignment: TextInput.AlignVCenter
                         color: Theme.textMain
-                        placeholderText: "Add an objective…"
                         font.family: Theme.fontUi
                         font.pixelSize: 11
                         text: root.taskDraft
                         onTextChanged: root.taskDraft = text
                         Keys.onReturnPressed: root.addTask()
+                    }
+                    Text {
+                        anchors.fill: taskInput
+                        verticalAlignment: Text.AlignVCenter
+                        text: "Add an objective…"
+                        color: Theme.textMuted
+                        font.family: Theme.fontUi
+                        font.pixelSize: 11
+                        visible: taskInput.text.length === 0 && !taskInput.activeFocus
                     }
                 }
                 Rectangle {
