@@ -90,6 +90,13 @@ Scope {
 
     // NotificationServer handled by Tide Island
 
+    IpcHandler {
+        target: "dashboard"
+        function toggle() { dashboard.toggle() }
+        function open() { dashboard.isOpen = true }
+        function close() { dashboard.isOpen = false }
+    }
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
@@ -604,9 +611,10 @@ Scope {
     }
 
     // Modular Surfaces
-    LeftRail           { hub: root; notifications: notifCenter }
+    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }
+    Dashboard          { id: dashboard; hub: root }
     ControlCenter      { hub: root }
     PowerMenu          { hub: root }
     OsdOverlay         { hub: root }

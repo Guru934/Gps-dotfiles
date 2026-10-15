@@ -7,6 +7,7 @@ PanelWindow {
     id: root
     property var hub: null
     property var notifications: null
+    property var dashboard: null
 
     anchors { top: true; bottom: true; left: true }
     // A positive fixed width prevents layer-shell from stretching the rail.
@@ -38,7 +39,7 @@ PanelWindow {
         Column {
             anchors { bottom: parent.bottom; bottomMargin: 10; horizontalCenter: parent.horizontalCenter }
             spacing: 6
-            RailButton { glyph: "󰍜"; tooltip: "Quick settings"; onClicked: if (root.hub) root.hub.toggleDashboard() }
+            RailButton { glyph: "󰍜"; tooltip: "Dashboard (Super+D)"; onClicked: if (root.dashboard) root.dashboard.toggle() }
             RailButton { glyph: "󰐥"; tooltip: "Power menu"; onClicked: if (root.hub) root.hub.openPowerMenu() }
         }
     }
