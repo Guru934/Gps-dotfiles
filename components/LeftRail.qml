@@ -6,6 +6,7 @@ import qs.config
 PanelWindow {
     id: root
     property var hub: null
+    property var notifications: null
 
     anchors { top: true; bottom: true; left: true }
     // A positive fixed width prevents layer-shell from stretching the rail.
@@ -31,7 +32,7 @@ PanelWindow {
             spacing: 6
             RailButton { glyph: "󰸉"; tooltip: "Wallpaper picker (Super+W)"; onClicked: if (root.hub) root.hub.cycleWallpaper() }
             RailButton { glyph: "󰅌"; tooltip: "Clipboard (Super+V)"; onClicked: Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openClipboard"]) }
-            RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openNotificationCenter"]) }
+            RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: if (root.notifications) root.notifications.toggle() }
         }
 
         Column {

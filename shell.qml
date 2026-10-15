@@ -604,7 +604,9 @@ Scope {
     }
 
     // Modular Surfaces
-    LeftRail           { hub: root }
+    LeftRail           { hub: root; notifications: notifCenter }
+    NotifCenter        { id: notifCenter; hub: root }
+    NotifToast         { hub: root }
     ControlCenter      { hub: root }
     PowerMenu          { hub: root }
     OsdOverlay         { hub: root }
