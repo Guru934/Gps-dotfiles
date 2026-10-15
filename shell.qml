@@ -104,6 +104,13 @@ Scope {
         function close() { notifCenter.open = false }
     }
 
+    IpcHandler {
+        target: "wallpaper"
+        function toggle() { wallpaperCarousel.toggle() }
+        function open() { wallpaperCarousel.isOpen = true }
+        function close() { wallpaperCarousel.isOpen = false }
+    }
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
@@ -618,10 +625,11 @@ Scope {
     }
 
     // Modular Surfaces
-    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard }
+    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }
     Dashboard          { id: dashboard; hub: root }
+    WallpaperCarousel  { id: wallpaperCarousel; hub: root }
     ControlCenter      { hub: root }
     PowerMenu          { hub: root }
     OsdOverlay         { hub: root }
