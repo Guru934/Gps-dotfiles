@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Wayland
 import QtQuick
 import Quickshell.Services.Pipewire
 import qs.config
