@@ -8,7 +8,8 @@ PanelWindow {
     property var hub: null
     readonly property bool toastOpen: hub !== null && hub.toastVisible
 
-    anchors { top: true; horizontalCenter: true }
+    // PanelWindow anchors are layer-shell edge flags, not Item anchors.
+    anchors { top: true }
     margins { top: 24 }
     implicitWidth: 440
     implicitHeight: 96

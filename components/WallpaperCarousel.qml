@@ -36,7 +36,9 @@ PanelWindow {
         sortField: FolderListModel.Name
     }
 
-    anchors { horizontalCenter: true; verticalCenter: true }
+    // PanelWindow anchors are layer-shell edge flags, not Item anchors.
+    anchors { top: true }
+    margins { top: 140 }
     implicitWidth: 840
     implicitHeight: 520
     color: "transparent"
