@@ -4,10 +4,9 @@
 set -gx LC_CTYPE C.UTF-8
 set -g __done_enabled 0
 
-# 1. Stop stale shell, island, and wallpaper processes.
-# These are exact process-name matches so unrelated user applications survive.
-pkill -9 -x quickshell 2>/dev/null; or true
-pkill -9 -x tide-island 2>/dev/null; or true
+# 1. Stop only the stale GPS shell and wallpaper daemon.
+# Tide Island is also a QuickShell process, so never kill all quickshell PIDs.
+pkill -9 -f "/home/rice/Projects/my-rice/shell.qml" 2>/dev/null; or true
 pkill -9 -x awww-daemon 2>/dev/null; or true
 rm -f /tmp/qs-gps.log /tmp/tide-island.log /tmp/gps-theme.log
 sleep 0.4
@@ -32,9 +31,11 @@ if not pgrep -f "wl-paste --type image --watch cliphist store" >/dev/null 2>&1
     disown
 end
 
-# 5. Launch Tide Island (exclusive notification/OSD owner).
-nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
-disown
+# 5. Keep an already-running Tide Island untouched; start it only if absent.
+if not pgrep -f "tide-island/shell.qml" >/dev/null 2>&1
+    nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
+    disown
+end
 
 # 6. Launch the QuickShell master shell.
 nohup /usr/bin/quickshell -p "$HOME/Projects/my-rice/shell.qml" >/tmp/qs-gps.log 2>&1 &
