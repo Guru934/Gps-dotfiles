@@ -34,7 +34,7 @@ PanelWindow {
         Column {
             anchors.centerIn: parent
             spacing: 6
-            RailButton { glyph: "󰖩"; tooltip: "Wi-Fi connect"; onClicked: Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", root.hub && root.hub.netName !== "Offline" ? root.hub.netName : ""]) }
+            RailButton { glyph: "󰖩"; tooltip: "Wi-Fi connections"; onClicked: Quickshell.execDetached(["nm-connection-editor"]) }
             RailButton { glyph: "󰂯"; tooltip: "Bluetooth"; onClicked: Quickshell.execDetached(["rofi-bluetooth"]) }
             RailButton { glyph: "󰕾"; tooltip: "Audio mute"; onClicked: Quickshell.execDetached(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]) }
             RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: if (root.notifications) root.notifications.toggle() }

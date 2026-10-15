@@ -19,7 +19,15 @@ PanelWindow {
     property bool sunsetOn: false
     property bool flightOn: false
     property string cpuModel: "Detecting CPU…"
+    property string cpuTemp: "—"
+    property string cpuUsage: "—"
     property string gpuModel: "Detecting GPU…"
+    property string ramUsage: "Detecting RAM…"
+    property string wifiSsid: "Offline"
+    property string audioSink: "Detecting audio sink…"
+    property string mediaArtist: ""
+    property string mediaTitle: "No media playing"
+    property string mediaStatus: "Stopped"
     readonly property var tabs: ["Home", "Media", "System", "Tools"]
 
     function toggle() { root.isOpen = !root.isOpen }
@@ -62,6 +70,97 @@ PanelWindow {
         }
     }
 
+    Process {
+        id: cpuTelemetryProbe
+        command: ["sh", "-c", "temp=\"\"; for zone in /sys/class/thermal/thermal_zone*/temp; do [ -r \"$zone\" ] || continue; value=$(cat \"$zone\"); case \"$value\" in ''|*[!0-9]*) continue;; esac; [ \"$value\" -gt 1000 ] && temp=\"$((value / 1000))°C\" && break; done; awk -v temp=\"$temp\" '/^cpu /{total=$2+$3+$4+$5+$6+$7+$8+$9; idle=$5+$6; printf \"%s|%d%%\\n\", temp, (total > 0 ? (100 * (total - idle) / total) : 0); exit}' /proc/stat"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const fields = this.text.trim().split("|")
+                if (fields.length === 2) {
+                    root.cpuTemp = fields[0] !== "" ? fields[0] : "—"
+                    root.cpuUsage = fields[1]
+                }
+            }
+        }
+    }
+
+    Process {
+        id: ramProbe
+        command: ["sh", "-c", "awk '/MemTotal:/{total=$2} /MemAvailable:/{available=$2} END {used=total-available; printf \"%.1f / %.1f GB|%d%%\\n\", used/1024/1024, total/1024/1024, (total > 0 ? 100*used/total : 0)}' /proc/meminfo"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const value = this.text.trim()
+                if (value !== "") root.ramUsage = value
+            }
+        }
+    }
+
+    Process {
+        id: wifiProbe
+        command: ["sh", "-c", "nmcli -t -f active,ssid dev wifi | awk -F: '$1 == \"yes\" {print $2; exit}'"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const value = this.text.trim()
+                root.wifiSsid = value !== "" ? value : "Offline"
+            }
+        }
+    }
+
+    Process {
+        id: audioProbe
+        command: ["sh", "-c", "wpctl status | awk '/Sources:/ {section=0} /Sinks:/ {section=1; next} section && /[0-9]+\\./ {gsub(/[│├─*]/, \"\", $0); print; exit}'"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const value = this.text.trim()
+                if (value !== "") root.audioSink = value
+            }
+        }
+    }
+
+    Process {
+        id: mediaProbe
+        command: ["playerctl", "metadata", "--format", "{{status}}|{{artist}}|{{title}}"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const fields = this.text.trim().split("|")
+                if (fields.length >= 3) {
+                    root.mediaStatus = fields[0]
+                    root.mediaArtist = fields[1]
+                    root.mediaTitle = fields[2] !== "" ? fields[2] : "Unknown track"
+                } else {
+                    root.mediaStatus = "Stopped"
+                    root.mediaArtist = ""
+                    root.mediaTitle = "No media playing"
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 5000
+        running: true
+        repeat: true
+        onTriggered: {
+            if (!cpuTelemetryProbe.running) cpuTelemetryProbe.running = true
+            if (!ramProbe.running) ramProbe.running = true
+            if (!wifiProbe.running) wifiProbe.running = true
+            if (!audioProbe.running) audioProbe.running = true
+            if (!mediaProbe.running) mediaProbe.running = true
+        }
+    }
+
+    Timer {
+        id: autoCloseTimer
+        interval: 350
+        repeat: false
+        onTriggered: root.isOpen = false
+    }
+
     Shortcut { sequence: "Super+D"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: root.isOpen; onActivated: root.close() }
 
@@ -71,6 +170,15 @@ PanelWindow {
         color: Theme.surface
         border.width: 1
         border.color: Theme.brandAccent
+
+        MouseArea {
+            anchors.fill: parent
+            z: 20
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+            onEntered: autoCloseTimer.stop()
+            onExited: autoCloseTimer.start()
+        }
 
         Column {
             anchors.fill: parent
@@ -162,16 +270,16 @@ PanelWindow {
                 SectionLabel { text: "HARDWARE TELEMETRY" }
                 Row {
                     width: parent.width; spacing: 6
-                    TelemetryCard { title: "CPU"; device: root.cpuModel; value: "online"; detail: "/proc/cpuinfo" }
-                    TelemetryCard { title: "GPU"; device: root.gpuModel; value: "online"; detail: "lspci" }
-                    TelemetryCard { title: "RAM"; device: "DDR5"; value: "13%"; detail: "4.2 / 32GB" }
+                    TelemetryCard { title: "CPU"; device: root.cpuModel; value: root.cpuUsage; detail: root.cpuTemp }
+                    TelemetryCard { title: "GPU"; device: root.gpuModel; value: "active"; detail: "lspci" }
+                    TelemetryCard { title: "RAM"; device: "Memory"; value: root.ramUsage.split("|")[1] || "—"; detail: root.ramUsage.split("|")[0] || "—" }
                 }
 
                 SectionLabel { text: "QUICK TOGGLES" }
                 Grid {
                     width: parent.width; columns: 2; rowSpacing: 6; columnSpacing: 6
-                    ToggleCard { label: "Wi-Fi"; value: "Zenith_5G"; enabledState: root.wifiOn; onToggled: root.toggleFlag("wifiOn") }
-                    ToggleCard { label: "Bluetooth"; value: "WH-1000XM5"; enabledState: root.bluetoothOn; onToggled: root.toggleFlag("bluetoothOn") }
+                    ToggleCard { label: "Wi-Fi"; value: root.wifiSsid; enabledState: root.wifiOn; onToggled: root.toggleFlag("wifiOn") }
+                    ToggleCard { label: "Bluetooth"; value: root.hub && root.hub.btConnectedName !== "" ? root.hub.btConnectedName : "No device connected"; enabledState: root.bluetoothOn; onToggled: root.toggleFlag("bluetoothOn") }
                     ToggleCard { label: "Replay Buffer"; value: "OBS capture"; enabledState: root.replayOn; onToggled: root.toggleFlag("replayOn") }
                     ToggleCard { label: "Do Not Disturb"; value: "Notifications"; enabledState: root.dndOn; onToggled: root.toggleFlag("dndOn") }
                     ToggleCard { label: "Hyprsunset"; value: "3200K"; enabledState: root.sunsetOn; onToggled: root.toggleFlag("sunsetOn") }
@@ -202,9 +310,9 @@ PanelWindow {
                 width: parent.width; height: 250; radius: 12; color: Theme.card; border.width: 1; border.color: Theme.border
                 Column {
                     anchors.centerIn: parent; spacing: 12
-                    Text { text: "I know the night is young"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
-                    Text { text: "but I can feel the morning"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 17; font.bold: true }
-                    Text { text: "moving through the city lights"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
+                    Text { text: root.mediaStatus === "Playing" ? root.mediaTitle : "No synchronized lyrics"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
+                    Text { text: root.mediaArtist !== "" ? root.mediaArtist : root.mediaStatus; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 17; font.bold: true }
+                    Text { text: "Lyrics provider unavailable"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 13 }
                 }
             }
         }
@@ -215,11 +323,11 @@ PanelWindow {
         Column {
             width: parent.width; spacing: 12
             SectionLabel { text: "WIREPLUMBER ROUTING" }
-            RouteCard { title: "Topping E30 II DAC"; detail: "Default output sink"; active: true }
-            RouteCard { title: "Sony WH-1000XM5"; detail: "Standby Bluetooth sink"; active: false }
+            RouteCard { title: root.audioSink; detail: "Default output from wpctl status"; active: true }
+            RouteCard { title: "PipeWire device graph"; detail: "Run wpctl status for routing"; active: false }
             SectionLabel { text: "LIVE STATE" }
             InfoRow { label: "PipeWire"; value: "Running"; accent: Theme.statusGood }
-            InfoRow { label: "Default volume"; value: root.hub ? root.hub.volumePct + "%" : "—"; accent: Theme.brandAccent }
+            InfoRow { label: "Audio sink"; value: root.audioSink; accent: Theme.brandAccent }
             InfoRow { label: "Power profile"; value: root.hub ? root.hub.powerProfile : "balanced"; accent: Theme.statusWarn }
             InfoRow { label: "Network"; value: root.hub ? root.hub.netName : "Offline"; accent: Theme.textMuted }
         }
@@ -302,9 +410,9 @@ PanelWindow {
             }
             Column {
                 width: parent.width - (expanded ? 160 : 100); anchors.verticalCenter: parent.verticalCenter; spacing: 7
-                Text { text: "HOME"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true }
-                Text { text: "Odyssey"; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 10 }
-                Text { text: expanded ? "We are moving through the night…\nA synchronized lyric feed is ready." : "♫  live lyrics · PipeWire"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                Text { text: root.mediaTitle; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true; elide: Text.ElideRight; width: parent.width }
+                Text { text: root.mediaArtist !== "" ? root.mediaArtist : root.mediaStatus; color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 10; elide: Text.ElideRight; width: parent.width }
+                Text { text: expanded ? (root.mediaStatus === "Playing" ? "♫  playing · synchronized lyrics unavailable" : "♫  " + root.mediaStatus) : "♫  " + root.mediaStatus; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; wrapMode: Text.WordWrap; width: parent.width }
             }
         }
     }

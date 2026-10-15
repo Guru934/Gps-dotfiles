@@ -53,6 +53,13 @@ PanelWindow {
         root.tasks = next
     }
 
+    Timer {
+        id: autoCloseTimer
+        interval: 350
+        repeat: false
+        onTriggered: root.open = false
+    }
+
     anchors { top: true; bottom: true; left: true }
     margins { left: 60 }
     implicitWidth: 360
@@ -72,6 +79,15 @@ PanelWindow {
         color: Theme.surface
         border.width: 1
         border.color: Theme.brandAccent
+
+        MouseArea {
+            anchors.fill: parent
+            z: 20
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+            onEntered: autoCloseTimer.stop()
+            onExited: autoCloseTimer.start()
+        }
 
         Column {
             anchors.fill: parent
