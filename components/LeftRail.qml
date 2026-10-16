@@ -9,6 +9,7 @@ PanelWindow {
     property var notifications: null
     property var dashboard: null
     property var wallpaperCarousel: null
+    property var settingsHub: null
 
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
@@ -34,12 +35,17 @@ PanelWindow {
         Column {
             anchors.centerIn: parent
             spacing: 6
-            RailButton { glyph: "󰖩"; tooltip: "Wi-Fi connections"; onClicked: Quickshell.execDetached(["nm-connection-editor"]) }
-            RailButton { glyph: "󰂯"; tooltip: "Bluetooth"; onClicked: Quickshell.execDetached(["rofi-bluetooth"]) }
             RailButton { glyph: "󰕾"; tooltip: "Audio mute"; onClicked: Quickshell.execDetached(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]) }
             RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: if (root.notifications) root.notifications.toggle() }
             RailButton { glyph: "󰸉"; tooltip: "Wallpaper carousel (Super+W)"; onClicked: if (root.wallpaperCarousel) root.wallpaperCarousel.toggle() }
-            RailButton { glyph: "󰒓"; tooltip: "Dashboard settings (Super+D)"; onClicked: if (root.dashboard) root.dashboard.toggle() }
+            RailButton {
+                glyph: "󰒓"
+                tooltip: "Settings (Super+,)"
+                onClicked: {
+                    if (root.settingsHub) root.settingsHub.toggle()
+                    else Quickshell.execDetached(["quickshell", "ipc", "call", "settings", "toggle"])
+                }
+            }
         }
 
         Column {
