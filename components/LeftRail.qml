@@ -35,6 +35,8 @@ PanelWindow {
         Column {
             anchors.centerIn: parent
             spacing: 6
+            RailButton { glyph: "󰖩"; tooltip: "Wi-Fi connections"; onClicked: Quickshell.execDetached(["nm-connection-editor"]) }
+            RailButton { glyph: "󰂯"; tooltip: "Bluetooth"; onClicked: Quickshell.execDetached(["rofi-bluetooth"]) }
             RailButton { glyph: "󰕾"; tooltip: "Audio mute"; onClicked: Quickshell.execDetached(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]) }
             RailButton { glyph: "󰂚"; tooltip: "Notifications (Super+N)"; onClicked: if (root.notifications) root.notifications.toggle() }
             RailButton { glyph: "󰸉"; tooltip: "Wallpaper carousel (Super+W)"; onClicked: if (root.wallpaperCarousel) root.wallpaperCarousel.toggle() }
