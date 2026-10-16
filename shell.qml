@@ -111,6 +111,13 @@ Scope {
         function close() { wallpaperCarousel.isOpen = false }
     }
 
+    IpcHandler {
+        target: "settings"
+        function toggle() { settingsHub.toggle() }
+        function open() { settingsHub.isOpen = true }
+        function close() { settingsHub.isOpen = false }
+    }
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
@@ -639,9 +646,10 @@ Scope {
         }
     }
 
-    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel }
+    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel; settingsHub: settingsHub }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }
     Dashboard          { id: dashboard; hub: root }
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
+    SettingsHub        { id: settingsHub }
 }
