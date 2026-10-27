@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import qs.config
@@ -10,11 +11,61 @@ PanelWindow {
     property bool open: false
     property string filter: "All"
     property string taskDraft: ""
-    property var tasks: [
-        { text: "Review shell.qml Phase 2 wiring", done: false },
-        { text: "Check PipeWire volume telemetry", done: true },
-        { text: "Commit notification drawer", done: false }
-    ]
+    property var tasks: []
+
+    // Live notification history + DND state from Tide Island (the single
+    // notification daemon). Polled while the center is open - never faked.
+    property var islandItems: []
+    property bool islandFocus: false
+    readonly property string islandPath: Quickshell.env("HOME") + "/.local/share/tide-island"
+
+    function parseIslandHistory(raw) {
+        try {
+            const d = JSON.parse(raw)
+            root.islandFocus = !!d.focus
+            root.islandItems = (d.items || []).slice(0, 30)
+        } catch (e) {}
+    }
+    function refreshIsland() {
+        if (!islandHistoryProc.running) islandHistoryProc.running = true
+    }
+    function toggleIslandFocus() {
+        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "-p", root.islandPath, "call", "island", "focusToggle"])
+        islandSyncTimer.restart()
+    }
+    function openIslandCenter() {
+        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "-p", root.islandPath, "call", "tide", "toggleNotificationCenter"])
+    }
+    function timeAgo(ts) {
+        if (!ts) return ""
+        const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+        if (s < 60) return s + "s ago"
+        if (s < 3600) return Math.floor(s / 60) + "m ago"
+        if (s < 86400) return Math.floor(s / 3600) + "h ago"
+        return Math.floor(s / 86400) + "d ago"
+    }
+
+    Process {
+        id: islandHistoryProc
+        command: ["quickshell", "ipc", "-p", root.islandPath, "call", "island", "history"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.parseIslandHistory(text)
+        }
+    }
+    Timer {
+        id: islandSyncTimer
+        interval: 700
+        repeat: false
+        onTriggered: root.refreshIsland()
+    }
+    Timer {
+        interval: 3000
+        repeat: true
+        running: root.open
+        onTriggered: root.refreshIsland()
+    }
+    onOpenChanged: if (root.open) root.refreshIsland()
     readonly property var weekDays: {
         const today = new Date()
         const mondayOffset = (today.getDay() + 6) % 7
@@ -217,43 +268,97 @@ PanelWindow {
                     MouseArea { anchors.fill: parent; onClicked: root.toggleTask(modelData.text) }
                 }
             }
+            Text {
+                visible: root.visibleTasks.length === 0
+                text: "No objectives yet — add one above."
+                color: Theme.textMuted
+                font.family: Theme.fontUi
+                font.pixelSize: 9
+            }
 
-            Text { text: "ACTIVE NOTIFICATIONS"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
-            Column {
+            Text { text: "FOCUS MODE (DO NOT DISTURB)"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
+            Row {
                 width: parent.width
+                height: 34
                 spacing: 6
-                NotificationCard { category: "POMODORO"; summary: "Focus session complete"; detail: "Time for a 5-min breather! 🍵"; action: "Start Break"; onActionClicked: if (root.hub) root.hub.toastVisible = true }
-                NotificationCard { category: "GITHUB"; summary: "Phase 2 is ready for review"; detail: "notif-center changes are unstaged"; action: "View Diff" }
-                NotificationCard { category: "PIPEWIRE"; summary: "Output device connected"; detail: "Default sink is ready"; action: "Dismiss" }
+                Rectangle {
+                    width: parent.width - islandCenterButton.width - 6
+                    height: parent.height
+                    radius: 9
+                    color: root.islandFocus ? Theme.brandAccent : Theme.card
+                    border.width: 1
+                    border.color: root.islandFocus ? Theme.brandAccent : Theme.border
+                    Text {
+                        anchors.centerIn: parent
+                        text: root.islandFocus ? "Notifications paused — click to resume" : "Notifications active — click to pause"
+                        color: root.islandFocus ? Theme.brandAccentFg : Theme.textMain
+                        font.family: Theme.fontUi
+                        font.pixelSize: 10
+                        font.bold: true
+                    }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.toggleIslandFocus() }
+                }
+                Rectangle {
+                    id: islandCenterButton
+                    width: 102
+                    height: parent.height
+                    radius: 9
+                    color: Theme.card
+                    border.width: 1
+                    border.color: Theme.border
+                    Text { anchors.centerIn: parent; text: "Open Center"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openIslandCenter() }
+                }
+            }
+
+            Text { text: "RECENT NOTIFICATIONS"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
+            ListView {
+                id: islandList
+                width: parent.width
+                height: 132
+                spacing: 6
+                clip: true
+                model: root.islandItems
+                delegate: NotificationCard {
+                    app: modelData.app || "NOTIFICATION"
+                    summary: modelData.summary
+                    detail: modelData.body
+                    when: root.timeAgo(modelData.ts)
+                }
+            }
+            Text {
+                visible: root.islandItems.length === 0
+                text: "No notifications yet — real ones from any app appear here."
+                color: Theme.textMuted
+                font.family: Theme.fontUi
+                font.pixelSize: 9
+                width: parent.width
+                wrapMode: Text.WordWrap
             }
         }
     }
 
     component NotificationCard: Rectangle {
-        property string category: "SYSTEM"
+        property string app: "NOTIFICATION"
         property string summary: ""
         property string detail: ""
-        property string action: "Dismiss"
-        signal actionClicked()
+        property string when: ""
         width: parent ? parent.width : 320
-        height: 62
+        height: 58
         radius: 10
         color: Theme.card
         border.width: 1
         border.color: Theme.border
         Column {
-            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
             spacing: 2
-            Text { text: category; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
-            Text { text: summary; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
-            Text { text: detail; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9; elide: Text.ElideRight; width: 190 }
-        }
-        Rectangle {
-            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
-            width: actionText.implicitWidth + 14; height: 24; radius: Theme.radiusPill
-            color: Theme.brandAccent
-            Text { id: actionText; anchors.centerIn: parent; text: action; color: Theme.brandAccentFg; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
-            MouseArea { anchors.fill: parent; onClicked: actionClicked() }
+            Row {
+                spacing: 6
+                Text { text: app; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
+                Text { text: when; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 }
+            }
+            Text { text: summary; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true; width: parent.width; elide: Text.ElideRight }
+            Text { visible: detail !== ""; text: detail; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9; width: parent.width; elide: Text.ElideRight }
         }
     }
 }

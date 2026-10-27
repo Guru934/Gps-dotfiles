@@ -6,6 +6,7 @@ import QtQuick
 import Quickshell.Wayland
 import qs.config
 import qs.components
+import "pet"
 
 Scope {
     id: root
@@ -13,9 +14,21 @@ Scope {
     // UI Popup Routing: "wifi", "bt", "battery", "clock", or "settings"
     property bool dashboardOpen: false
     property string activePopup: "settings"
-    property bool powerMenuOpen: false
-    property string pendingPowerAction: ""
-    property var pendingPowerCmd: []
+    // Dashboard behaviour settings (owned here, consumed by DashboardHost /
+    // the edge sensor / SysProbe so the System tab never duplicates state).
+    property bool edgeHotspotEnabled: true
+    property int dashboardAutoHideMs: 400
+    property int telemetryTickMs: 1000
+    // Wall-clock ms of the last Dashboard close; the bottom-right sensor
+    // ignores hover until a short cooldown has passed so closing the drawer
+    // can never be immediately undone by the surface that appears under the
+    // pointer as the panel unmaps.
+    property real dashLastHide: 0
+    readonly property int dashboardReopenCooldownMs: 800
+    // Screen point the current popup anchors to (set by the rail icon that
+    // opened it; screen coordinates of the rail window, i.e. screen coords).
+    property real popupAnchorY: -1
+    readonly     property var popupScreen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     property string tooltipText: ""
 
     // Set to true once Tide Island is running so Tide Island owns top-center notifications/OSD
@@ -61,12 +74,29 @@ Scope {
     property string netName: "Offline"
     property string netDevice: "wlan0"
     property var wifiNetworks: []
+    // Wi-Fi operation feedback (never holds passwords)
+    property string wifiError: ""
+    property string wifiNotice: ""
+    property string wifiPending: ""
+    property string wifiPendingTarget: ""
+    property int wifiVerifyTries: 0
+    property int wifiScanGen: 0
+    property int wifiListGen: 0
 
     // Bluetooth State
     property bool btPowered: false
     property bool btScanning: false
     property string btConnectedName: ""
     property var btDevices: []
+    // Bluetooth operation feedback
+    property string btError: ""
+    property string btNotice: ""
+    property string btPending: ""
+    property string btPendingTarget: ""
+    property string btBusyMac: ""
+    property int btVerifyTries: 0
+    property int btScanGen: 0
+    property int btStatusGen: 0
 
     // Brightness, Power Profile, and Media State
     property int brightnessPct: 10
@@ -92,9 +122,9 @@ Scope {
 
     IpcHandler {
         target: "dashboard"
-        function toggle() { dashboard.toggle() }
-        function open() { dashboard.isOpen = true }
-        function close() { dashboard.isOpen = false }
+        function toggle() { root.toggleDashboard() }
+        function open() { root.openDashboard() }
+        function close() { root.closeDashboard() }
     }
 
     IpcHandler {
@@ -106,22 +136,33 @@ Scope {
 
     IpcHandler {
         target: "wallpaper"
-        function toggle() { wallpaperCarousel.toggle() }
-        function open() { wallpaperCarousel.isOpen = true }
+        function toggle() { root.toggleWallpaperCarousel() }
+        function open() { aiChat.close(); wallpaperCarousel.isOpen = true }
         function close() { wallpaperCarousel.isOpen = false }
     }
 
     IpcHandler {
-        target: "settings"
-        function toggle() { settingsHub.toggle() }
-        function open() { settingsHub.isOpen = true }
-        function close() { settingsHub.isOpen = false }
+        target: "aichat"
+        function toggle() { aiChat.toggle() }
+        function open() { aiChat.open() }
+        function close() { aiChat.close() }
+        function send(text: string) { root.openAIChat(); aiChat.send(text, false) }
+        function stop() { aiChat.stopGeneration() }
+        function clear() { aiChat.clearNow() }
+        function regenerate() { aiChat.regenerate() }
+    }
+
+    IpcHandler {
+        target: "popup"
+        function open(kind: string) { root.openPopup(kind, -1) }
+        function close() { root.closePopup() }
+        function powerProfiles(): string { return batteryPopup.powerProfilesJson() }
+        function setPowerProfile(id: string) { batteryPopup.setProfile(id) }
     }
 
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
-
     readonly property var audioSink: Pipewire.defaultAudioSink
     readonly property bool audioReady: audioSink !== null && audioSink.audio !== null
     readonly property bool isMuted: audioReady ? audioSink.audio.muted : false
@@ -173,18 +214,44 @@ Scope {
         stdout: StdioCollector {
             onStreamFinished: {
                 root.wifiEnabled = (this.text.trim() === "enabled")
+                root.checkWifiPending()
+            }
+        }
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "")
+                    root.wifiError = "Wi-Fi radio query failed. Is NetworkManager (nmcli) installed?"
             }
         }
     }
 
     Process {
         id: wifiListProc
-        command: ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]
+        command: ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
+                // Passive list (no rescan): safe to apply whenever it arrives,
+                // but a stale rescan result must not clear a newer scan.
+                if (root.wifiListGen === root.wifiScanGen) {
+                    root.wifiScanning = false
+                    root.parseWifiList(this.text)
+                }
+            }
+        }
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "" && root.wifiListGen === root.wifiScanGen) {
+                    root.wifiScanning = false
+                    root.wifiError = "Wi-Fi scan failed (" + this.text.trim().split("\n")[0] + ")."
+                }
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0 && root.wifiListGen === root.wifiScanGen) {
                 root.wifiScanning = false
-                root.parseWifiList(this.text)
+                if (root.wifiError === "")
+                    root.wifiError = "Wi-Fi list unavailable (nmcli exit " + code + ")."
             }
         }
     }
@@ -192,7 +259,24 @@ Scope {
     Process {
         id: wifiRescanProc
         command: ["nmcli", "device", "wifi", "rescan"]
-        onExited: wifiListProc.running = true
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "") {
+                    root.wifiScanning = false
+                    root.wifiError = "Wi-Fi rescan failed (" + this.text.trim().split("\n")[0] + ")."
+                }
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0) {
+                root.wifiScanning = false
+                if (root.wifiError === "")
+                    root.wifiError = "Wi-Fi rescan failed (exit " + code + ")."
+                return
+            }
+            root.wifiListGen = root.wifiScanGen
+            if (!wifiListProc.running) wifiListProc.running = true
+        }
     }
 
     Process {
@@ -202,24 +286,114 @@ Scope {
             "bluetoothctl show | grep -q '\''Powered: yes'\'' && echo '\''ON'\'' || echo '\''OFF'\''; "
             + "bluetoothctl devices | while read -r _ mac name; do "
             + "  if [ -n \"$mac\" ]; then "
-            + "    conn=$(bluetoothctl info \"$mac\" | grep -q '\''Connected: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
-            + "    echo \"$conn|$mac|$name\"; "
+            + "    info=$(bluetoothctl info \"$mac\" 2>/dev/null); "
+            + "    conn=$(printf '%s' \"$info\" | grep -q '\''Connected: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
+            + "    paired=$(printf '%s' \"$info\" | grep -q '\''Paired: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
+            + "    echo \"$conn|$paired|$mac|$name\"; "
             + "  fi; "
             + "done"
         ]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
+                if (root.btStatusGen === root.btScanGen) {
+                    root.btScanning = false
+                    root.parseBtOutput(this.text)
+                }
+            }
+        }
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "" && root.btStatusGen === root.btScanGen) {
+                    root.btScanning = false
+                    root.btError = "Bluetooth query failed. Is BlueZ (bluetoothctl) installed?"
+                }
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0 && root.btStatusGen === root.btScanGen) {
                 root.btScanning = false
-                root.parseBtOutput(this.text)
+                if (root.btError === "")
+                    root.btError = "Bluetooth status unavailable (exit " + code + ")."
             }
         }
     }
 
     Process {
         id: btScanProc
-        command: ["sh", "-c", "bluetoothctl --timeout 4 scan on >/dev/null 2>&1"]
-        onExited: btStatusProc.running = true
+        command: ["sh", "-c", "bluetoothctl --timeout 6 scan on >/dev/null 2>&1"]
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "") {
+                    root.btScanning = false
+                    root.btError = "Bluetooth scan failed."
+                }
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0) {
+                root.btScanning = false
+                if (root.btError === "")
+                    root.btError = "Bluetooth scan failed (exit " + code + ")."
+                return
+            }
+            root.btStatusGen = root.btScanGen
+            if (!btStatusProc.running) btStatusProc.running = true
+        }
+    }
+
+    // One-shot command runners: track async completion so state is only
+    // reported as changed after the command exits AND a re-read verifies it.
+    Process {
+        id: wifiCmdProc
+        stderr: StdioCollector {
+            onStreamFinished: {
+                // Stash first stderr line; the onExited handler decides.
+                if (this.text.trim() !== "")
+                    root.wifiError = this.text.trim().split("\n")[0]
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0) {
+                // A direct open-network connect failing usually means the
+                // network actually needs a secret: fall back to the rofi
+                // password prompt instead of declaring failure.
+                if (root.wifiPending === "connect" && root.wifiPendingTarget !== "") {
+                    root.connectWifiWithPrompt(root.wifiPendingTarget)
+                    root.refreshWifiReads()
+                    return
+                }
+                root.wifiPending = ""
+                if (root.wifiError === "")
+                    root.wifiError = "Wi-Fi command failed (exit " + code + "). State re-read below."
+            }
+            root.refreshWifiReads()
+            root.wifiVerifyTries = 0
+            wifiVerifyTimer.restart()
+        }
+    }
+
+    Process {
+        id: btCmdProc
+        stderr: StdioCollector {
+            onStreamFinished: {
+                if (this.text.trim() !== "")
+                    root.btError = this.text.trim().split("\n")[0]
+            }
+        }
+        onExited: (code, sig) => {
+            if (code !== 0) {
+                // Never claim pairing/connection success from a started
+                // command: keep verification running so the re-read decides.
+                if (root.btError === "")
+                    root.btError = "Bluetooth command exited " + code + ". Verifying actual state…"
+                if (root.btPending === "connect-dev")
+                    root.btNotice = "Connect did not complete yet. Use Pair first if the device is not paired."
+            }
+            root.refreshBtReads()
+            root.btVerifyTries = 0
+            btVerifyTimer.restart()
+        }
     }
 
     Process {
@@ -261,7 +435,57 @@ Scope {
             if (!mediaReadProc.running) mediaReadProc.running = true
             if (root.dashboardOpen) {
                 if (root.activePopup === "battery" && !profileReadProc.running) profileReadProc.running = true
-                if (root.activePopup === "bt" && !btStatusProc.running) btStatusProc.running = true
+                if (root.activePopup === "bt" && !btStatusProc.running && !btScanProc.running) btStatusProc.running = true
+                if (root.activePopup === "wifi" && !wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
+                    root.wifiListGen = root.wifiScanGen
+                    wifiListProc.running = true
+                }
+            }
+        }
+    }
+
+    // Re-poll after an async Wi-Fi command until the target state is observed
+    // (or attempts run out). Success is only reported after verification.
+    Timer {
+        id: wifiVerifyTimer
+        interval: 1500
+        repeat: true
+        onTriggered: {
+            root.wifiVerifyTries += 1
+            root.refreshWifiReads()
+            if (root.checkWifiPending()) {
+                stop()
+                return
+            }
+            // Connecting via an external password prompt can take a while.
+            const limit = (root.wifiPending === "connect") ? 24 : 5
+            if (root.wifiVerifyTries >= limit) {
+                stop()
+                if (root.wifiPending !== "") {
+                    root.wifiPending = ""
+                    root.wifiError = "Change not confirmed after re-read. Check the device state."
+                }
+            }
+        }
+    }
+
+    // Same verification pattern for Bluetooth commands.
+    Timer {
+        id: btVerifyTimer
+        interval: 1500
+        repeat: true
+        onTriggered: {
+            root.btVerifyTries += 1
+            root.refreshBtReads()
+            if (root.checkBtPending()) {
+                stop()
+            } else if (root.btVerifyTries >= 5) {
+                stop()
+                if (root.btPending !== "") {
+                    root.btPending = ""
+                    root.btBusyMac = ""
+                    root.btError = "Change not confirmed after re-read. Check the adapter/device."
+                }
             }
         }
     }
@@ -376,40 +600,90 @@ Scope {
     function clearTooltip() { root.tooltipText = "" }
     function dismissToast() { root.toastVisible = false }
 
-    function openPopup(kind) {
+    function openPopup(kind, anchorY) {
         root.tooltipText = ""
-        root.powerMenuOpen = false
+        aiChat.close()
+        if (anchorY !== undefined && anchorY >= 0)
+            root.popupAnchorY = anchorY
         if (root.dashboardOpen && root.activePopup === kind) {
             root.dashboardOpen = false
             return
         }
         root.activePopup = kind
         root.dashboardOpen = true
+        // Keep the Dashboard drawer closed while a radio popup is open so the
+        // two never compete for attention. Routed through the dispatcher so
+        // whichever dashboard implementation is active gets closed.
+        root.closeDashboard()
 
         if (kind === "wifi") {
-            nmcliProc.running = true
-            wifiRadioProc.running = true
-            wifiListProc.running = true
+            root.wifiError = ""
+            if (!nmcliProc.running) nmcliProc.running = true
+            if (!wifiRadioProc.running) wifiRadioProc.running = true
+            if (!wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
+                root.wifiListGen = root.wifiScanGen
+                wifiListProc.running = true
+            }
         } else if (kind === "bt") {
-            btStatusProc.running = true
+            root.btError = ""
+            if (!btStatusProc.running && !btScanProc.running && !btCmdProc.running) {
+                root.btStatusGen = root.btScanGen
+                btStatusProc.running = true
+            }
         } else if (kind === "battery") {
-            profileReadProc.running = true
+            if (!profileReadProc.running) profileReadProc.running = true
         } else if (kind === "clock") {
             root.rebuildCalendar()
         } else if (kind === "settings") {
-            brightReadProc.running = true
-            mediaReadProc.running = true
+            if (!brightReadProc.running) brightReadProc.running = true
+            if (!mediaReadProc.running) mediaReadProc.running = true
         }
     }
 
-    function toggleDashboard() {
-        openPopup("settings")
+    function closePopup() {
+        root.dashboardOpen = false
     }
 
+    // Dashboard dispatchers: every entry point (IPC, edge sensor, popup
+    // router) routes through these to the single DashboardHost instance.
+    function openDashboard() {
+        aiChat.close()
+        dashboardHost.open()
+    }
+
+    function closeDashboard() {
+        dashboardHost.close()
+    }
+
+    function toggleDashboard() {
+        if (!root.dashboardOpen) aiChat.close()
+        dashboardHost.toggle()
+    }
+
+    function openAIChat() {
+        aiChat.open()
+    }
+
+    function closeAIChat() {
+        aiChat.close()
+    }
+
+    function toggleAIChat() {
+        aiChat.toggle()
+    }
+
+    function closeWallpaperCarousel() {
+        wallpaperCarousel.isOpen = false
+    }
+
+    // Routes match the verified left-rail/tools-tab form: explicit instance
+    // path (two quickshell instances exist) and --any-display because the
+    // spawned child may lack display context. Tide has no openNotificationCenter;
+    // toggleNotificationCenter is the real, verified function.
     function runCenterAction(action) {
         if (action === "wall") cycleWallpaper()
-        else if (action === "clip") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openClipboard"])
-        else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "call", "tide", "openNotificationCenter"])
+        else if (action === "clip") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "openClipboard"])
+        else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "toggleNotificationCenter"])
     }
 
     function cycleWallpaper() {
@@ -417,31 +691,120 @@ Scope {
         Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/cycle-wall.fish"])
     }
 
-    // Wi-Fi Actions
+    function toggleWallpaperCarousel() {
+        aiChat.close()
+        wallpaperCarousel.toggle()
+    }
+
+    // Wi-Fi Actions (async with verification; passwords never touch QML)
+    function refreshWifiReads() {
+        if (!nmcliProc.running) nmcliProc.running = true
+        if (!wifiRadioProc.running) wifiRadioProc.running = true
+        if (!wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
+            root.wifiListGen = root.wifiScanGen
+            wifiListProc.running = true
+        }
+    }
+
+    // Returns true when a pending Wi-Fi operation is verified complete.
+    function checkWifiPending() {
+        if (root.wifiPending === "power") {
+            const wantOn = (root.wifiPendingTarget === "on")
+            if (root.wifiEnabled === wantOn) {
+                root.wifiPending = ""
+                root.wifiError = ""
+                root.wifiNotice = wantOn ? "Wi-Fi enabled." : "Wi-Fi disabled."
+                return true
+            }
+            return false
+        }
+        if (root.wifiPending === "connect") {
+            if (root.netName === root.wifiPendingTarget) {
+                root.wifiPending = ""
+                root.wifiError = ""
+                root.wifiNotice = "Connected to " + root.wifiPendingTarget + "."
+                root.wifiPendingTarget = ""
+                return true
+            }
+            return false
+        }
+        if (root.wifiPending === "disconnect") {
+            if (root.netType === "disconnected") {
+                root.wifiPending = ""
+                root.wifiError = ""
+                root.wifiNotice = "Disconnected."
+                return true
+            }
+            return false
+        }
+        return true
+    }
+
     function toggleWifiPower() {
-        const next = root.wifiEnabled ? "off" : "on"
-        root.wifiEnabled = !root.wifiEnabled
-        Quickshell.execDetached(["nmcli", "radio", "wifi", next])
-        nmcliProc.running = true
-        wifiListProc.running = true
+        if (wifiCmdProc.running) {
+            root.wifiError = "A Wi-Fi operation is already running."
+            return
+        }
+        const target = root.wifiEnabled ? "off" : "on"
+        root.wifiError = ""
+        root.wifiNotice = (target === "on" ? "Enabling" : "Disabling") + " Wi-Fi…"
+        root.wifiPending = "power"
+        root.wifiPendingTarget = target
+        root.wifiVerifyTries = 0
+        wifiCmdProc.command = ["nmcli", "radio", "wifi", target]
+        wifiCmdProc.running = true
     }
 
     function rescanWifi() {
+        if (root.wifiScanning || wifiRescanProc.running || wifiListProc.running) return
+        root.wifiError = ""
+        root.wifiNotice = ""
         root.wifiScanning = true
+        root.wifiScanGen += 1
         wifiRescanProc.running = true
     }
 
-    function connectWifi(ssid) {
-        if (!ssid) return
+    function connectWifi(ssid, secured) {
+        if (!ssid || wifiCmdProc.running) {
+            if (wifiCmdProc.running) root.wifiError = "A Wi-Fi operation is already running."
+            return
+        }
+        root.wifiError = ""
+        root.wifiNotice = "Connecting to " + ssid + "…"
+        root.wifiPending = "connect"
+        root.wifiPendingTarget = ssid
+        root.wifiVerifyTries = 0
+        // Secured networks need a secret: delegate the password prompt to the
+        // helper script (rofi -password). The password never enters QML state.
+        if (secured) {
+            Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+            root.wifiNotice = "Connecting to " + ssid + "… (password prompt if required)"
+            wifiVerifyTimer.restart()
+            return
+        }
+        wifiCmdProc.command = ["nmcli", "device", "wifi", "connect", ssid]
+        wifiCmdProc.running = true
+    }
+
+    // Called when a direct connect fails, most likely for a missing secret.
+    function connectWifiWithPrompt(ssid) {
         Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
-        nmcliProc.running = true
-        wifiListProc.running = true
+        root.wifiNotice = "Password required — answer the prompt for " + ssid + "…"
+        root.wifiVerifyTries = 0
+        wifiVerifyTimer.restart()
     }
 
     function disconnectWifi() {
-        Quickshell.execDetached(["nmcli", "device", "disconnect", root.netDevice])
-        nmcliProc.running = true
-        wifiListProc.running = true
+        if (wifiCmdProc.running) {
+            root.wifiError = "A Wi-Fi operation is already running."
+            return
+        }
+        root.wifiError = ""
+        root.wifiNotice = "Disconnecting…"
+        root.wifiPending = "disconnect"
+        root.wifiVerifyTries = 0
+        wifiCmdProc.command = ["nmcli", "device", "disconnect", root.netDevice]
+        wifiCmdProc.running = true
     }
 
     function parseWifiList(raw) {
@@ -452,40 +815,136 @@ Scope {
             const line = lines[i]
             if (!line) continue
             const parts = line.split(":")
-            if (parts.length < 3) continue
+            if (parts.length < 4) continue
+            // Fields: IN-USE : SSID (may itself contain ':') : SIGNAL : SECURITY
             const inUse = (parts[0].trim() === "*")
-            const ssid = parts[1].trim()
-            const sig = parseInt(parts[2], 10) || 0
+            const sig = parseInt(parts[parts.length - 2], 10) || 0
+            const security = parts[parts.length - 1].trim()
+            const ssid = parts.slice(1, parts.length - 2).join(":").trim()
             if (!ssid || seen[ssid]) continue
             seen[ssid] = true
             result.push({
                 active: inUse,
                 ssid: ssid,
-                signal: sig
+                signal: sig,
+                security: security,
+                secured: (security !== "" && security !== "--")
             })
-            if (result.length >= 6) break
+            if (result.length >= 12) break
         }
         root.wifiNetworks = result
+        if (result.length === 0 && !root.wifiScanning)
+            root.wifiNotice = ""
     }
 
-    // Bluetooth Actions
+    // Bluetooth Actions (async with verification)
+    function refreshBtReads() {
+        if (!btStatusProc.running && !btScanProc.running && !btCmdProc.running) {
+            root.btStatusGen = root.btScanGen
+            btStatusProc.running = true
+        }
+    }
+
+    function btDeviceByMac(mac) {
+        for (let i = 0; i < root.btDevices.length; i++) {
+            if (root.btDevices[i].mac === mac) return root.btDevices[i]
+        }
+        return null
+    }
+
+    // Returns true when a pending Bluetooth operation is verified complete.
+    function checkBtPending() {
+        if (root.btPending === "power") {
+            const wantOn = (root.btPendingTarget === "on")
+            if (root.btPowered === wantOn) {
+                root.btPending = ""
+                root.btError = ""
+                root.btNotice = wantOn ? "Bluetooth on." : "Bluetooth off."
+                return true
+            }
+            return false
+        }
+        if (root.btPending === "connect-dev" || root.btPending === "disconnect-dev" || root.btPending === "pair") {
+            const dev = root.btDeviceByMac(root.btPendingTarget)
+            if (root.btPending === "pair" && dev && dev.paired) {
+                root.btPending = ""
+                root.btBusyMac = ""
+                root.btError = ""
+                root.btNotice = "Paired with " + dev.name + "."
+                return true
+            }
+            if (root.btPending === "connect-dev" && dev && dev.connected) {
+                root.btPending = ""
+                root.btBusyMac = ""
+                root.btError = ""
+                root.btNotice = "Connected to " + dev.name + "."
+                return true
+            }
+            if (root.btPending === "disconnect-dev" && (!dev || !dev.connected)) {
+                root.btPending = ""
+                root.btBusyMac = ""
+                root.btError = ""
+                root.btNotice = "Disconnected."
+                return true
+            }
+            return false
+        }
+        return true
+    }
+
     function toggleBtPower() {
-        const next = root.btPowered ? "off" : "on"
-        root.btPowered = !root.btPowered
-        Quickshell.execDetached(["bluetoothctl", "power", next])
-        btStatusProc.running = true
+        if (btCmdProc.running) {
+            root.btError = "A Bluetooth operation is already running."
+            return
+        }
+        const target = root.btPowered ? "off" : "on"
+        root.btError = ""
+        root.btNotice = (target === "on" ? "Turning" : "Switching") + " Bluetooth " + target + "…"
+        root.btPending = "power"
+        root.btPendingTarget = target
+        root.btVerifyTries = 0
+        btCmdProc.command = ["bluetoothctl", "power", target]
+        btCmdProc.running = true
     }
 
     function scanBluetooth() {
+        if (root.btScanning || btScanProc.running || btStatusProc.running || btCmdProc.running) return
+        root.btError = ""
+        root.btNotice = ""
         root.btScanning = true
+        root.btScanGen += 1
         btScanProc.running = true
     }
 
     function toggleBtDevice(mac, isConnected) {
-        if (!mac) return
+        if (!mac || btCmdProc.running) {
+            if (btCmdProc.running) root.btError = "A Bluetooth operation is already running."
+            return
+        }
         const action = isConnected ? "disconnect" : "connect"
-        Quickshell.execDetached(["bluetoothctl", action, mac])
-        btStatusProc.running = true
+        root.btError = ""
+        root.btNotice = (isConnected ? "Disconnecting " : "Connecting ") + mac + "…"
+        root.btPending = isConnected ? "disconnect-dev" : "connect-dev"
+        root.btPendingTarget = mac
+        root.btBusyMac = mac
+        root.btVerifyTries = 0
+        btCmdProc.command = ["bluetoothctl", action, mac]
+        btCmdProc.running = true
+    }
+
+    function pairBtDevice(mac) {
+        if (!mac || btCmdProc.running) {
+            if (btCmdProc.running) root.btError = "A Bluetooth operation is already running."
+            return
+        }
+        root.btError = ""
+        root.btNotice = "Pairing with " + mac + "… confirm on the device if asked."
+        root.btPending = "pair"
+        root.btPendingTarget = mac
+        root.btBusyMac = mac
+        root.btVerifyTries = 0
+        btCmdProc.command = ["bluetoothctl", "pair", mac]
+        btCmdProc.running = true
     }
 
     function parseBtOutput(raw) {
@@ -495,20 +954,40 @@ Scope {
         const devs = []
         let firstConnected = ""
         for (let i = 1; i < lines.length; i++) {
-            const parts = lines[i].split("|")
-            if (parts.length < 3) continue
-            const conn = (parts[0] === "1")
-            const mac = parts[1]
-            const name = parts.slice(2).join("|")
+            const line = lines[i]
+            if (!line) continue
+            const parts = line.split("|")
+            let conn = false
+            let paired = false
+            let mac = ""
+            let name = ""
+            if (parts.length >= 4) {
+                // conn|paired|mac|name
+                conn = (parts[0] === "1")
+                paired = (parts[1] === "1")
+                mac = parts[2].trim()
+                name = parts.slice(3).join("|").trim()
+            } else if (parts.length === 3) {
+                // legacy conn|mac|name
+                conn = (parts[0] === "1")
+                mac = parts[1].trim()
+                name = parts.slice(2).join("|").trim()
+            } else {
+                continue
+            }
+            if (!mac) continue
             if (conn && firstConnected === "") firstConnected = name
             devs.push({
                 connected: conn,
+                paired: paired,
                 mac: mac,
-                name: name
+                name: name === "" ? mac : name
             })
+            if (devs.length >= 20) break
         }
         root.btConnectedName = firstConnected
         root.btDevices = devs
+        root.checkBtPending()
     }
 
     function setPowerProfile(mode) {
@@ -549,6 +1028,7 @@ Scope {
         root.netDevice = foundDev
         root.netType = foundType
         root.netName = foundName
+        root.checkWifiPending()
     }
 
     function parseBrightness(raw) {
@@ -620,36 +1100,65 @@ Scope {
         mediaReadProc.running = true
     }
 
-    function openPowerMenu() {
-        root.tooltipText = ""
-        root.dashboardOpen = false
-        root.pendingPowerAction = ""
-        root.powerMenuOpen = true
-    }
-
     function triggerScreenshot() {
         screenshotTimer.start()
     }
 
     // Active shell surfaces. Tide Island remains the notification D-Bus owner.
+    // Bottom-right hot zone: a 22x22 transparent layer surface that only opens
+    // the existing DashboardHost. It sits above the island's own corner sensor
+    // so the requested surface is the System Console, not the top-center pill.
     PanelWindow {
         id: dashboardEdgeSensor
-        anchors { top: true; bottom: true; right: true }
-        implicitWidth: 4
+        screen: root.popupScreen
+        anchors { bottom: true; right: true }
+        implicitWidth: 22
+        implicitHeight: 22
         color: "transparent"
+        // While the hotspot is disabled the surface is unmapped, so it cannot
+        // capture pointer input at all (a real off, not visual-only).
+        visible: root.edgeHotspotEnabled
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.namespace: "gps-dashboard-hotzone"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        onVisibleChanged: {
+            if (!visible) dashboardHost.triggerHovered = false
+        }
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            onEntered: dashboard.isOpen = true
+            acceptedButtons: Qt.NoButton
+            onEntered: {
+                dashboardHost.triggerHovered = true
+                if (!root.edgeHotspotEnabled) return
+                if (!dashboardHost.isOpen
+                        && Date.now() - root.dashLastHide > root.dashboardReopenCooldownMs)
+                    root.openDashboard()
+            }
+            onExited: dashboardHost.triggerHovered = false
         }
     }
 
-    LeftRail           { hub: root; notifications: notifCenter; dashboard: dashboard; wallpaperCarousel: wallpaperCarousel; settingsHub: settingsHub }
+    LeftRail {
+    hub: root
+    notifications: notifCenter
+    wallpaperCarousel: wallpaperCarousel
+    }
     NotifCenter        { id: notifCenter; hub: root }
     NotifToast         { hub: root }
-    Dashboard          { id: dashboard; hub: root }
+    // Canonical dashboard drawer. It owns its closePopup() call on open and
+    // its own dashLastHide stamping on close - shell.qml must not duplicate
+    // either for this instance.
+    DashboardHost {
+        id: dashboardHost
+        hub: root
+    }
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
-    SettingsHub        { id: settingsHub }
+    AIChat             { id: aiChat; hub: root }
+    WifiPopup          { hub: root }
+    BluetoothPopup     { hub: root }
+    BatteryPopup       { id: batteryPopup; hub: root }
+    Pet                { id: pet }
+    onToastVisibleChanged: if (root.toastVisible) pet.wave()
 }

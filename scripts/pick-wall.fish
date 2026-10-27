@@ -21,4 +21,5 @@ set chosen (
 
 if test -n "$chosen"
     awww img "$wall_dir/$chosen" --transition-type wave --transition-fps 165 --transition-duration 1.2 >/dev/null 2>&1
+    ~/Projects/my-rice/scripts/extract-theme.py &
 end

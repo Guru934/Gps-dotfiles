@@ -9,12 +9,15 @@
 Aetheric Shell uses an isolated, collision-free dual-shell architecture:
 
 1. **QuickShell (`~/Projects/my-rice/shell.qml`)**:
-   - Manages the exclusive vertical **Left Rail Dock** (`LeftRail.qml`), the edge-hover **HUD Dashboard** (`Dashboard.qml`), the **Notification Center & To-Do Drawer** (`NotifCenter.qml`), the floating **Toast Banners** (`NotifToast.qml`), and the **3D Coverflow Wallpaper Carousel** (`WallpaperCarousel.qml`).
+   - Manages the exclusive vertical **Left Rail Dock** (`LeftRail.qml`), the edge-hover **Dashboard drawer** (`DashboardHost.qml` hosting `Dashboard.qml`, whose frame loads the four panes in `components/dashboard/`), the **Notification Center & To-Do Drawer** (`NotifCenter.qml`), the floating **Toast Banners** (`NotifToast.qml`), the Wi-Fi / Bluetooth popups (`WifiPopup.qml`, `BluetoothPopup.qml`), and the **3D Coverflow Wallpaper Carousel** (`WallpaperCarousel.qml`).
    - Operates as a passive notification consumer to prevent D-Bus collision.
-2. **Tide Island (`~/.local/bin/tide-island`)**:
-   - Standalone compiled C++/Qt top-center status pill.
+2. **Tide Island (`~/.local/share/tide-island`, run as its own QuickShell instance)**:
+   - Standalone top-center status pill (`quickshell -p ~/.local/share/tide-island`).
    - Holds exclusive ownership of `org.freedesktop.Notifications`.
    - Provides live MPRIS media tickers, dynamic battery/volume indicators, and clipboard management via `cliphist`.
+   - Reachable over IPC; the shell calls it as:
+     `quickshell ipc --any-display -p $HOME/.local/share/tide-island call tide <fn>`
+     (`toggleNotificationCenter`, `toggleClipboard`, `openClipboard`, `closeClipboard`, …).
 
 ```
 ┌────────────────────────────────────────────────┐
@@ -47,30 +50,36 @@ Aetheric Shell uses an isolated, collision-free dual-shell architecture:
 
 | Keybind / Gesture | Subsystem / Action | Implementation / Target |
 | :--- | :--- | :--- |
-| **Far-Right Edge Hover** | **Slide Open Dashboard** | Invisible 4px edge sensor strip in `shell.qml` (`isOpen = true`) |
-| **Cursor Leave Drawer** | **Auto-Dismiss Drawers** | 350ms grace timer (`autoCloseTimer`) in `Dashboard` & `NotifCenter` |
-| `Super + D` | **Toggle Dashboard HUD** | `quickshell ipc call dashboard toggle` |
-| `Super + N` | **Toggle Notification Center**| `quickshell ipc call notifcenter toggle` |
-| `Super + W` | **Toggle 3D Wallpaper Carousel**| `quickshell ipc call wallpaper toggle` |
-| `Super + Space` | **App Launcher** | `rofi -show drun` (themed with active dynamic palette) |
-| `Super + Return` | **Terminal Emulator** | `ghostty` / `foot` |
-| `Super + E` | **File Manager** | `thunar` / `yazi` |
-| `Super + Q` | **Kill Active Window** | `hyprctl dispatch killactive` |
-| `Super + V` | **Clipboard History** | `tide-island --toggle clipboard` (backed by `cliphist`) |
-| `Super + L` | **Lock Screen** | `hyprlock` PAM session locker |
-| `Super + 1..5` | **Switch Workspaces** | Native Hyprland workspace dispatcher |
-| `Mouse Wheel on Dock`| **Scroll Workspaces** | `workspace e+1` / `workspace e-1` |
-| `Super + F1` | **Vibe: Study & Focus** | 4500K warm shift, DND on, minimal border glow |
-| `Super + F2` | **Vibe: Gaming Overdrive**| 165Hz VRR, blur bypass, red neon accent |
-| `Super + F3` | **Vibe: Chill & Ambient** | Teal/Violet duotone glow, 5200K, smooth anims |
-| `Super + F4` | **Vibe: Night Circadian** | 3200K amber cut, dimmed opacity |
-| `PrtSc` | **Snip Screenshot** | `grimblast copysave area` |
-| `Shift + PrtSc` | **Fullscreen Screenshot**| `grimblast copysave screen` |
-| `XF86AudioRaiseVolume` | **Volume Up** | `wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+` |
+| **Bottom-Right Hot Zone** | **Slide Open Dashboard** | Invisible 22x22 edge sensor in `shell.qml`; 800ms re-arm cooldown; disabled entirely by the EDGE HOTSPOT toggle (System tab) |
+| **Cursor Leave Drawer** | **Auto-Dismiss Drawers** | `hub.dashboardAutoHideMs` grace timer (default 400ms; 150–800ms in System tab) |
+| `Super + D` | **Toggle Dashboard HUD** | `quickshell ipc -p ~/Projects/my-rice/shell.qml call dashboard toggle` |
+| `Super + N` | **Toggle Notification Center**| `quickshell ipc -p ~/Projects/my-rice/shell.qml call notifcenter toggle` |
+| `Super + W` | **Toggle 3D Wallpaper Carousel**| `quickshell ipc -p ~/Projects/my-rice/shell.qml call wallpaper toggle` |
+| `Super + ,` | **Toggle Settings Hub** | `quickshell ipc -p ~/Projects/my-rice/settings.qml call settings toggle` (launches the app if not running) |
+| `Super + Space` / `Super + R` | **App Launcher** | `rofi -show drun`; palette comes from the generated `~/.config/rofi/colors.rasi` (`@import` — regenerated on every wallpaper change, applied on next rofi launch; also from the dock logo). Single launcher by decision: `fuzzel` is installed but unconfigured — rofi stays |
+| `Super + Q` | **Terminal Emulator** | `kitty` (`$terminal` in `hyprland.lua`) |
+| `Super + E` | **File Manager** | `thunar` (`$fileManager`) |
+| `Super + C` | **Close Active Window** | `hl.dsp.window.close()` |
+| `Super + L` | **Lock Screen** | `hyprlock` (packaged, or the user-local staged build until `setup-lockscreen.sh` runs); no-op if already locked |
+| `Super + V` | **Toggle Island Clipboard** | `quickshell ipc -p ~/.local/share/tide-island call clipboard toggle` |
+| `Super + Shift + V` | **Toggle Floating** | `hl.dsp.window.float({ action = "toggle" })` |
+| `Super + M` | **Exit Hyprland** | `hyprshutdown` (falls back to `hl.dsp.exit()`) |
+| `Super + P` / `Super + J` | **Pseudo-tile / Toggle Split** | `hl.dsp.window.pseudo()`, `hl.dsp.layout("togglesplit")` |
+| `Super + Arrow Keys` | **Directional Focus** | `hl.dsp.focus({ direction = … })` |
+| `Super + 1..5` / `Super + Shift + 1..5` | **Switch / Move-to Workspaces** | Native Hyprland workspace dispatcher |
+| `Super + S` / `Super + Shift + S` | **Special Workspace (magic)** | `toggle_special("magic")` / move window to it |
+| `Super + Mouse Wheel` | **Cycle Workspaces** | `focus workspace e+1` / `e-1`; the dock's workspace pills also scroll via their own wheel handler (`switchTo(current ± 1)`) |
+| `Super + LMB / RMB drag` | **Move / Resize Window** | `window.drag()` / `window.resize()` mouse binds |
+| `XF86AudioMicMute` | **Toggle Mic Mute** | `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle` |
+| `XF86AudioNext/Prev/PlayPause` | **Media Transport** | `playerctl next` / `previous` / `play-pause` |
+| `PrtSc` | **Snip Screenshot** | `r=$(slurp) \|\| exit 0; grim -g "$r" - \| swappy -f -` (Esc cancels cleanly; nothing is written) |
+| `XF86AudioRaiseVolume` | **Volume Up** | `wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+` |
 | `XF86AudioLowerVolume` | **Volume Down** | `wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-` |
 | `XF86AudioMute` | **Toggle Audio Mute** | `wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle` |
-| `XF86MonBrightnessUp` | **Backlight Up** | `brightnessctl set 5%+` |
-| `XF86MonBrightnessDown`| **Backlight Down** | `brightnessctl set 5%-` |
+| `XF86MonBrightnessUp` | **Backlight Up** | `brightnessctl -e4 -n2 set 5%+` |
+| `XF86MonBrightnessDown`| **Backlight Down** | `brightnessctl -e4 -n2 set 5%-` |
+
+Not bound in the live `hyprland.lua` (verified against `hyprctl binds -j`): `Super + Return` (terminal is `Super + Q`) and `Super + F1–F4` "vibes" (`scripts/vibe_switch.sh` only writes `$XDG_RUNTIME_DIR/gps-vibe-mode` — nothing consumes it yet and no keys are bound; night warmth would also need `hyprsunset`). The complete, live-verified keybind reference is `keybind.txt` in this repository.
 
 ---
 
@@ -87,35 +96,33 @@ Aetheric Shell uses an isolated, collision-free dual-shell architecture:
   - **Audio (`󰕾`)**: Opens `pavucontrol` or toggles mute.
   - **Notification Bell (`󰂚`)**: Displays unread badge count; toggles `NotifCenter.qml`.
   - **Wallpaper Carousel (`󰸉`)**: Pops open the 3D wallpaper picker modal.
+  - **Local AI (`󰧑`)**: Opens the Aetheric Neural Chat panel (local Ollama, loopback only); mutually exclusive with the carousel/dashboard/popups.
   - **Settings (`󰒓`)**: Triggers system settings.
-  - **Vertical Time Stack & Power**: Stacked `HH` over `MM` in monospace typography; bottom red-accented power button triggers `wlogout` / shutdown.
+  - **Battery Pill**: real UPower telemetry (glyph + live %) above the power button — teal while charging/full, amber ≤30%, coral ≤15%; hidden entirely when the device has no battery. Click opens the Power & Battery popup (§3.10).
+  - **Vertical Time Stack & Power**: Stacked `HH` over `MM` in monospace typography; bottom red-accented power button opens the built-in confirm-gated power menu (lock / suspend / logout / reboot / shutdown) and closes any open radio popup first.
 
-### 3.2. Right-Edge HUD Dashboard (`components/Dashboard.qml`)
+### 3.2. Right-Edge Dashboard (`components/DashboardHost.qml` + `components/Dashboard.qml`)
 
-- **Layer Shell Rules**: Anchored `top: true`, `bottom: true`, `right: true` with `implicitWidth: 440`. Slide animation on `x` and `opacity`.
-- **Right-Edge Gesture & Auto-Dismiss**: Opens when moving cursor within 4px of the right screen edge. When cursor leaves the panel (`onExited`), a 350ms grace timer automatically closes and slides it away.
-- **Uniform Tab Layout**: Strictly identical bounding box dimensions across all 4 tabs (`Home`, `Media`, `System`, `Tools`).
-- **Dynamic Hardware Telemetry (No Hardcoded Strings)**:
-  - **CPU**: Real-time probe of `/proc/cpuinfo` and `/sys/class/thermal/thermal_zone*/temp`.
-  - **GPU**: Auto-detects active cards via `lspci | grep -iE 'vga|3d|display'`.
-  - **RAM**: Computes live usage and percentage on-the-fly from `/proc/meminfo` (`MemTotal` vs `MemAvailable`).
-  - **Uptime**: Live tracking via `uptime -p`.
-  - **Audio Sink**: Reads PipeWire / WirePlumber default sink via `wpctl status`.
-  - **MPRIS Mini Player**: Live track/artist via `playerctl metadata` with play/pause/skip triggers and vinyl disk rotation.
-  - **Compositor Vibe Profiles**: 1-click switches for *Study*, *Gaming*, *Chill*, and *Night* modes executing `~/.config/hypr/scripts/vibe_switch.sh`.
+- **Host (`DashboardHost.qml`)**: single canonical drawer anchored `top/right/bottom` (layer geometry `830 8 440 784`). Every entry point (IPC, edge sensor, rail) routes through `hub.openDashboard()` → `dashboardHost.open()`; `open/close/toggle` are IPC-callable. Auto-hide on pointer exit uses `hub.dashboardAutoHideMs` (default 400ms, clamp 150–800ms); Escape closes. Opening the drawer closes any radio popup (mutual exclusion), and opening a popup closes the drawer.
+- **Frame (`Dashboard.qml`)**: tab bar (`DashTabBar.qml`) + per-pane `Loader`s that are active **only while the drawer is covering** — closing the drawer destroys the panes, so their timers and child processes stop (verified: audio capture process count 1 → 0 on close).
+- **HOME tab**: `SysProbe.qml` single shared probe tick (CPU from `/proc/cpuinfo` + thermal zones, RAM from `/proc/meminfo`, GPU, storage `df` at 30s, uptime — tick interval follows `hub.telemetryTickMs`); 3 stat cards; toggles for Wi-Fi / Bluetooth / Audio Output / Circadian (shows `unavailable · no backend` honestly); PipeWire volume slider; live 48kHz s16le spectrum; MPRIS now-playing with circular artwork; screen-time card (AW-compatible local API, AFK excluded, app-class labels only).
+- **MEDIA tab**: MPRIS transport (prev / play-pause / next), seek + shuffle + loop **capability-gated** on the active player; audio output device list with honest `UNAVAILABLE` marks and verified `set-default`; volume + mute; spectrum from the same shared singleton capture (never a second `parec`); on-demand lyrics lookup (LRCLIB, user-initiated only).
+- **SYSTEM tab**: LIVE telemetry header; controls that drive real behavior — edge-hotspot toggle, auto-dismiss grace slider, telemetry polling rate (1s/3s/5s); display brightness via `brightnessctl` with read-back verification; power profiles from `powerprofilesctl list` with verified writes.
+- **TOOLS tab**: capture actions (snip region / copy region / full screen / color picker via `grim`+`slurp`+`swappy` / `hyprpicker`); wallpaper next / carousel / regenerate palette (`cycle-wall.fish`, `extract-theme.py`); Tide Island controls (notification center, clipboard history, clear clipboard, **confirm-gated** wipe); automation & power with honest unavailable states (no locker, no hyprsunset, no Wine running) and **confirm-gated** Suspend / Shut Down; RELOAD SHELL restarts the shell while preserving Tide Island.
 
 ### 3.3. Notification Center & Daily Objectives (`components/NotifCenter.qml`)
 
 - **Layer Shell Rules**: Anchored `top: true`, `bottom: true`, `left: true` with `margins { left: 60 }` so it glides out alongside the 54px Left Rail without visual clipping.
 - **Auto-Dismiss**: Cursor exit triggers a 350ms auto-close timer.
 - **Interactive Calendar Strip**: Horizontal 7-day week view highlighting the current day.
-- **Daily To-Do Task Hub**: Full task checklist with task entry box, completion toggle (`[✓]` strikethrough), priority tags (High, Medium, Normal), and filter tabs (*All*, *Pending*, *Done*).
-- **Notification Stack**: Clean categorized history cards with dismiss and quick-action buttons.
+- **Daily To-Do Task Hub**: Real task checklist (starts empty — no sample data) with task entry box, completion toggle (`[✓]` strikethrough) and filter tabs (*All*, *Pending*, *Done*).
+- **Real Notification Feed**: *Recent notifications* are polled live (every 3 s while open) from Tide Island's history via `quickshell ipc -p ~/.local/share/tide-island call island history` — app, summary, body and relative time; empty state until a real notification arrives. No fabricated cards.
+- **Focus / DND Control**: shows Tide Island's actual `focusEnabled` state and toggles it via `island focusToggle`; *Open Center* opens the Tide Island notification center (`tide toggleNotificationCenter`). Tide Island persists Focus across its restarts (`~/.cache/gps/dnd`) and **critical-urgency** notifications bypass it (they still surface while normal ones stay suppressed — verified live: `notify-send -u normal` hidden, `notify-send -u critical` shown + in history).
 
 ### 3.4. Floating Urgent Toast (`components/NotifToast.qml`)
 
 - **Layer Shell Rules**: Anchored `top: true` only (`implicitWidth: 440`, `implicitHeight: 96`). In Wayland layer-shell, unconstrained edges automatically center horizontally.
-- **Transient Alert Surface**: Designed for single notifications (e.g. *Pomodoro 25m Focus Break*) with auto-dismiss after 8 seconds and action buttons (*Take Break*, *Snooze 5m*).
+- **Transient Alert Surface**: drives off the shell's real toast state (`toastApp` / `toastSummary` / `toastBody`, currently fired by the Pomodoro timer). Hidden while those are empty; single *Dismiss* action wired to `dismissToast()`; auto-dismiss after 8 s. No placeholder text or fake actions.
 
 ### 3.5. 3D Coverflow Wallpaper Carousel (`components/WallpaperCarousel.qml`)
 
@@ -123,26 +130,89 @@ Aetheric Shell uses an isolated, collision-free dual-shell architecture:
 - **3D Coverflow Perspective**: Interactive card strip using Y-axis rotation and depth scaling (`scale: 1.0` active, `scale: 0.8` flanks).
 - **Keyboard & Mouse Control**: Navigate with left/right arrows or mouse wheel; hit `Enter` to apply wallpaper via `awww` / `swww`. Automatically runs `extract-theme.py` to regenerate the dynamic color palette.
 
+### 3.6. Aetheric Neural Chat — Local AI Panel (`components/AIChat.qml`)
+
+- **Window**: 860×680 centered `Overlay` layer surface (`topMargin: 80`); `Exclusive` keyboard focus while open, `Escape` closes. The thread survives close/reopen for the session and is discarded only via the two-tap CLEAR action — there is no on-disk chat history.
+- **Streaming pipeline**: `scripts/ai-chat.py` (Python stdlib only) reads one JSON request line from stdin and streams NDJSON events (`chunk` / `done` / `error` / `offline`) from Ollama `POST /api/chat`. The panel renders tokens live via `Process` + `SplitParser`; TTFT, tok/s and prompt/output token counts come from the real final event (`prompt_eval_count`, `eval_count`, `eval_duration`) — never simulated.
+- **UI states (all honest)**: backend pill `OLLAMA (ACTIVE/CONNECTING/OFFLINE)` in the footer, red banner + RETRY when the server is unreachable, suggestion chips in the empty state, model dropdown fed by `GET /api/tags` (only locally pulled models), VRAM pill from `nvidia-smi` (live, 5 s while open), token counter against the active context window.
+- **Settings Hub sync (single source of truth)**: the panel watches `~/.config/quickshell/rice-settings.json` (`FileView` + `watchChanges`). The hub's assistant defaults — model, context size, temperature, system prompt — apply live to the next request (verified end-to-end: external store write + model pull switched the panel without a restart); picking a model in the panel's dropdown writes the choice back to the store with a stdlib-only Python JSON patch so the hub and panel never disagree. With no default set, the first installed model is used (currently `llama3.2:3b`).
+- **Content actions**: fenced code blocks render as mono blocks with COPY (Wayland clipboard); STOP aborts the stream and marks the message *Stopped* without fabricated metrics; REGENERATE re-sends the last user turn; the header telemetry toggle hides/shows per-message metrics.
+- **Exclusivity**: opening the chat closes the dashboard, radio popups and wallpaper carousel; opening any of those closes the chat (verified both directions).
+- **IPC**: `quickshell ipc --any-display -p ~/Projects/my-rice call aichat open|close|toggle|send <text>|stop|clear|regenerate`.
+- **Privacy**: endpoint is hard-fixed to `127.0.0.1:11434`; prompts and replies never leave the machine, are never logged by the bridge, and no API keys exist anywhere in the pipeline.
+
+### 3.7. Ollama Local Backend (user service)
+
+- `~/.config/systemd/user/ollama.service` runs `ollama serve` bound to **`127.0.0.1:11434` only** (verified with `ss`), storing models in `~/.ollama/models`.
+- Start/stop: `systemctl --user start|stop ollama` · status: `systemctl --user status ollama` · logs: `journalctl --user -u ollama -f`.
+- Model used by the panel: the **Default model** selected in the Settings Hub (AI & Models); with none selected the first installed model is used (`llama3.2:3b`, ~2 GB, GPU offload on the RTX 4050). Pull with `ollama pull <model>` or from the hub's Pull card (free space on the models volume is checked first); list with `ollama list`. If the panel shows OFFLINE, start the service (`systemctl --user start ollama`, also possible from the hub) and hit RETRY.
+
+### 3.8. Lockscreen (Hyprlock + Howdy face unlock)
+
+- **Config**: `~/.config/hypr/hyprlock.conf`, visually matched to `design_refs/Lockscreen.html`. Two hard-won rules are documented in its header: every widget carries an explicit `zindex` (hyprlock sorts widgets by zindex with a non-stable sort — omitted zindexes scramble the layer order), and all dynamic text is shelled out to `scripts/lock-info.sh` (`bat|net|kb|caps|clients|media-title|media-artist|media-vol|user|host|auth|howdy-status|sockets`) because hyprlock's config parser rejects `#` and `$(...)` in values.
+- **Entry points**: `Super + L` (global bind — prefers `hyprlock` from PATH, falls back to the staged build, no-op if already locked), Left Rail power menu → *Lock Screen*, and Dashboard → TOOLS → *LOCK SCREEN*; the menu entry points run `pidof hyprlock || hyprlock || loginctl lock-session`.
+- **PAM stack**: `sudo scripts/setup-lockscreen.sh` installs `hyprlock` from the official repos and writes `/etc/pam.d/hyprlock` as a dedicated stack — `#%PAM-1.0` header, `auth sufficient /usr/lib/security/pam_howdy.so` (face, only when the module exists), then `auth|account|password|session include system-local-login` for every section (`login` is substituted only on systems without `system-local-login`). The include lines reuse this system's own login chain (`system-local-login → system-login → system-auth`) verbatim: nothing is copied out of `system-auth`, shared PAM files are never modified, and `pam_faillock`, `pam_shells`, `pam_nologin` and `pam_access` keep the distro behavior. Face is attempted first; the account password always remains a valid unlock and is the only method until a Howdy model exists. Any pre-existing file (the hyprlock package's shipped default `auth include login`, or a previous run's file that was later edited) is preserved with a timestamped, collision-safe backup before every overwrite; byte-identical re-runs change nothing. `scripts/setup-lockscreen.sh --self-test` rehearses the backup/write/verify logic in a temp dir without root.
+- **Manual step (human only)**: face unlock stays inactive until enrolled — run `sudo howdy add` once (camera `/dev/video0`; the shared `/etc/howdy/config.ini` is never modified). Test at a safe moment with a TTY available: run `hyprlock`, unlock with the password. Recovery if a lock ever misbehaves: switch to a TTY and `pkill -x hyprlock`.
+- **Rollback / precise restore**: the run prints the exact backup path — `sudo cp -a <backup-file> /etc/pam.d/hyprlock` restores the previous state; `sudo pacman -S hyprlock` reinstalls the package default; `sudo rm /etc/pam.d/hyprlock` leaves no stack (hyprlock falls back to `/etc/pam.d/su`); `sudo pacman -Rns hyprlock` removes the locker. Note: the package does not mark `/etc/pam.d/hyprlock` as a pacman backup file, so a future hyprlock upgrade may replace the stack — re-run the setup script afterwards.
+
+### 3.9. Settings Hub (`settings.qml`)
+
+- **Window**: standalone second QuickShell instance (`quickshell --no-duplicate -p ~/Projects/my-rice/settings.qml`), toggled with Super+, — the bind reuses a running instance via `quickshell ipc -p … call settings toggle`.
+- **Store**: `~/.config/quickshell/rice-settings.json` is the single source of truth for saved values; the Hub watches it (`watchChanges`) and the AI panel does too. Hyprland option writes go through `hyprctl keyword` with an automatic `hyprctl eval` fallback (required on the Lua parser: `keyword` is rejected there); monitor data comes from `hyprctl monitors -j`, binds from `hyprctl binds -j`.
+- **Persistent Hyprland settings**: on save, a generated `rice-settings.lua` (or `.conf` outside Lua mode) is written and the exact include line is shown. The System page detects whether the include is already present in the active Hyprland config and offers a one-click **Add include line (with backup)** — it appends at the END (so saved values win) after a timestamped `cp -a` backup, never touching anything else.
+- **AI & Models page (real backends only)**: Ollama status/version from the live API plus `systemctl --user is-active ollama`; **Start/Stop service** buttons drive the user unit (no detached `ollama serve` processes); the Endpoint field accepts only loopback URLs (`127.0.0.1` / `localhost` / `[::1]`) because the chat bridge is hard-fixed to loopback; model list and pull progress come from `GET /api/tags` + `POST /api/pull`; a pull only starts after a real free-space check on the models volume; **Open chat** / **Stop generation** buttons call the shell's `aichat` IPC.
+- **Honesty rules**: tools that are not installed (e.g. `hyprsunset`) show as missing pills and their toggles hide; nothing is simulated.
+
+### 3.10. Power & Battery Popup (`components/BatteryPopup.qml`)
+
+- **Route**: uses the same popup router the Wi-Fi/BT/clock popups use (`hub.openPopup("battery", anchorY)` / `hub.dashboardOpen && hub.activePopup === "battery"`), docked 62px from the left edge next to the rail battery pill, vertically clamped on-screen, Escape + cursor-leave (350ms grace) dismissal. Opening it closes any other popup and the dashboard; it was routed in the shell long before a component existed — this fills that gap.
+- **Battery telemetry**: the shared UPower service (`Quickshell.Services.UPower`, same singleton the island uses) — percentage, state, time-to-full/empty and health, all read live. The bolt glyph is shown only while actually `Charging`; a plugged-but-"Not charging" battery keeps the level glyph so the icon never contradicts the text. Hidden with an honest "No battery detected" note when `isPresent` is false.
+- **Power profiles**: live `powerprofilesctl list` parse (same regex/degraded-driver handling as the System tab), current profile chip, per-profile accent, `degraded` tag; **writes are verified** — `powerprofilesctl set <id>` plus a bounded re-read loop before success is shown; real stderr/exit text is surfaced on failure. Empty list shows an honest daemon-not-running message.
+- **IPC**: `quickshell ipc -p ~/Projects/my-rice call popup open battery|wifi|bt|clock`, `close`, `powerProfiles` (JSON: current/driver/profiles), `setPowerProfile <id>`. The rail battery pill and the dashboard System tab drive the same daemon — one backend, multiple surfaces, never a fabricated value.
+
+### 3.11. Unified Theme Pipeline (`scripts/extract-theme.py` → `/tmp/gps-theme.json`)
+
+- **Source of truth**: `extract-theme.py` reads the *current* wallpaper (`awww query`), extracts the dominant hue via a weighted 36-bucket HSV histogram, and writes `/tmp/gps-theme.json` (`wallpaper`, `surface`, `card`, `cardHover`, `track`, `border`, `brandAccent`, `brandAccentFg`, `textMain`, `textMuted`). It runs at shell startup (`run-gps.fish`), on every carousel apply, on the Tools-tab *Regenerate palette* action, and on wallpaper cycling.
+- **Shell (Theme.qml)**: the singleton watches that file (`FileView` + `watchChanges`) and every mapped token follows it **live, without a restart** — verified blue → red → blue across wallpaper switches. Unmapped keys fall back to the built-in design defaults, so the shell always boots even with no palette file. Status colors (good/warn/danger) stay fixed by design.
+- **Settings Hub**: palette probe order is `/tmp/gps-theme.json` → pywal `colors.json` → Caelestia `scheme.json` → built-in fallback (`paletteSource` shows which is active on the Appearance card); the palette FileView watches the chosen file, so the hub restyles live too.
+- **Rofi**: colors are no longer rewritten inside `config.rasi`; the extractor generates `~/.config/rofi/colors.rasi` and the config just `@import`s it — user config stays untouched, changes apply on next rofi launch.
+- **Hyprland borders**: the extractor also sets `general:col.{active,inactive}_border` to match. On legacy (hyprlang) configs it uses `hyprctl keyword`; on the 0.55+ Lua parser — which silently rejects `keyword` — it falls back to `hyprctl eval 'hl.config(...)'` with the Lua gradient syntax (`{ colors = {...}, angle = 45 }`). Verified live.
+
 ---
 
 ## 4. Directory & File Organization
 
 ```
 ~/Projects/my-rice/
-├── shell.qml # Master QuickShell orchestrator & edge sensor
+├── shell.qml # Master QuickShell orchestrator, hub API, IPC handlers, edge sensor
+├── settings.qml # Standalone Settings Hub app (own QuickShell instance; Super+comma)
 ├── config/
-│   └── Theme.qml # Singleton theme tokens loaded from /tmp/gps-theme.json
+│   └── Theme.qml # Live theme singleton: watches /tmp/gps-theme.json (wallpaper palette) with design-default fallbacks
 ├── components/
 │   ├── LeftRail.qml # 54px exclusive Wayland taskbar dock
-│   ├── Dashboard.qml # 440px right-edge hover HUD with live telemetry
+│   ├── DashboardHost.qml # Canonical right-edge drawer host (auto-hide, exclusivity)
+│   ├── Dashboard.qml # Drawer frame: DashTabBar + per-pane loaders
+│   ├── dashboard/ # HomeTab / MediaTab / SystemTab / ToolsTab + shared cards,
+│   │              # SysProbe, AudioSpectrum singleton, CircularArtwork, …
 │   ├── NotifCenter.qml # 360px notification & to-do drawer
 │   ├── NotifToast.qml # Floating top-center transient banner toast
-│   └── WallpaperCarousel.qml # 840x520 3D coverflow wallpaper picker
-├── components_backup/ # Archived experimental / legacy components
+│   ├── WallpaperCarousel.qml # 840x520 3D coverflow wallpaper picker
+│   ├── AIChat.qml # 860x680 local AI chat panel (Ollama streaming, loopback only)
+│   ├── BatteryPopup.qml # Power & battery popup (UPower + verified powerprofilesctl)
+│   └── WifiPopup.qml / BluetoothPopup.qml # Anchored radio popups
 └── scripts/
-    ├── run-gps.fish # Master startup & restart orchestrator
-    ├── extract-theme.py # Dynamic HSV palette extractor from wallpaper
-    ├── cycle-wall.fish # Wallpaper rotation script
+    ├── run-gps.fish # Master startup & restart orchestrator (kills by path pattern, re-applies last wallpaper)
+    ├── ai-chat.py # Loopback-only Ollama bridge (NDJSON streaming, no persistence)
+    ├── setup-lockscreen.sh # Root helper: install hyprlock + write PAM stack (Howdy → login; --self-test)
+    ├── lock-info.sh # Real-value provider for every dynamic hyprlock label
+    ├── extract-theme.py # Wallpaper → /tmp/gps-theme.json + rofi colors.rasi + Hyprland border (keyword/eval fallback)
+    ├── cycle-wall.fish / pick-wall.fish # Wallpaper rotation / selection
+    ├── audio-spectrum.py # Real FFT spectrum (parec monitor, s16le 48kHz)
+    ├── audio-sinks.py # Read-only WirePlumber sink enumeration
+    ├── lyrics.py # On-demand LRCLIB lyrics lookup
+    ├── screen-time.py # AW-compatible screen-time query (AFK-excluded)
+    ├── toolkit.sh / take-picture.sh # Capture helpers (webcam photo utility, parked)
+    ├── vibe_switch.sh # Compositor vibe profiles (Super+F1..F4)
     └── wifi-connect.sh # Lightweight discrete Wi-Fi connection dialog
 ```
 
@@ -153,8 +223,9 @@ Aetheric Shell uses an isolated, collision-free dual-shell architecture:
 1. **Positive Thickness Invariant (0px Layer Shell Bug)**: In `zwlr_layer_shell_v1`, setting `implicitWidth: 0` or `implicitHeight: 0` triggers an immediate compositor bug that expands the surface across the entire display (white screen freeze). All docks must have an explicit, non-zero dimension (`implicitWidth: 54`).
 2. **Wayland Top-Center Geometry**: `PanelWindow.anchors` is an `AnchorGroup` accepting only boolean edges (`top`, `bottom`, `left`, `right`). It does **not** support `horizontalCenter`. To center a top window, anchor `top: true` only.
 3. **TextInput Placeholder Text in QtQuick**: Primitive `QtQuick.TextInput` does not possess a `placeholderText` property (only `QtQuick.Controls.TextField` does). Placing `placeholderText` on `TextInput` crashes QML compilation and aborts the scene graph.
-4. **D-Bus Exclusive Ownership**: `tide-island` holds exclusive ownership of `org.freedesktop.Notifications`. QuickShell must never instantiate a `NotificationServer`.
+4. **D-Bus Exclusive Ownership**: `tide-island` holds exclusive ownership of `org.freedesktop.Notifications` — its shell instantiates exactly one QuickShell `NotificationServer` (`~/.local/share/tide-island/shell.qml`, verified via `GetServerInformation`). No other shell may instantiate one. Failure mode if that fails: `notify-send` errors with `ServiceUnknown` and no capsule appears — check `pgrep -af tide-island` and the D-Bus name owner first (`gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.GetServerInformation`).
 5. **Dynamic System Telemetry**: Never use hardcoded host strings. Telemetry must be read dynamically via QuickShell `Process` from `/proc/cpuinfo`, `/proc/meminfo`, and `/sys/class/thermal/`.
+6. **Multi-Instance IPC Addressing**: with several QuickShell instances running (rice shell, Tide Island, Settings Hub), a bare `quickshell ipc call …` fails with `Could not find "default" config directory`. Every keybind and helper must pass `-p <the target instance's qml path>`.
 
 ---
 
@@ -172,3 +243,25 @@ To run QuickShell in the foreground for debugging and live logs:
 ```fish
 QS_LOG_LEVEL=debug quickshell -p ~/Projects/my-rice/shell.qml
 ```
+
+### Tide Island & Screen-Time Tracker
+
+- Tide Island runs as its own QuickShell instance (`quickshell -p ~/.local/share/tide-island`); `run-gps.fish` restarts only the rice shell and leaves Tide running. The island guard (`pgrep -f "share/tide-[i]sland"`) starts Tide Island only if absent — a second instance would fight for the D-Bus notification name.
+- The GPS island production entrypoint is `island/IslandProduction.qml`. The desktop defaults to Tide because `shell.qml` still routes clipboard and notification-center IPC to Tide. A deliberate one-island cutover is `scripts/switch-island.fish gps`; it persists the choice in `~/.config/quickshell/gps-island-backend`, stops only Tide's exact QuickShell command line, and starts GPS. Roll back with `scripts/switch-island.fish tide`. Do not run both islands together: both own the top-center `island` layer and the notification service.
+- `run-gps.fish` restarts the wallpaper daemon and re-applies the last wallpaper from `/tmp/gps-last-wall.txt` (`awww-daemon` starts blank), so shell restarts never leave an empty background; `extract-theme.py` then regenerates `/tmp/gps-theme.json` from it (and updates the file itself on every wallpaper change).
+- Screen-time data comes from **awatcher** (`~/.local/opt/awatcher/awatcher --no-tray`), an ActivityWatch-compatible tracker serving `127.0.0.1:5600`. It is not managed by a systemd unit here — start it with that command (backgrounded) and disable it by killing the process; the screen-time card then honestly reports its `offline` state. The tracker stores window activity locally in its own database; the shell only reads **app-class-level** aggregates and excludes AFK time.
+- **Auto-start**: `hyprland.lua` launches `scripts/run-gps.fish` via `hl.on("hyprland.start", …)` — once per compositor start, so every login/reboot brings up the full desktop. (A plain `exec_cmd` runs during config parse, before the Wayland socket accepts clients, which crashed the shell and every GUI daemon at login with `wl_display: Connection refused`.) Hyprland auto-reloads when the config file is edited, but `hyprland.start` does not re-fire on reload — editing `hyprland.lua` or running `hyprctl reload` does **not** restart the shell; use the Tools-tab RELOAD SHELL action or re-run the script.
+- **Startup log**: `run-gps.fish` appends a timestamped line per step to `/tmp/gps-startup.log` (compositor-ready wait, wallpaper re-apply, island/shell up with pids, or an explicit `ERROR:` line if a process exited during startup). The script also waits up to 10 s for `hyprctl` to reach the compositor before launching anything, so the login race cannot recur.
+
+---
+
+## 7. Verification Snapshot (2026-10-18)
+
+- `qmllint` over every `.qml`: 0 errors. Python scripts compile; fish/bash scripts pass syntax checks.
+- Live E2E on the production config: drawer open/close (Super+D, IPC, edge sensor with 800ms re-arm), all four tabs rendered with live data, dashboard/popup mutual exclusion both directions, Super+N / Super+W / Super+comma binds (previously dead — see invariant 6), Print → slurp → Esc cancel (nothing written, swappy never spawned), spectrum process lifecycle 1 → 0 on pane unload, NotifCenter open/close, 0 QML runtime errors in the final shell log.
+- **AI chat E2E (verified live via IPC + screenshots)**: panel open/close/toggle, real streamed generation on `llama3.2:3b` (TTFT 57–397 ms, 82–159 t/s on the RTX 4050), multi-turn history, STOP mid-generation (marks *Stopped*, no fabricated metrics), REGENERATE, CLEAR, offline banner + RETRY (service stopped/started), model dropdown from `/api/tags`, live VRAM pill, chat↔dashboard and chat↔carousel exclusivity both directions, port bound to `127.0.0.1` only. 0 QML warnings introduced (`qt.qpa.wayland.textinput` focus chatter from layer-shell text inputs is a known Qt/Wayland quirk, not a shell bug).
+- **Lockscreen (verified in a nested Hyprland sandbox)**: config parses clean, ext-session-lock engages, password prompt served by `pam_unix` via the su fallback, full render matches `design_refs/Lockscreen.html` (clock, pills, glass card, input field, biometric/security tiles, media card, VT hint) with correct z-index layering.
+- **Phases 4–6 E2E (verified live 2026-10-18)**: battery/power-profile popup drives real UPower + `powerprofilesctl` (set `power-saver` → read back → restored `balanced`); the unified theme pipeline was cycled blue → red → blue with **no restarts** (rail pills, Settings Hub hot-reload, rofi `colors.rasi`, Hyprland border via `eval`); island Focus persists across restarts (`~/.cache/gps/dnd`) and **critical-urgency notifications bypass DND** while normal ones stay suppressed (capsule screenshot + history IPC); `run-gps.fish` boot simulation re-applied the wallpaper from `/tmp/gps-last-wall.txt` after killing `awww-daemon`, preserved a running island, and left exactly one rice shell / island / settings instance with 0 errors in all logs. Full sweep: 34 QML files `qmllint`-clean, fish/python/bash scripts syntax-checked.
+- **Startup & keybinds (verified live 2026-10-18, second pass)**: root cause of "nothing appears after reboot" — the startup `exec_cmd` ran before the Wayland socket accepted clients; fixed by deferring to `hl.on("hyprland.start", …)` plus a compositor-ready wait and per-step logging in `run-gps.fish`. Verified: two scripted runs brought up exactly one shell / island / awatcher, island and settings untouched, wallpaper re-applied. Added `Super + L` (hyprlock) and `Super + V` (island clipboard toggle, verified live), moved floating to `Super + Shift + V`; full reference in `keybind.txt`.
+- Known limitations (honest unavailable states by design, not bugs): face unlock stays **inactive until enrolled** (`sudo howdy add` — deliberately never automated); the system package install + PAM write is a `sudo scripts/setup-lockscreen.sh` human step; Night Warmth has no `hyprsunset`; End Wine reports none running; VRAM shows `—` when the GPU probe has no data. The rail's *Suspend* acts immediately while Log Out / Reboot / Shut Down are confirm-gated; the dashboard TOOLS suspend/shut-down are confirm-gated. `runCenterAction()` in `shell.qml` is currently uncalled (tide routes repaired). `WorkspaceIndicator.qml` references an undeclared `hub.isHorizontal` — the expression is silently falsy (vertical layout), left as-is. The `popup powerProfiles` IPC getter returns empty until the battery popup has been opened once per shell instance (the profile probe starts on open — by design).
+- **Manual verification owed (human)**: correct-password unlock + Howdy face test on the live session (test with a TTY available; recovery `pkill -x hyprlock`), and the wrong-password retry prompt. AI panel: click the rail brain button and type directly (all IPC paths already verified).

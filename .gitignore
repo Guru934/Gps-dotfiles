@@ -1,0 +1,11 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Local-only snapshots and backups
+.snapshots/
+
+# Local environment/credentials
+.env
+.env.*
+!.env.example

@@ -23,3 +23,5 @@ end
 echo $idx > "$state_file"
 
 awww img "$walls[$idx]" --transition-type outer --transition-pos 0.92,0.06 --transition-fps 165 --transition-duration 1.1 >/dev/null 2>&1
+
+~/Projects/my-rice/scripts/extract-theme.py &

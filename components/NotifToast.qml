@@ -6,7 +6,7 @@ import qs.config
 PanelWindow {
     id: root
     property var hub: null
-    readonly property bool toastOpen: hub !== null && hub.toastVisible
+    readonly property bool toastOpen: hub !== null && hub.toastVisible && (hub.toastSummary !== "" || hub.toastBody !== "")
 
     // PanelWindow anchors are layer-shell edge flags, not Item anchors.
     anchors { top: true }
@@ -23,7 +23,7 @@ PanelWindow {
         interval: 8000
         repeat: false
         running: root.toastOpen
-        onTriggered: if (root.hub) root.hub.toastVisible = false
+        onTriggered: if (root.hub) root.hub.dismissToast()
     }
 
     Rectangle {
@@ -41,20 +41,27 @@ PanelWindow {
                 width: 38; height: 38; radius: Theme.radiusPill
                 anchors.verticalCenter: parent.verticalCenter
                 color: Theme.brandAccent
-                Text { anchors.centerIn: parent; text: "🍵"; font.pixelSize: 18 }
+                Text { anchors.centerIn: parent; text: "✦"; color: Theme.brandAccentFg; font.pixelSize: 18; font.bold: true }
             }
             Column {
                 width: 220
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 3
-                Text { text: root.hub && root.hub.toastSummary !== "" ? root.hub.toastSummary : "Pomodoro Break Alert"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight }
-                Text { text: root.hub && root.hub.toastBody !== "" ? root.hub.toastBody : "Time for a 5-min breather! 🍵"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; elide: Text.ElideRight }
+                Text {
+                    visible: root.hub && root.hub.toastApp !== ""
+                    text: root.hub ? root.hub.toastApp : ""
+                    color: Theme.brandAccent
+                    font.family: Theme.fontMono
+                    font.pixelSize: 8
+                    font.bold: true
+                }
+                Text { text: root.hub ? root.hub.toastSummary : ""; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 12; font.bold: true; width: parent.width; elide: Text.ElideRight }
+                Text { visible: root.hub && root.hub.toastBody !== ""; text: root.hub ? root.hub.toastBody : ""; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; width: parent.width; elide: Text.ElideRight }
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 5
-                ToastButton { label: "Take Break"; onClicked: if (root.hub) root.hub.toastVisible = false }
-                ToastButton { label: "Snooze 5m"; onClicked: if (root.hub) root.hub.toastVisible = false }
+                ToastButton { label: "Dismiss"; onClicked: if (root.hub) root.hub.dismissToast() }
             }
         }
     }

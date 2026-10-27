@@ -1,0 +1,143 @@
+GPS DESKTOP - KEYBIND REFERENCE (keybind.txt)
+=============================================
+Source of truth : ~/.config/hypr/hyprland.lua  (Hyprland 0.56.2, Lua config)
+Live verification: hyprctl binds -j           (56 global binds at last check)
+Last verified   : 2026-10-18 (after adding Super+L and Super+V; supersedes the
+                  README keybind rows where they differ)
+
+Everything below acts on the whole Hyprland session (global) unless marked
+otherwise. "Super" = the Windows/Meta key. Commands shown are the exact ones
+the bind runs (Lua-mode dispatchers appear as "__lua" in hyprctl binds -j).
+
+
+------------------------------------------------------------------------
+1. GPS / DESKTOP CONTROLS (my-rice QuickShell + Tide Island)
+------------------------------------------------------------------------
+Super + D ........ Toggle the right-edge GPS dashboard HUD.
+                   quickshell ipc -p ~/Projects/my-rice/shell.qml call dashboard toggle
+Super + N ........ Toggle the GPS notification center panel (reads history
+                   from Tide Island).
+                   quickshell ipc -p ~/Projects/my-rice/shell.qml call notifcenter toggle
+Super + W ........ Toggle the 3D coverflow wallpaper carousel.
+                   quickshell ipc -p ~/Projects/my-rice/shell.qml call wallpaper toggle
+Super + , ........ Toggle the Settings Hub window (opens it if not running).
+                   quickshell ipc -p ~/Projects/my-rice/settings.qml call settings toggle
+Super + L ........ LOCK THE SCREEN now.
+                   Tries hyprlock from PATH first (packaged /usr/bin/hyprlock
+                   once setup-lockscreen.sh has been run; before that, the
+                   user-local staged build via ~/.local/bin/hyprlock).
+                   Does nothing if hyprlock is already running.
+Super + V ........ Toggle Tide Island's clipboard history panel.
+                   quickshell ipc -p ~/.local/share/tide-island call clipboard toggle
+Super + Alt + C ... Toggle the project GPS Control Center.
+                   quickshell ipc -p ~/Projects/my-rice/island/IslandProduction.qml call island control toggle
+                   Requires the GPS production cutover: scripts/switch-island.fish gps
+Super + Space .... App launcher (rofi).
+Super + R ........ App launcher (rofi, same as Super+Space).
+                   rofi -show drun
+
+
+------------------------------------------------------------------------
+2. APPLICATIONS & WINDOW MANAGEMENT
+------------------------------------------------------------------------
+Super + Q ........ Terminal emulator.            kitty
+Super + E ........ File manager.                 thunar
+Super + C ........ Close the focused window.
+Super + Shift + V  Toggle floating for the focused window.
+Super + P ........ Toggle pseudo-tiling (dwindle layout).
+Super + J ........ Toggle split (dwindle layout).
+Super + M ........ Exit the Hyprland session.
+                   hyprshutdown if installed, otherwise a direct exit.
+Super + Left/Right/Up/Down  Move focus in that direction.
+Super + LMB drag . Move the window under the cursor.
+Super + RMB drag . Resize the window under the cursor.
+
+
+------------------------------------------------------------------------
+3. WORKSPACES
+------------------------------------------------------------------------
+Super + 1..0 ..... Switch to workspace 1..10.
+Super + Shift + 1..0  Move the focused window to workspace 1..10.
+Super + S ........ Toggle the special workspace ("magic" scratchpad).
+Super + Shift + S  Move the focused window to the special workspace.
+Super + MouseWheelUp / MouseWheelDown  Focus previous / next workspace
+                   (workspace e-1 / e+1).
+3-finger horizontal swipe  Switch workspaces (compositor gesture).
+
+Dock (left rail) interactions - these are in-shell controls, not Hyprland
+binds:
+- Hover the bottom-right screen corner ... open the dashboard (22x22 hot zone,
+  800 ms re-arm; disable via System tab EDGE HOTSPOT toggle)
+- Cursor leaves an open drawer .......... auto-dismiss after the grace timer
+  (default 400 ms, configurable 150-800 ms in System tab)
+- Click a workspace pill ................ switch to that workspace
+- Scroll on the workspace pills ......... step through workspaces
+- Click the brand mark (top of rail) .... app launcher (rofi), same as Super+R
+
+
+------------------------------------------------------------------------
+4. MEDIA, VOLUME, BRIGHTNESS, MICROPHONE  (all work on the lock screen too)
+------------------------------------------------------------------------
+XF86AudioRaiseVolume ... Volume up 5% (capped at 100%).
+                         wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+
+XF86AudioLowerVolume ... Volume down 5%.
+XF86AudioMute .......... Mute/unmute output.
+XF86AudioMicMute ....... Mute/unmute microphone input.
+XF86MonBrightnessUp .... Screen brightness +5%.   brightnessctl -e4 -n2 set 5%+
+XF86MonBrightnessDown .. Screen brightness -5%.
+XF86AudioNext .......... Next track.              playerctl next
+XF86AudioPrev .......... Previous track.          playerctl previous
+XF86AudioPlay / XF86AudioPause ... Play/pause.    playerctl play-pause
+(All of these are marked "locked = true": they keep working while the
+screen is locked.)
+
+
+------------------------------------------------------------------------
+5. SCREENSHOTS
+------------------------------------------------------------------------
+Print ............ Region screenshot: pick an area with slurp, capture with
+                   grim, annotate/save with swappy.
+                   r=$(slurp) || exit 0; [ -n "$r" ] || exit 0; \
+                   grim -g "$r" - | swappy -f -
+                   Pressing Esc while selecting cancels cleanly - nothing is
+                   written and swappy never opens.
+
+
+------------------------------------------------------------------------
+6. NOT BOUND - DELIBERATELY LEFT EMPTY (verified against the live config)
+------------------------------------------------------------------------
+Super + Return .......... nothing - the terminal is Super + Q.
+Super + F1 .. F4 ........ nothing - the old "vibes" (Study/Gaming/Chill/
+                          Night) were never implemented end to end:
+                          scripts/vibe_switch.sh exists but only writes a
+                          state file nothing consumes, and warm-shift tooling
+                          (hyprsunset) is not installed.
+Super + V ............... moved: clipboard history now lives here; floating
+                          was moved to Super + Shift + V.
+
+
+------------------------------------------------------------------------
+7. APPLICATION-SPECIFIC SHORTCUTS
+------------------------------------------------------------------------
+These are local to individual apps and are NOT part of the Hyprland keybind
+config, so they are not enumerated here:
+- rofi: uses its stock default keys (~/.config/rofi/config.rasi sets no
+  custom keybind overrides; it only imports colors.rasi).
+- kitty / Chromium / other apps: their own defaults; this rice does not
+  configure or override them.
+Anything not listed above and not marked "not bound" is not a Hyprland
+binding in this session.
+
+
+------------------------------------------------------------------------
+8. LOCKSCREEN (hyprlock) NOTES
+------------------------------------------------------------------------
+- Launch: Super + L, or the Left Rail power menu -> Lock Screen, or
+  Dashboard -> TOOLS -> LOCK SCREEN.
+- Unlock: your account password (pam_unix via the dedicated /etc/pam.d/
+  hyprlock stack). Howdy face unlock is inactive until you enroll a face
+  model yourself with `sudo howdy add`.
+- Recovery if a lock ever misbehaves: switch to a TTY with Ctrl+Alt+F3,
+  log in, and run: pkill -x hyprlock
+- Full rollback instructions for the PAM stack: see README section 3.8 and
+  the output of scripts/setup-lockscreen.sh.
