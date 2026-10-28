@@ -1,4 +1,7 @@
 .pragma library
+// Island-local mirror of pet/PetSprites.js. QuickShell blackholes imports outside
+// the config root, so the island cannot load the desktop pet's copy directly.
+// Keep the frame data in sync; island/tests/pet_fx_test.js checks parity.
 // Pixel sprite engine for the desktop pet.
 // Sprites are built from rectangles on a W x H cell grid (feet touch y = H).
 // Each rect is [x, y, w, h, colorKey]. An outline is drawn automatically by the renderer.

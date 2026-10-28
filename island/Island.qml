@@ -673,6 +673,18 @@ Scope {
                 if (root.debugMode === "clip") root.debugMode = ""
             }
         }
+        function clipboard(action: string): void {
+            if (action === "close" || action === "off") {
+                root.clipHistoryOn = false
+                root.clipOn = false
+                if (root.debugMode === "clip") root.debugMode = ""
+            } else if (action === "open" || action === "on") {
+                root.clipHistoryOn = true
+                root.holdClip()
+            } else {
+                clip()
+            }
+        }
     }
 
     // PipeWire is event-driven; the helper polls direct V4L2 file descriptors every 1.5s.

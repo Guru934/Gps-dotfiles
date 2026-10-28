@@ -444,6 +444,12 @@ def ensure_awww_daemon() -> None:
     raise BridgeError("wallpaper_unavailable", "awww-daemon did not become ready.")
 
 
+def last_wall_path() -> Path:
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "quickshell"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "gps-last-wall.txt"
+
+
 def apply_wallpaper(args: argparse.Namespace) -> dict:
     path, cached = ensure_image(args.id, args.path)
     ensure_awww_daemon()
@@ -462,7 +468,7 @@ def apply_wallpaper(args: argparse.Namespace) -> dict:
         detail = message[-1] if message else "unknown error"
         raise BridgeError("wallpaper_failed", f"awww rejected the wallpaper: {detail}")
     try:
-        (Path(tempfile.gettempdir()) / "gps-last-wall.txt").write_text(str(path), encoding="utf-8")
+        last_wall_path().write_text(str(path), encoding="utf-8")
     except OSError:
         pass
     return {"ok": True, "path": str(path), "cached": cached, "title": args.title}

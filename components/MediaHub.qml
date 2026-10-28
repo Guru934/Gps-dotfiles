@@ -242,7 +242,7 @@ Item {
     // ================================================================
     // Stitch artwork (remote). Any failure falls back to the gradient + glyph.
     // >>> BACKEND: replace with Wallhaven thumbnails / local cache paths.
-    readonly property string artBase: "https://lh3.googleusercontent.com/aida-public/"
+    readonly property string artBase: ""
     readonly property var artIds: ({
         hero: "AB6AXuBFNmDHNGkY69HacDDeP4jD9L57JQ0i88karW2a4r2qMOh6ofHR9xKPYc1enF0R3Si51aZnEVaciwvnGtqFseMSWG5bLkJGloDggaGhWSxUwgS63V2xPwCpT_lFEw9p_dTcm49Zu3PsyQpiyEOVClqDzvlag823aSw8qd3zHzhH_IyidJITRgvm5Ml1qOp0-Pdj0Kt5GvEFxCOrcNEOMkw-BxRHqEcbXj5fsp1qXTs",
         anime1: "AB6AXuAWVwdToEd5uMivBa8MeqJ8zeWUNjpl6ity0e6VDq32HRn-KyV8zop7b2FJyoUz0RhZNi3d1iEcJX0m9rK9KeHunnu09wN5ujdZn1xBWalBZzRwWuhUG18OBlCKm5NBEtiBhp5G-s6uHzDetEfZH229_0ZXPxtuTH9pqz16Ra5mIPX3I7laRYR-OD4lJaqRG8055n7siE-Ifm73_bZrgUlyHEpiiTt9RjlHQ9T5li4",
@@ -258,7 +258,8 @@ Item {
     function artUrl(id) {
         if (!loadRemoteArt || !id) return ""
         if (typeof id === "string" && /^(https:\/\/|file:\/\/)/.test(id)) return id
-        return artBase + id
+        if (artBase !== "") return artBase + id
+        return ""
     }
 
     readonly property var gradients: ({

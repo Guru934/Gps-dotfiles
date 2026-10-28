@@ -4,7 +4,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Unified palette source: /tmp/gps-theme.json is written by
+// Unified palette source: ~/.config/quickshell/gps-theme.json is written by
 // scripts/extract-theme.py whenever the wallpaper changes (run-gps startup,
 // wallpaper carousel apply, Tools tab regenerate). The shell watches that
 // file live and every mapped token follows it; anything missing falls back
@@ -34,7 +34,7 @@ Singleton {
 
     FileView {
         id: themeFile
-        path: "/tmp/gps-theme.json"
+        path: Quickshell.env("HOME") + "/.config/quickshell/gps-theme.json"
         watchChanges: true
         onLoaded: root.applyLive(themeFile.text())
         onFileChanged: themeFile.reload()

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import colorsys, json, os, subprocess
 
-STATE_JSON = "/tmp/gps-theme.json"
-LAST_WALL = "/tmp/gps-last-wall.txt"
+STATE_JSON = os.path.expanduser("~/.config/quickshell/gps-theme.json")
+LAST_WALL = os.path.expanduser("~/.config/quickshell/gps-last-wall.txt")
 
 def get_current_wallpaper():
     try:
@@ -53,6 +53,7 @@ def hsv_rgba_hex(h, s, v, alpha_hex="FF"):
     return f"#{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}{alpha_hex}"
 
 def main():
+    os.makedirs(os.path.dirname(STATE_JSON), exist_ok=True)
     wall = get_current_wallpaper()
     if not wall or not os.path.exists(wall):
         return

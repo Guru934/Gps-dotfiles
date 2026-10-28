@@ -379,7 +379,7 @@ for o in ${keys}; do echo "##opt $o"; hyprctl getoption $o -j 2>/dev/null | tr -
     }
     Cmd {
         id: cmdPal
-        script: `for f in "/tmp/gps-theme.json" "$HOME/.cache/wal/colors.json" "$HOME/.local/state/caelestia/scheme.json"; do [ -f "$f" ] && { echo "$f"; break; }; done`
+        script: `for f in "$HOME/.config/quickshell/gps-theme.json" "$HOME/.cache/wal/colors.json" "$HOME/.local/state/caelestia/scheme.json"; do [ -f "$f" ] && { echo "$f"; break; }; done`
         onDone: text => { if (text.trim() !== "") root.palettePath = text.trim() }
     }
 
@@ -920,7 +920,7 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                     delegate: Rectangle { required property var modelData; width: 34; height: 34; radius: 17; color: modelData; border.width: 1; border.color: pal.line } }
                                 Item { Layout.fillWidth: true } }
                             Dim { Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone
-                                text: root.palettePath !== "" ? "Following " + root.palettePath + " — colours update the moment your wallpaper tool rewrites it." : "No palette file found (looked for /tmp/gps-theme.json, pywal colors.json and Caelestia scheme.json). Using the built-in fallback." } }
+                                text: root.palettePath !== "" ? "Following " + root.palettePath + " — colours update the moment your wallpaper tool rewrites it." : "No palette file found (looked for ~/.config/quickshell/gps-theme.json, pywal colors.json and Caelestia scheme.json). Using the built-in fallback." } }
                         OptCard { group: "Layout & Gaps"; ic: "grid_view" }
                         OptCard { group: "Decoration"; ic: "rounded_corner" }
                         OptCard { group: "Effects"; ic: "blur_on" }

@@ -265,7 +265,7 @@ class WallhavenApplyTests(unittest.TestCase):
             with patch.object(wallhaven, "ensure_image", return_value=(image, True)), \
                  patch.object(wallhaven, "ensure_awww_daemon"), \
                  patch.object(wallhaven.subprocess, "run", run), \
-                 patch.object(wallhaven.tempfile, "gettempdir", return_value=tmp):
+                 patch.object(wallhaven, "last_wall_path", return_value=Path(tmp) / "gps-last-wall.txt"):
                 result = wallhaven.apply_wallpaper(args)
             command = run.call_args.args[0]
             self.assertEqual(command[:2], ["awww", "img"])
@@ -284,7 +284,7 @@ class WallhavenApplyTests(unittest.TestCase):
             with patch.object(wallhaven, "ensure_image", return_value=(image, True)), \
                  patch.object(wallhaven, "ensure_awww_daemon"), \
                  patch.object(wallhaven.subprocess, "run", run), \
-                 patch.object(wallhaven.tempfile, "gettempdir", return_value=tmp):
+                 patch.object(wallhaven, "last_wall_path", return_value=Path(tmp) / "gps-last-wall.txt"):
                 with self.assertRaises(wallhaven.BridgeError):
                     wallhaven.apply_wallpaper(args)
             self.assertFalse((Path(tmp) / "gps-last-wall.txt").exists())

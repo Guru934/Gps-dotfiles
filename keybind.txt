@@ -14,23 +14,23 @@ the bind runs (Lua-mode dispatchers appear as "__lua" in hyprctl binds -j).
 1. GPS / DESKTOP CONTROLS (my-rice QuickShell + Tide Island)
 ------------------------------------------------------------------------
 Super + D ........ Toggle the right-edge GPS dashboard HUD.
-                   quickshell ipc -p ~/Projects/my-rice/shell.qml call dashboard toggle
+                   gps-ipc shell dashboard toggle
 Super + N ........ Toggle the GPS notification center panel (reads history
                    from Tide Island).
-                   quickshell ipc -p ~/Projects/my-rice/shell.qml call notifcenter toggle
+                   gps-ipc shell notifcenter toggle
 Super + W ........ Toggle the 3D coverflow wallpaper carousel.
-                   quickshell ipc -p ~/Projects/my-rice/shell.qml call wallpaper toggle
+                   gps-ipc shell wallpaper toggle
 Super + , ........ Toggle the Settings Hub window (opens it if not running).
-                   quickshell ipc -p ~/Projects/my-rice/settings.qml call settings toggle
+                   gps-ipc settings toggle
 Super + L ........ LOCK THE SCREEN now.
                    Tries hyprlock from PATH first (packaged /usr/bin/hyprlock
                    once setup-lockscreen.sh has been run; before that, the
                    user-local staged build via ~/.local/bin/hyprlock).
                    Does nothing if hyprlock is already running.
-Super + V ........ Toggle Tide Island's clipboard history panel.
-                   quickshell ipc -p ~/.local/share/tide-island call clipboard toggle
+Super + V ........ Toggle clipboard history panel (routes to active island backend).
+                   gps-ipc clipboard toggle
 Super + Alt + C ... Toggle the project GPS Control Center.
-                   quickshell ipc -p ~/Projects/my-rice/island/IslandProduction.qml call island control toggle
+                   gps-ipc island control toggle
                    Requires the GPS production cutover: scripts/switch-island.fish gps
 Super + Space .... App launcher (rofi).
 Super + R ........ App launcher (rofi, same as Super+Space).

@@ -12,3 +12,14 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Runtime session state
+gps-theme.json
+gps-last-wall.txt
+tools-last
+*.log
+pet.json
+rice-settings.json
+media-hub-*.json
+gps-island-backend
+

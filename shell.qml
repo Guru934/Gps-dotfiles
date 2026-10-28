@@ -107,15 +107,25 @@ Scope {
     property string mediaArtist: ""
     property string mediaTitle: ""
 
+    function toHyprRgba(col, alphaHex) {
+        const c = Qt.color(col)
+        const toHex = v => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0")
+        const a = alphaHex !== undefined ? alphaHex : toHex(c.a)
+        return "rgba(" + toHex(c.r) + toHex(c.g) + toHex(c.b) + a + ")"
+    }
+
     Component.onCompleted: {
         root.rebuildCalendar()
+        const b1 = root.toHyprRgba(Theme.brandAccent, "ee")
+        const b2 = root.toHyprRgba(Theme.accentSecondary, "ee")
+        const inact = root.toHyprRgba(Theme.border, "aa")
         Quickshell.execDetached([
             "hyprctl", "--batch",
             "keyword misc:disable_hyprland_logo true ; "
             + "keyword misc:disable_splash_rendering true ; "
             + "keyword misc:background_color 0x0e121d ; "
-            + "keyword general:col.active_border rgba(eeb7d8ee) rgba(9ce5c0ee) 45deg ; "
-            + "keyword general:col.inactive_border rgba(3a3a54aa) ; "
+            + "keyword general:col.active_border " + b1 + " " + b2 + " 45deg ; "
+            + "keyword general:col.inactive_border " + inact + " ; "
             + "keyword decoration:rounding 12"
         ])
     }
@@ -698,7 +708,7 @@ Scope {
     // toggleNotificationCenter is the real, verified function.
     function runCenterAction(action) {
         if (action === "wall") cycleWallpaper()
-        else if (action === "clip") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "openClipboard"])
+        else if (action === "clip") Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "clipboard", "toggle"])
         else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "toggleNotificationCenter"])
     }
 

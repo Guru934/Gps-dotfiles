@@ -35,7 +35,7 @@ if test "$mode" = gps
     # Stop only Tide's exact QuickShell command line; never use pkill quickshell.
     stop_exact "/usr/bin/quickshell -p $tide_path" "Tide Island"; or exit 1
     if not pgrep -u (id -u) -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
-        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >/tmp/gps-island.log 2>&1 &
+        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
         disown
     end
     sleep 0.6

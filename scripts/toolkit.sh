@@ -10,8 +10,8 @@
 # Exit codes: 0 = ok, 1 = failed, 3 = cancelled.
 set -u
 
-STATUS_FILE=/tmp/gps-tools-last
-SNIP_FILE=/tmp/gps-tools-snip.png
+STATUS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/tools-last"
+SNIP_FILE="${XDG_RUNTIME_DIR:-/tmp}/tools-snip-${UID:-1000}.png"
 
 write_status() { printf '%s\n' "$1" > "$STATUS_FILE"; }
 

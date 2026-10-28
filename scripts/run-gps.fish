@@ -9,7 +9,7 @@ set -g __done_enabled 0
 # Visible startup log: every run appends here so a startup failure leaves a
 # trace even after /tmp/qs-gps.log is rotated by the next run.
 function log --argument-names msg
-    printf '[%s] %s\n' (date '+%Y-%m-%d %H:%M:%S') "$msg" >>/tmp/gps-startup.log
+    printf '[%s] %s\n' (date '+%Y-%m-%d %H:%M:%S') "$msg" >>"$HOME/.config/quickshell/startup.log"
 end
 log "run-gps.fish starting (user "(whoami)")"
 
@@ -33,7 +33,7 @@ end
 # Tide Island is also a QuickShell process, so never kill all quickshell PIDs.
 pkill -9 -f "$REPO_DIR/shell.qml" 2>/dev/null; or true
 pkill -9 -x awww-daemon 2>/dev/null; or true
-rm -f /tmp/qs-gps.log /tmp/gps-theme.log
+rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
 # /tmp/tide-island.log is NOT deleted here: a preserved island keeps writing
 # to it; when the island is (re)started its redirect truncates the file.
 sleep 0.4
@@ -47,8 +47,9 @@ end
 
 # 2b. Re-apply the last wallpaper: awww-daemon starts blank, so without this
 # every shell restart would leave the background empty until a manual pick.
-if test -f /tmp/gps-last-wall.txt
-    set last_wall (cat /tmp/gps-last-wall.txt)
+set -l last_wall_file "$HOME/.config/quickshell/gps-last-wall.txt"
+if test -f "$last_wall_file"
+    set last_wall (cat "$last_wall_file")
     if test -f "$last_wall"
         awww img "$last_wall" --transition-type none >/dev/null 2>&1
         log "wallpaper re-applied: $last_wall"
@@ -58,7 +59,7 @@ if test -f /tmp/gps-last-wall.txt
 end
 
 # 3. Extract the current wallpaper theme before launching UI surfaces.
-"$REPO_DIR/scripts/extract-theme.py" >/tmp/gps-theme.log 2>&1; or true
+"$REPO_DIR/scripts/extract-theme.py" >"$HOME/.config/quickshell/theme.log" 2>&1; or true
 
 # 4. Start cliphist clipboard watchers for Tide Island.
 if not pgrep -f "wl-paste --type text --watch cliphist store" >/dev/null 2>&1
@@ -84,7 +85,7 @@ end
 if test "$island_backend" = gps
     set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
     if not pgrep -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
-        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >/tmp/gps-island.log 2>&1 &
+        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
         disown
     end
     sleep 0.5

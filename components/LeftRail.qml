@@ -447,7 +447,7 @@ PanelWindow {
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: root.mediaPlaying ? "PLAY" : (root.mediaPaused ? "PAUSE" : "IDLE")
-                        color: root.mediaPlaying ? "#4DF0D0" : Theme.textMuted
+                        color: root.mediaPlaying ? Theme.brandAccent : Theme.textMuted
                         font.family: Theme.fontMono
                         font.pixelSize: 8
                         font.bold: true
