@@ -1,15 +1,16 @@
 // =====================================================================
-//  MediaHub.qml — GPS Media Hub (UI + interaction prototype)
+//  MediaHub.qml — GPS Media Hub
 //  One self-contained QtQuick component. Qt 6 / Quickshell friendly.
 //  Imports: QtQuick, QtQuick.Controls, QtQuick.Layouts, QtQuick.Shapes
 //
-//  PRESENT  : navigation, selection, favorites, watchlist / reading-list
-//             status, progress and mood selection; Wallhaven search plus
-//             download/cache/apply and optional GPS theme sync; Jamendo and
-//             Radio Browser music search with a real Qt Multimedia player.
-//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, persistence for
-//             non-music pages and local library scanning. Remaining mock
-//             boundaries are marked with "// >>> BACKEND:" comments.
+//  PRESENT  : navigation, selection, favorites, persistent watchlist /
+//             reading-list status and progress; Wallhaven search plus
+//             download/cache/apply and optional GPS theme sync; live AniList
+//             anime/manga catalogue; Jamendo and Radio Browser music search
+//             with a real Qt Multimedia player.
+//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, optional anime
+//             hand-off and local library scanning. Remaining mock boundaries
+//             are marked with "// >>> BACKEND:" comments.
 // =====================================================================
 import QtQuick
 import QtQuick.Controls
@@ -19,6 +20,7 @@ import QtMultimedia
 import Quickshell
 import Quickshell.Io
 import "MusicQueue.js" as MusicQueue
+import "MediaCatalogue.js" as MediaCatalogue
 
 Item {
     id: root
@@ -39,13 +41,12 @@ Item {
     // Emitted by the optional host close button; standalone use can ignore it.
     signal closeRequested()
 
-    // Wallhaven is the only live catalogue in this component; other pages stay
-    // clearly marked sample data until their own backends exist.
     property bool wallhavenConnected: false
     property bool wallhavenUsingRemote: false
-    // Other pages remain mock data, so they must not claim a live backend just
-    // because the Wallhaven catalogue is available.
-    readonly property bool backendConnected: false
+    // Wallhaven, AniList and Radio Browser are live public catalogues. Local
+    // files and download execution remain future backend work.
+    readonly property bool backendConnected: true
+    readonly property bool downloadBackendConnected: false
     // Hosted mode: show the close button wired to closeRequested().
     property bool showCloseButton: false
     // Set false to skip loading remote artwork (gradient fallbacks are used instead).
@@ -57,19 +58,17 @@ Item {
     readonly property int sidebarW: compact ? 68 : 208
 
     // ================================================================
-    //  SESSION STATE (music favorites/queue persist; other pages are in-memory)
+    //  STATE (catalogue lists, music favorites/queue and mood are persisted)
     // ================================================================
     property string moodId: "midnight"
     readonly property var mood: findIn(moods, moodId) || moods[0]
     property color accent: mood.accent
     Behavior on accent { ColorAnimation { duration: 300 } }
 
-    property var favorites: ({ wp1: true, wp3: true, an1: true, mg1: true })
-    property var statuses: ({ an1: "Watching", an2: "Watching", an9: "Completed", an4: "Plan to Watch",
-                              mg1: "Currently Reading", mg4: "Currently Reading", mg3: "Completed", mg6: "Plan to Read" })
-    property var progress: ({ an1: 14, an2: 8, an9: 24, mg1: 48, mg4: 31, mg3: 86 })
-    property var openedAt: ({ an1: 10, lv1: 9, mg1: 8, wp1: 7, au1: 6, an2: 5 })
-    property int openSeq: 10
+    property var favorites: ({ wp1: true, wp3: true })
+    property var statuses: ({})
+    property var progress: ({})
+    property var openedAt: ({})
     property var activity: []
     property var surprisePick: null
     property string featuredId: "wp0"
@@ -127,8 +126,8 @@ Item {
     property string detailKind: ""
     property string detailId: ""
     property var detailShown: null
-    readonly property var detailItem: detailKind === "anime" ? findIn(animeList, detailId)
-                                    : (detailKind === "manga" ? findIn(mangaList, detailId) : null)
+    readonly property var detailItem: detailKind === "anime" ? animeCatalogue.findMedia(detailId)
+                                    : (detailKind === "manga" ? mangaCatalogue.findMedia(detailId) : null)
     onDetailItemChanged: if (detailItem) detailShown = detailItem
     property bool vibeOpen: false
     property string gq: ""
@@ -156,6 +155,69 @@ Item {
         onSearchFailed: (message, code, request) => root.handleMusicSearchFailure(message, code, request)
     }
     Component.onCompleted: musicBackend.checkStatus()
+
+    // ================================================================
+    //  ANILIST CATALOGUES + PERSISTED MEDIA LIBRARY
+    // ================================================================
+    property bool mediaStateReady: false
+    property var mediaLibrary: []
+    readonly property string mediaStatePath: {
+        var cfg = Quickshell.env("XDG_CONFIG_HOME")
+        if (!cfg) cfg = Quickshell.env("HOME") + "/.config"
+        return cfg + "/quickshell/media-hub-library.json"
+    }
+    readonly property string mediaSaveKey: JSON.stringify(mediaLibrary)
+    onMediaSaveKeyChanged: if (mediaStateReady) mediaSaveTimer.restart()
+
+    Timer {
+        id: mediaSaveTimer
+        interval: 500
+        repeat: false
+        onTriggered: root.saveMediaLibrary()
+    }
+    Component.onDestruction: {
+        mediaSaveTimer.stop()
+        if (mediaStateReady) saveMediaLibrary()
+    }
+
+    FileView {
+        id: mediaLibraryFile
+        path: root.mediaStatePath
+        printErrors: false
+        onLoaded: {
+            var state = MediaCatalogue.parseState(mediaLibraryFile.text())
+            if (state) {
+                root.applyMediaLibrary(state.entries)
+            } else {
+                var raw = mediaLibraryFile.text()
+                mediaLibraryBackup.path = root.mediaStatePath.replace(/\.json$/, ".corrupt-" + Date.now() + ".json")
+                mediaLibraryBackup.setText(raw)
+                root.mediaLibrary = []
+                root.notify("Media library state was unreadable. A backup was kept and the list was reset.", "warn")
+            }
+            root.mediaStateReady = true
+            if (!state) mediaSaveTimer.start()
+        }
+        onLoadFailed: root.mediaStateReady = true
+    }
+
+    FileView {
+        id: mediaLibraryBackup
+        printErrors: false
+    }
+
+    MediaHubCatalogue {
+        id: animeCatalogue
+        kind: "anime"
+        savedEntries: root.mediaLibrary
+    }
+    MediaHubCatalogue {
+        id: mangaCatalogue
+        kind: "manga"
+        savedEntries: root.mediaLibrary
+    }
+    readonly property alias animeModel: animeCatalogue
+    readonly property alias mangaModel: mangaCatalogue
 
     // ================================================================
     //  SAMPLE DATA
@@ -255,79 +317,13 @@ Item {
     readonly property var resMin: ({ "Any": 0, "1920+": 1920, "2560+": 2560, "4K+": 3840 })
     readonly property var colorDots: ({ Violet: "#a78bfa", Cyan: "#7bd0ff", Amber: "#fbbf24", Green: "#4ade80", Red: "#ef4444", Rose: "#f9a8d4", Slate: "#94a3b8" })
 
-    readonly property var animeGenres: ["All", "Action", "Adventure", "Cyberpunk", "Drama", "Fantasy", "Mystery", "Romance", "Sci-Fi", "Slice of Life", "Thriller"]
-    readonly property var mangaGenres: ["All", "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Mystery", "Romance", "Sci-Fi", "Slice of Life", "Thriller"]
-    readonly property var animeStatuses: ["Watching", "Plan to Watch", "Completed", "Dropped"]
-    readonly property var mangaStatuses: ["Currently Reading", "Plan to Read", "Completed", "Dropped"]
+    readonly property var animeStatuses: MediaCatalogue.statusOptions("anime")
+    readonly property var mangaStatuses: MediaCatalogue.statusOptions("manga")
 
-    readonly property var animeList: [
-        { id: "an1", title: "Aether Chronicles", year: 2026, season: "Fall 2026", genres: ["Sci-Fi", "Drama", "Mystery"], status: "Airing", rating: "8.7", total: 24, studio: "Studio Halcyon",
-          synopsis: "A salvage crew drifts into a derelict orbital station and discovers its AI has been dreaming of the people it lost. Each episode peels back another layer of the Resonance.",
-          art: artIds.anime1, g: gradients.violet, trend: 1, pop: 3, seasonal: true, added: 12 },
-        { id: "an2", title: "Ghost in the Shell: SAC", year: 2002, season: "2002", genres: ["Cyberpunk", "Sci-Fi", "Thriller"], status: "Finished", rating: "8.9", total: 26, studio: "Production I.G",
-          synopsis: "Section 9 investigates cybercrime in a near-future Japan where the line between human and machine keeps blurring.",
-          art: artIds.anime2, g: gradients.teal, trend: 6, pop: 1, seasonal: false, added: 11 },
-        { id: "an3", title: "Neon Requiem", year: 2026, season: "Fall 2026", genres: ["Cyberpunk", "Drama", "Thriller"], status: "Airing", rating: "8.3", total: 12, studio: "Lantern Works",
-          synopsis: "A courier in a rain-soaked megacity carries a memory chip that three syndicates would kill for.",
-          art: artIds.wp1, g: gradients.violet, trend: 2, pop: 5, seasonal: true, added: 10 },
-        { id: "an4", title: "Starlit Cartography", year: 2026, season: "Fall 2026", genres: ["Adventure", "Fantasy", "Sci-Fi"], status: "Airing", rating: "8.5", total: 13, studio: "Northwind Pictures",
-          synopsis: "An apprentice mapmaker charts constellations that rearrange themselves whenever someone tells a lie beneath them.",
-          art: artIds.wp3, g: gradients.cosmic, trend: 3, pop: 8, seasonal: true, added: 9 },
-        { id: "an5", title: "Hollow Meridian", year: 2026, season: "Summer 2026", genres: ["Mystery", "Thriller", "Drama"], status: "Finished", rating: "8.1", total: 12, studio: "Studio Halcyon",
-          synopsis: "A detective returns to the mining town where the sun never rose and finds the same case waiting for her.",
-          art: artIds.wp6, g: gradients.red, trend: 8, pop: 7, seasonal: false, added: 8 },
-        { id: "an6", title: "Paper Lantern Detective", year: 2026, season: "Fall 2026", genres: ["Mystery", "Slice of Life"], status: "Airing", rating: "7.9", total: 12, studio: "Mochi Frame",
-          synopsis: "A night-market detective solves small, strange problems before the lanterns burn out.",
-          art: artIds.wp4, g: gradients.amber, trend: 4, pop: 99, seasonal: true, added: 7 },
-        { id: "an7", title: "Kinetic Garden", year: 2025, season: "Spring 2025", genres: ["Action", "Adventure", "Fantasy"], status: "Finished", rating: "8.4", total: 24, studio: "Verdant Line",
-          synopsis: "Gardeners who grow living machines compete in a tournament to restore a dying world.",
-          art: artIds.wp5, g: gradients.green, trend: 99, pop: 2, seasonal: false, added: 6 },
-        { id: "an8", title: "Glass Ocean Protocol", year: 2027, season: "Winter 2027", genres: ["Sci-Fi", "Romance"], status: "Upcoming", rating: "\u2014", total: 12, studio: "TBA",
-          synopsis: "Two engineers on opposite sides of a tidal-energy treaty keep exchanging messages through a failing sea cable.",
-          art: "", g: gradients.teal, trend: 7, pop: 99, seasonal: false, added: 5 },
-        { id: "an9", title: "Seven Bells of Kyoto", year: 2024, season: "Fall 2024", genres: ["Fantasy", "Drama", "Romance"], status: "Finished", rating: "8.8", total: 24, studio: "Kasumi Animation",
-          synopsis: "Seven temple bells each hold a memory; a young bell-keeper must decide which ones the city may forget.",
-          art: artIds.wp2, g: gradients.rose, trend: 99, pop: 4, seasonal: false, added: 4 },
-        { id: "an10", title: "Ashen Crown", year: 2026, season: "Fall 2026", genres: ["Action", "Fantasy", "Drama"], status: "Airing", rating: "8.2", total: 24, studio: "Ironbark",
-          synopsis: "A disgraced knight carries the last ember of a fallen kingdom across a frozen continent.",
-          art: "", g: gradients.slate, trend: 5, pop: 99, seasonal: true, added: 3 },
-        { id: "an11", title: "Quiet Orbit", year: 2023, season: "Winter 2023", genres: ["Slice of Life", "Sci-Fi"], status: "Finished", rating: "8.0", total: 12, studio: "Mochi Frame",
-          synopsis: "Four residents of a small orbital habitat share meals, repairs and the long wait for supply ships.",
-          art: "", g: gradients.cosmic, trend: 99, pop: 6, seasonal: false, added: 2 }
-    ].map(function (a) { return Object.assign({ kind: "anime" }, a) })
-
-    readonly property var mangaList: [
-        { id: "mg1", title: "Monarch of Fangs", type: "Manhwa", year: 2024, genres: ["Action", "Fantasy"], status: "Ongoing", total: 62, author: "Park Do-yun",
-          synopsis: "After a shattered dungeon swallows his guild, a hunter inherits an army of shadow soldiers and a crown he never wanted.",
-          art: artIds.manga1, g: gradients.violet, trend: 1, pop: 2, added: 20 },
-        { id: "mg2", title: "Moonlit Sovereign", type: "Manhwa", year: 2025, genres: ["Fantasy", "Drama", "Romance"], status: "Ongoing", total: 112, author: "Han Seo-jun",
-          synopsis: "A queen who only rules at night must keep her kingdom — and a secret — from the dawn court.",
-          art: artIds.wp1, g: gradients.violet, trend: 2, pop: 5, added: 19 },
-        { id: "mg3", title: "Ink & Ember", type: "Manga", year: 2022, genres: ["Drama", "Fantasy"], status: "Completed", total: 86, author: "Aoi Tachibana",
-          synopsis: "A calligrapher's brush brings the words she writes to life — and the fires she paints to burn.",
-          art: "", g: gradients.amber, trend: 99, pop: 4, added: 18 },
-        { id: "mg4", title: "Tower of Quiet Bells", type: "Manhwa", year: 2025, genres: ["Adventure", "Fantasy", "Mystery"], status: "Ongoing", total: 74, author: "Min Ha-rin",
-          synopsis: "Each floor of the tower rings a different bell; climbers who ignore the toll never come back down.",
-          art: artIds.wp2, g: gradients.rose, trend: 3, pop: 3, added: 17 },
-        { id: "mg5", title: "Salt Road Chronicle", type: "Manga", year: 2021, genres: ["Adventure", "Drama"], status: "Completed", total: 140, author: "Ren Okabe",
-          synopsis: "A caravan crosses a dried-up sea to deliver one last cargo to the end of the world.",
-          art: "", g: gradients.amber, trend: 99, pop: 6, added: 16 },
-        { id: "mg6", title: "Midnight Convenience Store", type: "Webtoon", year: 2025, genres: ["Slice of Life", "Comedy"], status: "Ongoing", total: 98, author: "Yuna Choi",
-          synopsis: "The night shift at a 24-hour store attracts ghosts, gamers and one extremely polite thief.",
-          art: artIds.wp4, g: gradients.amber, trend: 4, pop: 99, added: 15 },
-        { id: "mg7", title: "Clockwork Heartbeat", type: "Webtoon", year: 2024, genres: ["Romance", "Sci-Fi"], status: "Ongoing", total: 156, author: "Mira Lee",
-          synopsis: "A watchmaker repairs an android whose memories keep resetting at the same hour.",
-          art: "", g: gradients.teal, trend: 99, pop: 1, added: 14 },
-        { id: "mg8", title: "Ashes of the Ninth Gate", type: "Manga", year: 2026, genres: ["Action", "Thriller"], status: "Ongoing", total: 24, author: "Sora Kagami",
-          synopsis: "Eight gates have fallen. The last guardian is a retired courier with a limp and a grudge.",
-          art: artIds.wp6, g: gradients.red, trend: 5, pop: 99, added: 13 },
-        { id: "mg9", title: "Sakura Debug", type: "Webtoon", year: 2026, genres: ["Comedy", "Sci-Fi", "Slice of Life"], status: "Ongoing", total: 31, author: "Jin & Hana",
-          synopsis: "A burned-out programmer discovers her cherry tree is running a very buggy simulation.",
-          art: "", g: gradients.rose, trend: 6, pop: 99, added: 12 },
-        { id: "mg10", title: "Iron Meridian", type: "Manga", year: 2019, genres: ["Action", "Sci-Fi"], status: "Completed", total: 212, author: "Daichi Mori",
-          synopsis: "A railway that circles a ruined planet carries the last survivors — and whatever is chasing them.",
-          art: "", g: gradients.slate, trend: 99, pop: 99, added: 11 }
-    ].map(function (m) { return Object.assign({ kind: "manga" }, m) })
+    // Remote AniList results are transient. Persisted entries live in
+    // mediaLibrary and are exposed separately for the library/continue views.
+    readonly property var animeList: animeCatalogue.entries
+    readonly property var mangaList: mangaCatalogue.entries
 
     readonly property var mediaList: [
         { id: "lv1", kind: "video", title: "Neon Rain Timelapse.mp4", meta: "4:12 \u00b7 1.2 GB \u00b7 MP4", art: artIds.wp1, g: gradients.violet, added: 30 },
@@ -355,8 +351,65 @@ Item {
     //  HELPERS & ACTIONS
     // ================================================================
     function findIn(list, id) {
+        if (!list) return null
         for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]
         return null
+    }
+    function isCatalogueId(id) { return /^(anime|manga)-[0-9]+$/.test(String(id || "")) }
+    function catalogueKind(id) {
+        if (String(id).indexOf("anime-") === 0) return "anime"
+        if (String(id).indexOf("manga-") === 0) return "manga"
+        return ""
+    }
+    function findCatalogueMedia(id) {
+        var saved = findIn(mediaLibrary, id)
+        if (saved) return saved
+        if (detailShown && detailShown.id === id) return detailShown
+        return catalogueKind(id) === "anime" ? animeCatalogue.findMedia(id) : mangaCatalogue.findMedia(id)
+    }
+    function syncMediaMaps() {
+        var st = {}, pr = {}, op = {}
+        for (var k in openedAt)
+            if (!isCatalogueId(k)) op[k] = openedAt[k]
+        for (var i = 0; i < mediaLibrary.length; i++) {
+            var item = mediaLibrary[i]
+            if (!item) continue
+            if (item.userStatus) st[item.id] = item.userStatus
+            if (item.progress > 0) pr[item.id] = item.progress
+            if (item.openedAt > 0) op[item.id] = item.openedAt
+        }
+        statuses = st
+        progress = pr
+        openedAt = op
+    }
+    function applyMediaLibrary(entries) {
+        var state = MediaCatalogue.normalizeState({ version: 1, entries: entries || [] })
+        mediaLibrary = state ? state.entries : []
+        var fav = Object.assign({}, favorites)
+        for (var k in fav) if (isCatalogueId(k)) delete fav[k]
+        for (var i = 0; i < mediaLibrary.length; i++)
+            if (mediaLibrary[i].favorite) fav[mediaLibrary[i].id] = true
+        favorites = fav
+        syncMediaMaps()
+    }
+    function updateMediaEntry(media, patch) {
+        if (!media) return false
+        var changes = Object.assign({}, patch || {})
+        if (changes.openedAt === undefined && openedAt[media.id])
+            changes.openedAt = openedAt[media.id]
+        var out = MediaCatalogue.updateEntry(mediaLibrary, media, changes)
+        mediaLibrary = out
+        var fav = Object.assign({}, favorites)
+        var saved = findIn(out, media.id)
+        if (saved && saved.favorite) fav[media.id] = true
+        else delete fav[media.id]
+        favorites = fav
+        syncMediaMaps()
+        return true
+    }
+    function saveMediaLibrary() {
+        if (!mediaStateReady) return
+        mediaLibraryFile.setText(MediaCatalogue.serialize(mediaLibrary))
     }
     function wallpaperById(id) { return findIn(wallpapers, id) }
     function moodById(id) { return findIn(moods, id) || moods[0] }
@@ -390,8 +443,18 @@ Item {
 
     // --- favorites / lists / progress ---------------------------------
     function toggleFavorite(id, title) {
+        var on = !favorites[id]
+        if (isCatalogueId(id)) {
+            var media = findCatalogueMedia(id)
+            if (!media) {
+                notify("That catalogue entry is no longer available. Search for it again.", "warn")
+                return
+            }
+            updateMediaEntry(media, { favorite: on })
+            logActivity((on ? "Favorited: " : "Unfavorited: ") + title)
+            return
+        }
         var f = Object.assign({}, favorites)
-        var on = !f[id]
         if (on) f[id] = true; else delete f[id]
         favorites = f
         var item = findMusicItem(id)
@@ -403,9 +466,10 @@ Item {
         logActivity((on ? "Favorited: " : "Unfavorited: ") + title)
     }
     function setStatus(id, s) {
-        var m = Object.assign({}, statuses)
-        if (s === "") delete m[id]; else m[id] = s
-        statuses = m
+        if (!isCatalogueId(id)) return
+        var media = findCatalogueMedia(id)
+        if (!media) return
+        updateMediaEntry(media, s === "" ? { userStatus: "", progress: 0 } : { userStatus: s })
     }
     function toggleList(kind, id, title) {
         if (statuses[id]) {
@@ -417,25 +481,34 @@ Item {
         }
     }
     function setProgress(id, n, total) {
-        var v = Math.max(0, Math.min(total, n))
-        var p = Object.assign({}, progress)
-        p[id] = v
-        progress = p
+        if (!isCatalogueId(id)) return
+        var media = findCatalogueMedia(id)
+        if (!media) return
+        var max = total > 0 ? total : 100000
+        var v = Math.max(0, Math.min(max, n))
+        var patch = { progress: v }
         var s = statuses[id]
-        if (v >= total && total > 0) {
-            if (s !== "Completed") setStatus(id, "Completed")
-        } else if (v > 0 && s !== "Dropped" && s !== "Watching" && s !== "Currently Reading") {
-            setStatus(id, id.indexOf("an") === 0 ? "Watching" : "Currently Reading")
+        if (total > 0 && v >= total) {
+            if (s !== "Completed") patch.userStatus = "Completed"
+        } else if (v > 0 && s !== "Dropped" && s !== "Watching" && s !== "Reading" && s !== "Completed") {
+            patch.userStatus = catalogueKind(id) === "anime" ? "Watching" : "Reading"
         }
+        updateMediaEntry(media, patch)
     }
     function markOpened(id) {
-        openSeq++
+        var opened = Date.now()
         var o = Object.assign({}, openedAt)
-        o[id] = openSeq
+        o[id] = opened
         openedAt = o
+        if (isCatalogueId(id) && findIn(mediaLibrary, id))
+            updateMediaEntry(findCatalogueMedia(id), { openedAt: opened })
     }
-    function openDetail(kind, id) { detailKind = kind; detailId = id }
-    function closeDetail() { detailKind = ""; detailId = "" }
+    function openDetail(kind, id) {
+        markOpened(id)
+        detailKind = kind
+        detailId = id
+    }
+    function closeDetail() { detailKind = ""; detailId = ""; detailShown = null }
 
     // --- wallpapers -----------------------------------------------------
     function previewWallpaper(id) { wpSelectedId = id; page = 1 }
@@ -649,6 +722,11 @@ Item {
     }
     function openSource(w) {
         if (!w) return
+        if (isCatalogueId(w.id) && w.siteUrl) {
+            sourceLinkRequested(w.siteUrl)
+            notify("Opening the official AniList page\u2026", "info")
+            return
+        }
         if (!w.isRemote || !w.source) {
             notify("Bundled sample cards don't have a Wallhaven source page.", "warn")
             return
@@ -716,22 +794,36 @@ Item {
 
     // --- continue / counts ------------------------------------------------
     function continueList(kind) {
-        var list = kind === "anime" ? animeList : mangaList
-        var active = kind === "anime" ? "Watching" : "Currently Reading"
-        var out = list.filter(function (m) { return statuses[m.id] === active && (progress[m.id] || 0) < m.total })
-        out.sort(function (a, b) { return (openedAt[b.id] || 0) - (openedAt[a.id] || 0) })
+        var active = kind === "anime" ? "Watching" : "Reading"
+        var out = mediaLibrary.filter(function (m) {
+            return m.kind === kind && m.userStatus === active
+                && (m.total <= 0 || (m.progress || 0) < m.total)
+        })
+        out.sort(function (a, b) { return (b.openedAt || 0) - (a.openedAt || 0) || (b.savedAt || 0) - (a.savedAt || 0) })
         return out
     }
     function continueAll() { return continueList("anime").slice(0, 2).concat(continueList("manga").slice(0, 2)) }
     function countListed(kind) {
-        var list = kind === "anime" ? animeList : mangaList, n = 0
-        for (var i = 0; i < list.length; i++) if (statuses[list[i].id]) n++
+        var n = 0
+        for (var i = 0; i < mediaLibrary.length; i++)
+            if (mediaLibrary[i].kind === kind && mediaLibrary[i].userStatus) n++
         return n
     }
     function favCount() { var n = 0; for (var k in favorites) n++; return n }
     function continueMedia(item) {
-        // >>> BACKEND: hand off to a player / reader / streaming source of the user's choice.
+        if (!item) return
         markOpened(item.id)
+        if (isCatalogueId(item.id)) {
+            var catalogueItem = findCatalogueMedia(item.id)
+            if (catalogueItem) {
+                openSource(catalogueItem)
+                logActivity("Opened AniList: " + item.title)
+            } else {
+                notify("That catalogue entry is no longer available. Search for it again.", "warn")
+            }
+            return
+        }
+        // >>> BACKEND: hand off local media to a player / reader.
         openMediaRequested(item)
         notify("Open request emitted for \u201c" + item.title + "\u201d. No player or reader is connected in this prototype.", "info")
         logActivity("Opened: " + item.title + " (hand-off not connected)")
@@ -739,7 +831,7 @@ Item {
 
     // --- library ------------------------------------------------------------
     function libEntry(src, kind, sub, added) {
-        return { kind: kind, id: src.id, title: src.title, sub: sub, art: src.art, g: src.g, added: added,
+        return { kind: kind, id: src.id, title: src.title, sub: sub, art: src.cover || src.art || "", g: src.g, added: added,
                  opened: openedAt[src.id] || 0, fav: !!favorites[src.id] }
     }
     function libraryItems() {
@@ -748,15 +840,13 @@ Item {
             var w = wallpapers[i]
             if (favorites[w.id]) out.push(libEntry(w, "wallpaper", w.res + " \u00b7 " + w.size, 40 + w.added))
         }
-        for (i = 0; i < animeList.length; i++) {
-            var a = animeList[i]
-            if (statuses[a.id] || favorites[a.id])
-                out.push(libEntry(a, "anime", (statuses[a.id] || "Favorite") + " \u00b7 Ep " + (progress[a.id] || 0) + "/" + a.total, 20 + a.added))
-        }
-        for (i = 0; i < mangaList.length; i++) {
-            var m = mangaList[i]
-            if (statuses[m.id] || favorites[m.id])
-                out.push(libEntry(m, "manga", (statuses[m.id] || "Favorite") + " \u00b7 Ch " + (progress[m.id] || 0) + "/" + m.total, 20 + m.added))
+        for (i = 0; i < mediaLibrary.length; i++) {
+            var m = mediaLibrary[i]
+            if (!m.userStatus && !m.favorite) continue
+            var progressLabel = m.total > 0
+                ? (m.kind === "anime" ? "Ep " : "Ch ") + (m.progress || 0) + "/" + m.total
+                : (m.kind === "anime" ? "Ep " : "Ch ") + (m.progress || 0) + "/?"
+            out.push(libEntry(m, m.kind, (m.userStatus || "Favorite") + " \u00b7 " + progressLabel, m.savedAt || 0))
         }
         for (i = 0; i < mediaList.length; i++) out.push(libEntry(mediaList[i], mediaList[i].kind, mediaList[i].meta, mediaList[i].added))
         for (i = 0; i < musicFavorites.length; i++) {
@@ -782,7 +872,7 @@ Item {
         return items
     }
     function libraryLabel(kind) {
-        return kind === "wallpaper" ? "Preview" : (kind === "anime" ? "Continue Watching" : (kind === "manga" ? "Continue Reading" : (kind === "station" ? "Listen" : "Play")))
+        return kind === "wallpaper" ? "Preview" : ((kind === "anime" || kind === "manga") ? "Open AniList" : (kind === "station" ? "Listen" : "Play"))
     }
     function libraryAction(it) {
         if (it.kind === "wallpaper") { previewWallpaper(it.id); return }
@@ -833,28 +923,40 @@ Item {
     }
 
     // --- surprise me --------------------------------------------------------
-    function pickRandom(list) { return list[Math.floor(Math.random() * list.length)] }
+    function pickRandom(list) { return list.length > 0 ? list[Math.floor(Math.random() * list.length)] : null }
+    function cataloguePool(kind) {
+        var remote = kind === "anime" ? animeList : mangaList
+        if (remote.length > 0) return remote
+        return mediaLibrary.filter(function (m) { return m.kind === kind })
+    }
     function surprise() {
-        var kinds = ["mood", "wallpaper", "anime", "manga"]
+        var kinds = ["mood", "wallpaper"]
+        if (cataloguePool("anime").length > 0) kinds.push("anime")
+        if (cataloguePool("manga").length > 0) kinds.push("manga")
         if (jamendoTracks.length > 0) kinds.push("track")
         var k = pickRandom(kinds)
         if (k === "mood") {
             var others = moods.filter(function (m) { return m.id !== moodId })
             var m = pickRandom(others)
+            if (!m) return
             setMood(m.id)
             surprisePick = { kind: "mood", id: m.id, title: m.name, sub: "Mood selected" }
         } else if (k === "wallpaper") {
             var w = pickRandom(wallpapers)
+            if (!w) return
             featuredId = w.id
             surprisePick = { kind: "wallpaper", id: w.id, title: w.title, sub: "Featured wallpaper updated" }
         } else if (k === "anime") {
-            var a = pickRandom(animeList)
+            var a = pickRandom(cataloguePool("anime"))
+            if (!a) return
             surprisePick = { kind: "anime", id: a.id, title: a.title, sub: "Anime \u00b7 " + a.genres.join(", ") }
         } else if (k === "track") {
             var tk = pickRandom(jamendoTracks)
+            if (!tk) return
             surprisePick = { kind: "track", id: tk.id, title: tk.title, sub: tk.artist + " \u00b7 " + tk.genre }
         } else {
-            var g = pickRandom(mangaList)
+            var g = pickRandom(cataloguePool("manga"))
+            if (!g) return
             surprisePick = { kind: "manga", id: g.id, title: g.title, sub: g.type + " \u00b7 " + g.genres.join(", ") }
         }
         page = 0
@@ -875,17 +977,27 @@ Item {
         var q = (query || "").trim()
         if (q === "") return []
         if (/^https?:\/\//i.test(q)) return [{ kind: "url", id: q, title: "Prepare a download for this URL", sub: q }]
-        var lq = q.toLowerCase(), out = []
+        var lq = q.toLowerCase(), out = [], seen = {}
         function scan(list, kind, subFn) {
             for (var i = 0; i < list.length; i++) {
                 var it = list[i]
-                var hay = (it.title + " " + (it.tags ? it.tags.join(" ") : "") + " " + (it.genres ? it.genres.join(" ") : "") + " " + (it.artist || "")).toLowerCase()
-                if (hay.indexOf(lq) >= 0) out.push({ kind: kind, id: it.id, title: it.title, sub: subFn(it) })
+                var key = kind + ":" + it.id
+                if (seen[key]) continue
+                var hay = (it.title + " " + (it.altTitles ? it.altTitles.join(" ") : "") + " "
+                    + (it.tags ? it.tags.join(" ") : "") + " " + (it.genres ? it.genres.join(" ") : "") + " "
+                    + (it.artist || "") + " " + (it.author || "") + " "
+                    + (it.studios ? it.studios.join(" ") : "")).toLowerCase()
+                if (hay.indexOf(lq) >= 0) {
+                    seen[key] = true
+                    out.push({ kind: kind, id: it.id, title: it.title, sub: subFn(it) })
+                }
             }
         }
         scan(wallpapers, "wallpaper", function (w) { return w.res + " \u00b7 " + w.author })
-        scan(animeList, "anime", function (a) { return a.season + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
+        scan(animeList, "anime", function (a) { return (a.seasonLabel || a.year) + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
         scan(mangaList, "manga", function (m) { return m.type + " \u00b7 " + m.genres.slice(0, 2).join(", ") })
+        scan(mediaLibrary.filter(function (m) { return m.kind === "anime" }), "anime", function (a) { return (a.seasonLabel || a.year) + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
+        scan(mediaLibrary.filter(function (m) { return m.kind === "manga" }), "manga", function (m) { return m.type + " \u00b7 " + m.genres.slice(0, 2).join(", ") })
         scan(mediaList, "media", function (m) { return m.meta })
         scan(jamendoTracks, "track", function (t) { return t.artist + " \u00b7 " + t.genre })
         scan(radioStations, "station", function (s) { return s.genre + " \u00b7 radio" })
@@ -2042,7 +2154,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
                 Lbl { text: "GPS HUB"; font.pixelSize: 15; font.weight: Font.Bold; font.letterSpacing: 0.6 }
-                Lbl { text: "media prototype"; mono: true; faint: true; font.pixelSize: 10 }
+                Lbl { text: "media hub"; mono: true; faint: true; font.pixelSize: 10 }
             }
         }
 
@@ -2147,7 +2259,7 @@ Item {
                 RowLayout { width: parent.width
                     Lbl { text: "Catalogue"; mono: true; faint: true; font.pixelSize: 10 }
                     Item { Layout.fillWidth: true }
-                    Lbl { text: root.wallhavenUsingRemote ? "Wallhaven" : "Bundled samples"; mono: true; font.pixelSize: 10; dim: true }
+                    Lbl { text: root.wallhavenUsingRemote ? "Wallhaven" : "Wallhaven samples"; mono: true; font.pixelSize: 10; dim: true }
                 }
             }
         }
@@ -2200,7 +2312,7 @@ Item {
                         anchors.centerIn: parent
                         spacing: 7
                         Rectangle { width: 8; height: 8; radius: 4; color: root.wallhavenConnected ? "#86efac" : "#fde047"; anchors.verticalCenter: parent.verticalCenter }
-                        Lbl { text: root.wallhavenConnected ? "Wallhaven live \u00b7 samples elsewhere" : "Wallhaven offline \u00b7 samples"; mono: true; font.pixelSize: 11; dim: true }
+                        Lbl { text: "Wallhaven \u00b7 AniList \u00b7 Radio"; mono: true; font.pixelSize: 11; dim: true }
                     }
                 }
                 IconBtn {
@@ -2346,7 +2458,7 @@ Item {
         id: detailLayer
         anchors.fill: parent
         z: 70
-        opacity: root.detailItem ? 1 : 0
+        opacity: root.detailShown ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 180 } }
         Rectangle { anchors.fill: parent; color: "#d905070d"; MouseArea { anchors.fill: parent; onClicked: root.closeDetail() } }
@@ -2359,7 +2471,7 @@ Item {
             color: "#161c27"
             border.width: 1
             border.color: "#2f3646"
-            scale: root.detailItem ? 1 : 0.97
+            scale: root.detailShown ? 1 : 0.97
             Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             MouseArea { anchors.fill: parent }
             Loader { anchors.fill: parent; active: root.detailShown !== null; sourceComponent: detailBody }
@@ -2402,6 +2514,10 @@ Item {
             readonly property var statusOpts: isA ? root.animeStatuses : root.mangaStatuses
             readonly property color tint: isA ? "#7bd0ff" : "#ddb8ff"
             readonly property string unit: isA ? "Ep" : "Ch"
+            readonly property string metaLabel: isA
+                ? (d.seasonLabel || (d.year > 0 ? String(d.year) : "Year unknown"))
+                : (d.type + (d.countryLabel !== "" ? " \u00b7 " + d.countryLabel
+                    : (d.year > 0 ? " \u00b7 " + d.year : "")))
             RowLayout {
                 anchors { fill: parent; margins: 24 }
                 spacing: 24
@@ -2411,7 +2527,7 @@ Item {
                     Layout.alignment: Qt.AlignTop
                     radiusPx: 14
                     frameColor: "#161c27"
-                    src: root.artUrl(db.d.art)
+                    src: root.artUrl(db.d.cover)
                     grad: db.d.g
                     glyph: db.isA ? "anime" : "manga"
                 }
@@ -2428,22 +2544,37 @@ Item {
                         id: dcol
                         width: df.width - 12
                         spacing: 12
+                        Art {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 110
+                            visible: db.d.banner !== ""
+                            radiusPx: 12
+                            frameColor: "#161c27"
+                            src: root.artUrl(db.d.banner)
+                            grad: db.d.g
+                            glyph: db.isA ? "anime" : "manga"
+                        }
                         Lbl { Layout.fillWidth: true; Layout.rightMargin: 40; text: db.d.title; wrapMode: Text.WordWrap; font.pixelSize: 26; font.weight: Font.Bold }
+                        Lbl { Layout.fillWidth: true; visible: db.d.altTitles && db.d.altTitles.length > 0
+                              text: db.d.altTitles ? db.d.altTitles.slice(0, 3).join(" \u00b7 ") : ""
+                              wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12 }
                         Wrap {
                             Layout.fillWidth: true
                             spacing: 6
-                            Tag { text: db.isA ? db.d.season : (db.d.type + " \u00b7 " + db.d.year); tint: db.tint }
-                            Tag { text: db.d.status }
-                            Tag { visible: db.isA; text: "\u2605 " + db.d.rating + " (sample)"; tint: "#fde047" }
-                            Tag { text: db.isA ? db.d.studio : db.d.author }
-                            Tag { text: db.total + (db.isA ? " episodes" : " chapters") }
+                            Tag { text: db.metaLabel; tint: db.tint }
+                            Tag { text: db.d.statusLabel }
+                            Tag { visible: db.d.score > 0; text: "\u2605 " + db.d.scoreLabel; tint: "#fde047" }
+                            Tag { visible: db.isA && db.d.studios.length > 0; text: db.d.studios.join(", ") }
+                            Tag { visible: !db.isA && db.d.author !== ""; text: db.d.author }
+                            Tag { text: db.total > 0 ? db.total + (db.isA ? " episodes" : " chapters") : (db.isA ? "Episode count unknown" : "Chapter count unknown") }
+                            Tag { visible: !db.isA && db.d.volumes > 0; text: db.d.volumes + " volumes" }
                         }
                         Wrap {
                             Layout.fillWidth: true
                             spacing: 6
                             Repeater { model: db.d.genres; delegate: Tag { text: modelData; tint: "#a78bfa" } }
                         }
-                        Lbl { Layout.fillWidth: true; text: db.d.synopsis; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13; lineHeight: 1.25 }
+                        Lbl { Layout.fillWidth: true; text: db.d.description; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13; lineHeight: 1.25 }
                         Lbl { text: db.isA ? "YOUR WATCH STATUS" : "YOUR READING STATUS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
                         Wrap {
                             Layout.fillWidth: true
@@ -2459,16 +2590,16 @@ Item {
                             Lbl { text: db.isA ? "EPISODE PROGRESS" : "CHAPTER PROGRESS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
                             Item { Layout.fillWidth: true }
                             IconBtn { box: 28; icon: "minus"; tip: "One back"; onClicked: root.setProgress(db.d.id, db.cur - 1, db.total) }
-                            Lbl { text: db.unit + " " + db.cur + " / " + db.total; mono: true; font.pixelSize: 12; Layout.preferredWidth: 90; horizontalAlignment: Text.AlignHCenter }
+                            Lbl { text: db.unit + " " + db.cur + " / " + (db.total > 0 ? db.total : "?"); mono: true; font.pixelSize: 12; Layout.preferredWidth: 90; horizontalAlignment: Text.AlignHCenter }
                             IconBtn { box: 28; icon: "plus"; tip: "Mark next as done"; onClicked: root.setProgress(db.d.id, db.cur + 1, db.total) }
                         }
                         Bar { Layout.fillWidth: true; value: db.total > 0 ? db.cur / db.total : 0; tint: db.tint }
                         Wrap {
-                            visible: db.total <= 26
+                            visible: db.total > 0 && db.total <= 26
                             Layout.fillWidth: true
                             spacing: 6
                             Repeater {
-                                model: db.total <= 26 ? db.total : 0
+                                model: db.total > 0 && db.total <= 26 ? db.total : 0
                                 delegate: Rectangle {
                                     width: 34; height: 26; radius: 7
                                     color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.28) : (eh.containsMouse ? "#2f3541" : "#1a202b")
@@ -2483,18 +2614,16 @@ Item {
                         Wrap {
                             Layout.fillWidth: true
                             spacing: 8
-                            Btn { kind: "primary"; accent: db.tint; icon: "play"; label: db.isA ? "Continue Watching" : "Continue Reading"
-                                  onClicked: root.continueMedia(Object.assign({ action: "continue" }, db.d)) }
-                            Btn { icon: "link"; label: db.isA ? "Open to Watch" : "Open Reader"
-                                  onClicked: root.continueMedia(Object.assign({ action: "open" }, db.d)) }
+                            Btn { kind: "primary"; accent: db.tint; icon: "link"; label: "Open on AniList"
+                                  onClicked: root.openSource(db.d) }
                             Btn { icon: root.favorites[db.d.id] ? "heart" : "heartO"; label: root.favorites[db.d.id] ? "Favorited" : "Favorite"
                                   onClicked: root.toggleFavorite(db.d.id, db.d.title) }
                             Btn { visible: db.st === ""; icon: "plus"; label: db.isA ? "Add to Watchlist" : "Add to Reading List"
                                   onClicked: root.toggleList(db.d.kind, db.d.id, db.d.title) }
                         }
                         Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
-                              text: db.isA ? "Tracking only. GPS Media Hub doesn't stream episodes; \u201cOpen to Watch\u201d will hand off to a source you choose once connected."
-                                           : "Progress tracking only. The chapter reader and catalogue API aren't connected in this prototype." }
+                              text: "Catalogue data from AniList. GPS Media Hub doesn't stream episodes or host chapters; "
+                                    + "the official AniList page opens in your browser. Optional anime hand-off remains a future integration." }
                     }
                 }
             }
@@ -2569,8 +2698,8 @@ Item {
                             spacing: 10
                             Row {
                                 spacing: 8
-                                Tag { text: "PROTOTYPE"; tint: root.accent }
-                                Tag { text: "SAMPLE DATA"; tint: "#948e9d" }
+                                Tag { text: "MEDIA HUB"; tint: root.accent }
+                                Tag { text: "LIVE SOURCES"; tint: "#86efac" }
                             }
                             Lbl { text: "Find your next escape."; font.pixelSize: 34; font.weight: Font.Bold }
                             Lbl { width: parent.width; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 14
@@ -2712,15 +2841,15 @@ Item {
                                     readonly property int cur: root.progress[modelData.id] || 0
                                     width: (hp.cw - 14 * (hp.shelfCols - 1)) / hp.shelfCols
                                     title: modelData.title
-                                    sub: (isA ? "Episode " : "Chapter ") + cur + " of " + modelData.total
+                                    sub: (isA ? "Episode " : "Chapter ") + cur + " of " + (modelData.total > 0 ? modelData.total : "?")
                                     badge: isA ? "Anime" : modelData.type
-                                    src: root.artUrl(modelData.art)
+                                    src: root.artUrl(modelData.cover)
                                     grad: modelData.g
                                     glyph: isA ? "anime" : "manga"
-                                    value: cur / modelData.total
-                                    valueLabel: Math.round(cur / modelData.total * 100) + "% \u00b7 " + (isA ? "Ep " : "Ch ") + cur + "/" + modelData.total
-                                    btnLabel: isA ? "Continue Watching" : "Continue Reading"
-                                    btnIcon: isA ? "play" : "manga"
+                                    value: modelData.total > 0 ? cur / modelData.total : 0
+                                    valueLabel: (modelData.total > 0 ? Math.round(cur / modelData.total * 100) + "% \u00b7 " : "") + (isA ? "Ep " : "Ch ") + cur + "/" + (modelData.total > 0 ? modelData.total : "?")
+                                    btnLabel: "Open AniList"
+                                    btnIcon: "link"
                                     accent: isA ? "#7bd0ff" : "#ddb8ff"
                                     onActivated: root.openDetail(modelData.kind, modelData.id)
                                     onCont: root.continueMedia(modelData)
@@ -2731,7 +2860,7 @@ Item {
                             width: parent.width
                             visible: root.continueAll().length === 0
                             Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
-                                  text: "Nothing in progress yet. Set an anime to Watching or a manga to Currently Reading and it will show up here." }
+                                  text: "Nothing in progress yet. Set an anime to Watching or a manga to Reading and it will show up here." }
                         }
                     }
 
@@ -3193,8 +3322,8 @@ Item {
     // ================================================================
     //  ANIME + MANGA — one shared browse page, configured by `kind`
     // ================================================================
-    Component { id: animePage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: item.kind = "anime" } }
-    Component { id: mangaPage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: item.kind = "manga" } }
+    Component { id: animePage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: { item.kind = "anime"; item.startCatalogue() } } }
+    Component { id: mangaPage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: { item.kind = "manga"; item.startCatalogue() } } }
 
     Component {
         id: browseC
@@ -3202,46 +3331,23 @@ Item {
             id: bp
             property string kind: "anime"
             readonly property bool isA: kind === "anime"
-            property string view: "Trending"
-            property string query: ""
-            property string genre: "All"
-            property string statusF: "All"
-            property string typeF: "All"
-            readonly property var views: isA ? ["Trending", "Seasonal", "Popular", "Watchlist"] : ["Trending", "Popular", "Latest", "Reading List"]
-            readonly property string listView: isA ? "Watchlist" : "Reading List"
-            readonly property var statusOpts: isA ? ["All", "Airing", "Finished", "Upcoming"] : ["All", "Ongoing", "Completed"]
-            readonly property var genreOpts: isA ? root.animeGenres : root.mangaGenres
             readonly property color tint: isA ? "#7bd0ff" : "#ddb8ff"
             readonly property real gw: bf.width - 48
             readonly property int cols: Math.max(2, Math.floor((gw + 14) / 190))
             readonly property real cardW: (gw - 14 * (cols - 1)) / cols
             readonly property int shelfCols: gw >= 900 ? 4 : 2
             readonly property var shelf: root.continueList(kind).slice(0, 4)
-            readonly property var entries: compute()
+            readonly property var catalogue: isA ? root.animeModel : root.mangaModel
 
-            function compute() {
-                var src = isA ? root.animeList : root.mangaList
-                var q = query.trim().toLowerCase()
-                var out = []
-                for (var i = 0; i < src.length; i++) {
-                    var m = src[i]
-                    if (genre !== "All" && m.genres.indexOf(genre) < 0) continue
-                    if (statusF !== "All" && m.status !== statusF) continue
-                    if (!isA && typeF !== "All" && m.type !== typeF) continue
-                    if (q && (m.title + " " + m.genres.join(" ") + " " + (isA ? m.studio : m.author)).toLowerCase().indexOf(q) < 0) continue
-                    if (view === listView && !root.statuses[m.id]) continue
-                    if (view === "Seasonal" && !m.seasonal) continue
-                    if (view === "Trending" && m.trend >= 99) continue
-                    if (view === "Popular" && m.pop >= 99) continue
-                    out.push(m)
-                }
-                if (view === "Trending" || view === "Seasonal") out.sort(function (a, b) { return a.trend - b.trend })
-                else if (view === "Popular") out.sort(function (a, b) { return a.pop - b.pop })
-                else if (view === "Latest") out.sort(function (a, b) { return b.added - a.added })
-                else out.sort(function (a, b) { return (root.openedAt[b.id] || 0) - (root.openedAt[a.id] || 0) })
-                return out
+            function startCatalogue() {
+                catalogue.activate()
             }
-            function resetFilters() { query = ""; genre = "All"; statusF = "All"; typeF = "All" }
+            function resetFilters() {
+                catalogue.query = ""
+                catalogue.genre = "All"
+                catalogue.statusFilter = "All"
+                catalogue.originFilter = "All regions"
+            }
 
             Flickable {
                 id: bf
@@ -3264,11 +3370,12 @@ Item {
                             spacing: 3
                             Lbl { text: bp.isA ? "Anime" : "Manga & Manhwa"; font.pixelSize: 26; font.weight: Font.Bold }
                             Lbl { dim: true; font.pixelSize: 13
-                                  text: bp.isA ? "Discover, track and pick up where you left off." : "Discover, track chapters and keep a reading list." }
+                                  text: bp.isA ? "Live AniList discovery, tracking and a persistent watchlist." : "Live AniList discovery, tracking and a persistent reading list." }
                         }
                         Item { Layout.fillWidth: true }
-                        Tag { visible: bp.gw > 640; tint: bp.tint
-                              text: bp.isA ? "TRACKING ONLY \u00b7 NOT A STREAMING SERVICE" : "READER + CATALOGUE API NOT CONNECTED" }
+                        Tag { visible: bp.gw > 640; tint: catalogue.localView ? "#86efac" : (catalogue.error !== "" ? "#fde047" : bp.tint)
+                              text: catalogue.localView ? "LOCAL LIST \u00b7 OFFLINE"
+                                    : (catalogue.error !== "" ? "ANILIST OFFLINE" : "LIVE ANILIST \u00b7 PUBLIC CATALOGUE") }
                     }
 
                     Card {
@@ -3276,39 +3383,51 @@ Item {
                         SearchField {
                             Layout.fillWidth: true
                             accent: bp.tint
-                            placeholder: bp.isA ? "Search anime by title, genre or studio" : "Search by title, genre or author"
-                            text: bp.query
-                            onEdited: bp.query = text
+                            placeholder: bp.isA ? "Search anime by title" : "Search manga, manhwa or manhua by title"
+                            text: catalogue.query
+                            onEdited: catalogue.query = text
                         }
-                        Wrap {
+                        RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
-                            Repeater {
-                                model: bp.views
-                                delegate: Chip {
-                                    label: modelData
-                                    accent: bp.tint
-                                    active: bp.view === modelData
-                                    badge: modelData === bp.listView ? ("" + root.countListed(bp.kind)) : ""
-                                    onClicked: bp.view = modelData
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: catalogue.viewOptions
+                                    delegate: Chip {
+                                        label: modelData
+                                        accent: bp.tint
+                                        active: catalogue.view === modelData
+                                        badge: modelData === MediaCatalogue.listView(bp.kind) ? ("" + root.countListed(bp.kind)) : ""
+                                        onClicked: catalogue.view = modelData
+                                    }
                                 }
                             }
+                            Btn { compact: true; kind: "ghost"; label: "Reset"; icon: "refresh"
+                                  onClicked: bp.resetFilters() }
                         }
                         Wrap {
                             visible: !bp.isA
                             Layout.fillWidth: true
                             spacing: 8
                             Repeater {
-                                model: ["All", "Manga", "Manhwa", "Webtoon"]
-                                delegate: Chip { label: modelData === "All" ? "All types" : modelData; icon: "manga"; accent: bp.tint; active: bp.typeF === modelData; onClicked: bp.typeF = modelData }
+                                model: catalogue.originOptions
+                                delegate: Chip {
+                                    label: modelData
+                                    icon: "manga"
+                                    accent: bp.tint
+                                    active: catalogue.originFilter === modelData
+                                    onClicked: catalogue.originFilter = modelData
+                                }
                             }
                         }
                         Wrap {
                             Layout.fillWidth: true
                             spacing: 6
                             Repeater {
-                                model: bp.genreOpts
-                                delegate: Chip { label: modelData; accent: "#a78bfa"; active: bp.genre === modelData; onClicked: bp.genre = modelData }
+                                model: catalogue.genreOptions
+                                delegate: Chip { label: modelData; accent: "#a78bfa"; active: catalogue.genre === modelData; onClicked: catalogue.genre = modelData }
                             }
                         }
                         RowLayout {
@@ -3319,10 +3438,44 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Repeater {
-                                    model: bp.statusOpts
-                                    delegate: Chip { label: modelData; accent: bp.tint; active: bp.statusF === modelData; onClicked: bp.statusF = modelData }
+                                    model: catalogue.statusOptions
+                                    delegate: Chip { label: modelData; accent: bp.tint; active: catalogue.statusFilter === modelData; onClicked: catalogue.statusFilter = modelData }
                                 }
                             }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: catalogue.error !== ""
+                        tint: "#ef4444"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "warn"; size: 20; tint: "#fca5a5" }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Lbl { text: "AniList search failed"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                                      text: catalogue.error
+                                            + (catalogue.retryAfter > 0 ? " Try again in about " + catalogue.retryAfter + " seconds." : "")
+                                            + (catalogue.errorCode !== "" ? " (" + catalogue.errorCode + ")" : "") }
+                            }
+                            Btn { compact: true; label: "Retry"; icon: "refresh"; onClicked: catalogue.retry() }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: catalogue.loading && catalogue.remoteResults.length === 0
+                        tint: bp.tint
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "search"; size: 20; tint: bp.tint }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
+                                  text: "Searching AniList \u2014 public catalogue data, no account required." }
                         }
                     }
 
@@ -3330,7 +3483,7 @@ Item {
                     Column {
                         width: parent.width
                         spacing: 10
-                        visible: bp.shelf.length > 0 && bp.query.trim() === "" && bp.view !== bp.listView
+                        visible: bp.shelf.length > 0 && catalogue.query.trim() === "" && !catalogue.localView
                         Lbl { text: bp.isA ? "Continue Watching" : "Continue Reading"; font.pixelSize: 16; font.weight: Font.Bold }
                         Wrap {
                             width: parent.width
@@ -3338,18 +3491,18 @@ Item {
                             Repeater {
                                 model: bp.shelf
                                 delegate: ShelfCard {
-                                    readonly property int cur: root.progress[modelData.id] || 0
+                                    readonly property int cur: modelData.progress || 0
                                     width: (bp.gw - 14 * (bp.shelfCols - 1)) / bp.shelfCols
                                     title: modelData.title
-                                    sub: (bp.isA ? "Episode " : "Chapter ") + cur + " of " + modelData.total
-                                    badge: modelData.type ? modelData.type : modelData.status
-                                    src: root.artUrl(modelData.art)
+                                    sub: (bp.isA ? "Episode " : "Chapter ") + cur + " of " + (modelData.total > 0 ? modelData.total : "?")
+                                    badge: modelData.type
+                                    src: root.artUrl(modelData.cover)
                                     grad: modelData.g
                                     glyph: bp.isA ? "anime" : "manga"
-                                    value: cur / modelData.total
-                                    valueLabel: Math.round(cur / modelData.total * 100) + "% \u00b7 " + (bp.isA ? "Ep " : "Ch ") + cur + "/" + modelData.total
-                                    btnLabel: bp.isA ? "Continue Watching" : "Continue Reading"
-                                    btnIcon: bp.isA ? "play" : "manga"
+                                    value: modelData.total > 0 ? cur / modelData.total : 0
+                                    valueLabel: (modelData.total > 0 ? Math.round(cur / modelData.total * 100) + "% \u00b7 " : "") + (bp.isA ? "Ep " : "Ch ") + cur + "/" + (modelData.total > 0 ? modelData.total : "?")
+                                    btnLabel: "Open AniList"
+                                    btnIcon: "link"
                                     accent: bp.tint
                                     onActivated: root.openDetail(modelData.kind, modelData.id)
                                     onCont: root.continueMedia(modelData)
@@ -3372,7 +3525,7 @@ Item {
                                 spacing: 2
                                 Lbl { text: "Local collections"; font.pixelSize: 14; font.weight: Font.DemiBold }
                                 Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
-                                      text: "Bring your own CBZ, CBR and image-folder series. Nothing is scanned in this prototype \u2014 no local collections are connected." }
+                                      text: "Bring your own CBZ, CBR and image-folder series. Nothing is scanned yet \u2014 no local collections are connected." }
                             }
                             Btn { compact: true; label: "Add CBZ / CBR"; icon: "plus"
                                   onClicked: root.notify("Local collection import isn't connected yet (CBZ / CBR). A backend indexer will handle this.", "warn") }
@@ -3383,24 +3536,32 @@ Item {
 
                     RowLayout {
                         width: parent.width
-                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: bp.entries.length + " titles \u00b7 " + bp.view }
+                        Lbl { mono: true; faint: true; font.pixelSize: 11
+                              text: (catalogue.loading && catalogue.remoteResults.length > 0 ? "Updating \u00b7 " : "")
+                                    + catalogue.count + (catalogue.localView ? " saved title" : " title")
+                                    + (catalogue.count === 1 ? "" : "s")
+                                    + " \u00b7 " + catalogue.view
+                                    + (catalogue.localView ? " \u00b7 offline" : " \u00b7 page " + catalogue.page) }
                         Item { Layout.fillWidth: true }
+                        Tag { visible: catalogue.cached && !catalogue.localView; text: "CACHED"; tint: "#86efac" }
                     }
 
                     Wrap {
                         width: parent.width
                         spacing: 14
                         Repeater {
-                            model: bp.entries
+                            model: catalogue.entries
                             delegate: MediaCard {
                                 width: bp.cardW
                                 title: modelData.title
-                                meta: bp.isA ? (modelData.season + " \u00b7 " + modelData.total + " eps") : (modelData.year + " \u00b7 " + modelData.total + " ch")
+                                meta: bp.isA
+                                    ? ((modelData.formatLabel || "Anime") + " \u00b7 " + (modelData.total > 0 ? modelData.total + " eps" : "? eps"))
+                                    : (modelData.type + " \u00b7 " + (modelData.total > 0 ? modelData.total + " ch" : "? ch"))
                                 extra: modelData.genres.slice(0, 2).join(" \u00b7 ")
-                                badge: bp.isA ? modelData.status : modelData.type
-                                corner: bp.isA ? ("\u2605 " + modelData.rating) : modelData.status
+                                badge: bp.isA ? modelData.statusLabel : modelData.type
+                                corner: bp.isA ? (modelData.score > 0 ? "\u2605 " + modelData.scoreLabel : modelData.year) : modelData.statusLabel
                                 userStatus: root.statuses[modelData.id] || ""
-                                src: root.artUrl(modelData.art)
+                                src: root.artUrl(modelData.cover)
                                 grad: modelData.g
                                 glyph: bp.isA ? "anime" : "manga"
                                 aspect: 0.6667
@@ -3420,13 +3581,24 @@ Item {
 
                     Card {
                         width: parent.width
-                        visible: bp.entries.length === 0
-                        Lbl { font.pixelSize: 15; font.weight: Font.DemiBold
-                              text: bp.view === bp.listView ? (bp.isA ? "Your watchlist is empty" : "Your reading list is empty") : "Nothing matches these filters" }
-                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
-                              text: bp.view === bp.listView ? "Hover a poster and press + to add it, then set a status like Watching or Plan to Read."
-                                                            : "Try clearing a genre or status filter." }
+                        visible: catalogue.count === 0 && catalogue.error === ""
+                                 && (catalogue.localView || (catalogue.hasLoaded && !catalogue.loading))
+                        Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: catalogue.emptyTitle }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: catalogue.emptyMessage }
                         Btn { label: "Reset filters"; icon: "refresh"; onClicked: bp.resetFilters() }
+                    }
+
+                    RowLayout {
+                        width: parent.width
+                        visible: !catalogue.localView && catalogue.hasLoaded && catalogue.error === "" && catalogue.count > 0
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+                        Btn { compact: true; label: "Previous"; icon: "chev"; muted: catalogue.page <= 1 || catalogue.loading
+                              onClicked: catalogue.previousPage() }
+                        Lbl { text: "Page " + catalogue.page; mono: true; faint: true; font.pixelSize: 11 }
+                        Btn { compact: true; label: "Next"; icon: "chev"; muted: !catalogue.hasNextPage || catalogue.loading
+                              onClicked: catalogue.nextPage() }
+                        Item { Layout.fillWidth: true }
                     }
                 }
             }
@@ -4121,7 +4293,7 @@ Item {
 
                     Card {
                         width: parent.width
-                        visible: !root.backendConnected
+                        visible: !root.downloadBackendConnected
                         tint: "#fde047"
                         RowLayout {
                             Layout.fillWidth: true
@@ -4308,7 +4480,7 @@ Item {
                         ColumnLayout {
                             spacing: 3
                             Lbl { text: "My Library"; font.pixelSize: 26; font.weight: Font.Bold }
-                            Lbl { text: "Everything you've saved, in one place. In-memory only for now."; dim: true; font.pixelSize: 13 }
+                            Lbl { text: "Everything you've saved, in one place. Catalogue lists persist locally; local files aren't scanned."; dim: true; font.pixelSize: 13 }
                         }
                         Item { Layout.fillWidth: true }
                         Tag { visible: lf.width > 700; text: "NO FILES SCANNED"; tint: "#948e9d" }
@@ -4397,7 +4569,7 @@ Item {
                                 accent: root.accent
                                 fav: modelData.fav
                                 primaryLabel: root.libraryLabel(modelData.kind)
-                                primaryIcon: modelData.kind === "wallpaper" ? "eye" : "play"
+                                primaryIcon: modelData.kind === "wallpaper" ? "eye" : ((modelData.kind === "anime" || modelData.kind === "manga") ? "link" : "play")
                                 onActivated: root.libraryActivate(modelData)
                                 onPrimary: root.libraryAction(modelData)
                                 onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
@@ -4432,7 +4604,7 @@ Item {
                                     }
                                     Tag { visible: lf.width > 620; text: root.kindLabel(modelData.kind).toUpperCase(); px: 9 }
                                     IconBtn { box: 30; icon: modelData.fav ? "heart" : "heartO"; active: modelData.fav; tip: "Favorite"; onClicked: root.toggleFavorite(modelData.id, modelData.title) }
-                                    Btn { compact: true; label: root.libraryLabel(modelData.kind); icon: modelData.kind === "wallpaper" ? "eye" : "play"; onClicked: root.libraryAction(modelData) }
+                                    Btn { compact: true; label: root.libraryLabel(modelData.kind); icon: modelData.kind === "wallpaper" ? "eye" : ((modelData.kind === "anime" || modelData.kind === "manga") ? "link" : "play"); onClicked: root.libraryAction(modelData) }
                                 }
                             }
                         }
