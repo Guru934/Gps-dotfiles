@@ -101,7 +101,7 @@ Scope {
     property int btStatusGen: 0
 
     // Brightness, Power Profile, and Media State
-    property int brightnessPct: 10
+    readonly property int brightnessPct: Brightness.percent
     property string powerProfile: "balanced"
     property string mediaStatus: "Stopped"
     property string mediaArtist: ""
@@ -408,14 +408,7 @@ Scope {
         }
     }
 
-    Process {
-        id: brightReadProc
-        command: ["brightnessctl", "-m"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: root.parseBrightness(this.text)
-        }
-    }
+
 
     Process {
         id: profileReadProc
@@ -647,7 +640,7 @@ Scope {
         } else if (kind === "clock") {
             root.rebuildCalendar()
         } else if (kind === "settings") {
-            if (!brightReadProc.running) brightReadProc.running = true
+            Brightness.refresh()
             if (!mediaReadProc.running) mediaReadProc.running = true
         }
     }
@@ -1065,16 +1058,6 @@ Scope {
         root.checkWifiPending()
     }
 
-    function parseBrightness(raw) {
-        const line = raw.trim().split("\n")[0]
-        if (!line) return
-        const parts = line.split(",")
-        if (parts.length >= 4) {
-            const parsed = parseInt(parts[3].replace("%", ""), 10)
-            if (!isNaN(parsed)) root.brightnessPct = parsed
-        }
-    }
-
     function parseMedia(raw) {
         const line = raw.trim().split("\n")[0]
         if (!line || line.indexOf("|") === -1) {
@@ -1090,14 +1073,15 @@ Scope {
     }
 
     function setBrightnessPct(targetPct) {
-        const clamped = Math.max(5, Math.min(100, Math.round(targetPct)))
-        root.brightnessPct = clamped
-        Quickshell.execDetached(["brightnessctl", "-q", "set", clamped + "%"])
-        root.showOsd("󰖨", clamped)
+        const target = Math.max(1, Math.min(100, Math.round(targetPct)))
+        Brightness.setPercent(target)
+        root.showOsd("󰖨", target)
     }
 
     function stepBrightness(deltaPct) {
-        setBrightnessPct(root.brightnessPct + deltaPct)
+        const target = Math.max(1, Math.min(100, Math.round(Brightness.percent + deltaPct)))
+        Brightness.step(deltaPct)
+        root.showOsd("󰖨", target)
     }
 
     function setVolumeRatio(ratio) {

@@ -1,0 +1,4 @@
+module qs.config
+singleton Theme 1.0 Theme.qml
+singleton Brightness 1.0 Brightness.qml
+

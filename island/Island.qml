@@ -16,7 +16,6 @@
 //   mascot    selected Pet skin from ~/.config/quickshell/pet.json (read-only; cat fallback)
 // Priority: alert > privacy > launcher > control > volume/OSD > notification > focus > charging > clipboard > music > do-not-disturb > idle
 //
-// Tide Island and PetAlert both draw at the top-centre — disable them while testing this.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
@@ -28,6 +27,7 @@ import Quickshell.Services.Mpris
 import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
 import Quickshell.Services.Notifications
+import qs.config
 
 Scope {
     id: root
@@ -118,12 +118,12 @@ Scope {
     property bool micMuted: sourceAudio ? sourceAudio.muted : false
     property string sourceName: source ? (source.description || source.nickname || source.name) : ""
 
-    property bool hasBrightness: brightnessLoaded && brightnessPath !== "" && brightnessMax > 0
-    property real brightness: hasBrightness && brightnessMax > 0 ? brightnessActual / brightnessMax : 0
-    property string brightnessPath: ""
-    property int brightnessActual: 0
-    property int brightnessMax: 0
-    property bool brightnessLoaded: false
+    readonly property bool hasBrightness: Brightness.available
+    readonly property real brightness: Brightness.available ? (Brightness.percent / 100.0) : 0.0
+    readonly property int brightnessPct: Brightness.percent
+    onBrightnessPctChanged: {
+        if (ready) requestOsd("bright")
+    }
 
     property var alerts: []
     property string clipText: ""
@@ -495,45 +495,6 @@ Scope {
     onSinkChanged: requestOsd("route")
     onSourceChanged: requestOsd("mic")
 
-    Process {
-        id: brightnessProbe
-        running: true
-        command: ["sh", "-c", "for actual in /sys/class/backlight/*/actual_brightness; do [ -f \"$actual\" ] || continue; max=\"${actual%/actual_brightness}/max_brightness\"; [ -r \"$max\" ] || continue; printf '%s\\t%s\\n' \"$actual\" \"$(cat \"$max\")\"; exit 0; done"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                const p = text.trim().split("\t")
-                const max = parseInt(p[1], 10)
-                if (!p[0] || isNaN(max) || max <= 0) {
-                    root.brightnessPath = ""
-                    root.brightnessMax = 0
-                    root.brightnessLoaded = false
-                    return
-                }
-                root.brightnessPath = p[0]
-                root.brightnessMax = max
-            }
-        }
-    }
-    Timer {
-        interval: 5000
-        repeat: true
-        running: root.brightnessPath === ""
-        onTriggered: if (!brightnessProbe.running) brightnessProbe.running = true
-    }
-    FileView {
-        path: root.brightnessPath
-        watchChanges: root.brightnessPath !== ""
-        onFileChanged: reload()
-        onLoaded: {
-            const value = parseInt(text().trim(), 10)
-            if (isNaN(value) || root.brightnessMax <= 0) return
-            const changed = root.brightnessLoaded && value !== root.brightnessActual
-            root.brightnessActual = value
-            root.brightnessLoaded = true
-            if (changed) root.requestOsd("bright")
-        }
-    }
-
     property bool lowShown20: false
     property bool lowShown10: false
     property bool lowShown5: false
@@ -653,7 +614,10 @@ Scope {
                 title: root.focusTitle
             })
         }
-        function osd(kind: string): void { root.pokeOsd(kind) }
+        function osd(kind: string): void {
+            if (kind === "bright") Brightness.refresh()
+            root.pokeOsd(kind)
+        }
         function alert(action: string): void {
             if (["expand", "toggle", "jump", "dismiss"].indexOf(action) < 0) return
             if (action === "expand") root.alertExpanded = root.alerts.length > 0

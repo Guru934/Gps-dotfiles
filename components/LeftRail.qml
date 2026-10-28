@@ -33,7 +33,7 @@ PanelWindow {
 
     property int fallbackVolPct: 75
     property bool fallbackMuted: false
-    property int brightnessPct: 100
+    readonly property int brightnessPct: Brightness.percent
 
     // Live Battery State (shared UPower service; hidden honestly when no battery)
     readonly property var batDevice: UPower.displayDevice
@@ -124,10 +124,9 @@ PanelWindow {
             + "bt_power=$(bluetoothctl show 2>/dev/null | grep -q 'Powered: yes' && echo 1 || echo 0); "
             + "bt_conn=$(bluetoothctl info 2>/dev/null | grep -q 'Connected: yes' && echo 1 || echo 0); "
             + "vol_line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); "
-            + "bri_line=$(brightnessctl -m 2>/dev/null | head -n1); "
             + "med_line=$(playerctl metadata --format '{{status}}|{{title}}' 2>/dev/null | head -n1); "
-            + "printf 'WIFI:%s|%s\\nBT:%s|%s\\nVOL:%s\\nBRI:%s\\nMED:%s\\n' "
-            + "\"$wifi_radio\" \"$wifi_line\" \"$bt_power\" \"$bt_conn\" \"$vol_line\" \"$bri_line\" \"$med_line\""
+            + "printf 'WIFI:%s|%s\\nBT:%s|%s\\nVOL:%s\\nMED:%s\\n' "
+            + "\"$wifi_radio\" \"$wifi_line\" \"$bt_power\" \"$bt_conn\" \"$vol_line\" \"$med_line\""
         ]
         running: true
         stdout: StdioCollector {
@@ -196,12 +195,7 @@ PanelWindow {
                 if (m) {
                     root.fallbackVolPct = Math.round(parseFloat(m[1]) * 100)
                 }
-            } else if (line.startsWith("BRI:")) {
-                const bParts = line.slice(4).split(",")
-                if (bParts.length >= 4) {
-                    const parsed = parseInt(bParts[3].replace("%", ""), 10)
-                    if (!isNaN(parsed)) root.brightnessPct = parsed
-                }
+
             } else if (line.startsWith("MED:")) {
                 const mPayload = line.slice(4).trim()
                 if (!mPayload) {
@@ -244,21 +238,16 @@ PanelWindow {
     }
 
     function changeBrightness(deltaPct) {
-        const nextBri = Math.max(5, Math.min(100, root.brightnessPct + deltaPct))
-        root.brightnessPct = nextBri
-        Quickshell.execDetached(["brightnessctl", "-q", "set", nextBri + "%"])
-        fastRefreshTimer.restart()
+        Brightness.step(deltaPct)
     }
 
     function cycleBrightnessPreset() {
         let nextBri = 100
-        if (root.brightnessPct >= 90) nextBri = 25
-        else if (root.brightnessPct < 40) nextBri = 50
-        else if (root.brightnessPct < 70) nextBri = 75
+        if (Brightness.percent >= 90) nextBri = 25
+        else if (Brightness.percent < 40) nextBri = 50
+        else if (Brightness.percent < 70) nextBri = 75
         else nextBri = 100
-        root.brightnessPct = nextBri
-        Quickshell.execDetached(["brightnessctl", "-q", "set", nextBri + "%"])
-        fastRefreshTimer.restart()
+        Brightness.setPercent(nextBri)
     }
 
     // ========================================================================
@@ -552,16 +541,17 @@ PanelWindow {
                     // Brightness Pill with Sun Icon + Live Brightness Percentage
                     MetricPill {
                         id: briPill
-                        glyph: root.brightnessPct < 35
+                        visible: Brightness.available
+                        glyph: Brightness.percent < 35
                             ? "󰃞"
-                            : (root.brightnessPct < 75 ? "󰃟" : "󰖨")
-                        label: root.brightnessPct + "%"
+                            : (Brightness.percent < 75 ? "󰃟" : "󰖨")
+                        label: Brightness.percent + "%"
                         accentColor: "#F5C17A"
                         alertMode: false
-                        tooltip: "Brightness: " + root.brightnessPct + "% (Click: Cycle Preset · Scroll: ±5%)"
+                        tooltip: "Brightness: " + Brightness.percent + "% (Click: Cycle Preset · Scroll: ±5%)"
                         onClicked: root.cycleBrightnessPreset()
-                        onScrolledUp: root.changeBrightness(5)
-                        onScrolledDown: root.changeBrightness(-5)
+                        onScrolledUp: Brightness.step(5)
+                        onScrolledDown: Brightness.step(-5)
                     }
 
                     Rectangle {

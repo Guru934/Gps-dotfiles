@@ -50,7 +50,7 @@ Item {
     readonly property bool brightAvailable: core.hasBrightness || fallbackBrightPct >= 0
     readonly property real liveBright: dragBright >= 0
         ? dragBright
-        : (fallbackBrightPct >= 0 ? fallbackBrightPct / 100 : (core.hasBrightness ? core.brightness : 0))
+        : (core.hasBrightness ? core.brightness : (fallbackBrightPct >= 0 ? fallbackBrightPct / 100 : 0))
 
     property real dragVol: -1
     readonly property real liveVol: dragVol >= 0 ? dragVol : (core.muted ? 0 : Math.max(0, Math.min(1.5, core.volume)))
