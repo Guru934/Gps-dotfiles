@@ -25,7 +25,7 @@ API_URL = "https://graphql.anilist.co"
 USER_AGENT = "GPS-Media-Hub/1.0"
 TIMEOUT_SECONDS = 12
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 CACHE_TTL_SECONDS = 600
 MAX_CACHE_AGE_SECONDS = 7 * 24 * 60 * 60
 MAX_PAGE = 500
@@ -101,6 +101,7 @@ query (
       isAdult
       studios(isMain: true) { nodes { name } }
       staff(perPage: 6) { edges { role node { name { full } } } }
+      externalLinks { id url site type }
     }
   }
 }
@@ -187,6 +188,26 @@ def safe_image_url(value):
     trusted = host == "anilist.co" or host.endswith(".anilist.co")
     trusted = trusted or host == "anili.st" or host.endswith(".anili.st")
     if not trusted:
+        return ""
+    return raw
+
+
+def safe_external_url(value):
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip()
+    if not raw or len(raw) > 2048 or any(ord(ch) <= 32 or ord(ch) == 127 for ch in raw):
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    if port is not None and port != 443:
         return ""
     return raw
 
@@ -526,6 +547,20 @@ def normalize_media(kind, raw):
         if text in GENRES and text not in genres:
             genres.append(text)
 
+    official_links = []
+    for link in raw.get("externalLinks") if isinstance(raw.get("externalLinks"), list) else []:
+        if not isinstance(link, dict) or link.get("type") != "STREAMING":
+            continue
+        url = safe_external_url(link.get("url"))
+        site = clean_text(link.get("site"), 80)
+        if not url or not site:
+            continue
+        if any(existing["url"] == url for existing in official_links):
+            continue
+        official_links.append({"site": site, "url": url})
+        if len(official_links) >= 6:
+            break
+
     studios = []
     studio_obj = raw.get("studios") if isinstance(raw.get("studios"), dict) else {}
     for node in studio_obj.get("nodes") if isinstance(studio_obj.get("nodes"), list) else []:
@@ -598,6 +633,7 @@ def normalize_media(kind, raw):
         "coverColor": clean_text(cover.get("color"), 16),
         "banner": banner_url,
         "siteUrl": f"https://anilist.co/{kind}/{catalogue_id}",
+        "officialLinks": official_links,
         "studios": studios[:4],
         "staff": staff,
         "author": author,

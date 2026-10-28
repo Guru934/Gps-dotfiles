@@ -53,6 +53,11 @@ function media(overrides) {
         studios: ["MAPPA"],
         staff: [{ role: "Director", name: "Tetsuro Araki" }],
         author: "Tetsuro Araki",
+        officialLinks: [
+            { site: "Crunchyroll", url: "https://www.crunchyroll.com/series/GR751KNZY" },
+            { site: "Unsafe", url: "http://example.com/watch" },
+            { site: "Crunchyroll duplicate", url: "https://www.crunchyroll.com/series/GR751KNZY" }
+        ],
         isAdult: false,
         g: ["#0b1030", "#2a1b5e", "#0e4a6b"]
     }, overrides || {});
@@ -146,6 +151,9 @@ check("media is sanitized for cards and detail pages", () => {
     assert.strictEqual(item.scoreLabel, "8.5");
     assert.deepStrictEqual(Array.from(item.g), Array.from(M.gradientFor("anime", 16498)));
     assert.strictEqual(item.description, "<p>Raw</p>");
+    assert.strictEqual(item.officialLinks.length, 1);
+    assert.strictEqual(item.officialLinks[0].site, "Crunchyroll");
+    assert.strictEqual(item.officialLinks[0].url, "https://www.crunchyroll.com/series/GR751KNZY");
     const filtered = M.sanitizeMedia("anime", media({ genres: ["Action", "Ecchi", "Not A Genre"] }));
     assert.deepStrictEqual(Array.from(filtered.genres), ["Action"]);
 });

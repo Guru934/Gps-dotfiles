@@ -88,6 +88,12 @@ def raw_anime(**overrides):
                 {"role": "Original Creator", "node": {"name": {"full": "Hajime Isayama"}}},
             ]
         },
+        "externalLinks": [
+            {"id": 1, "url": "https://www.crunchyroll.com/series/GR751KNZY", "site": "Crunchyroll", "type": "STREAMING"},
+            {"id": 2, "url": "https://en.wikipedia.org/wiki/Attack_on_Titan", "site": "Wikipedia", "type": "INFO"},
+            {"id": 3, "url": "http://example.com/watch", "site": "Unsafe HTTP", "type": "STREAMING"},
+            {"id": 4, "url": "https://www.crunchyroll.com/series/GR751KNZY", "site": "Crunchyroll duplicate", "type": "STREAMING"},
+        ],
     }
     media.update(overrides)
     return media
@@ -310,6 +316,10 @@ class MediaNormalizationTests(unittest.TestCase):
         self.assertNotIn("Not A Genre", item["genres"])
         self.assertEqual(item["description"], "A grim tale of survival.\nSecond line.")
         self.assertEqual(item["siteUrl"], "https://anilist.co/anime/16498")
+        self.assertEqual(item["officialLinks"], [{
+            "site": "Crunchyroll",
+            "url": "https://www.crunchyroll.com/series/GR751KNZY",
+        }])
         self.assertTrue(item["cover"].startswith("https://s4.anilist.co/"))
         self.assertFalse(item["isAdult"])
 

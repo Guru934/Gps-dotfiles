@@ -111,6 +111,22 @@ function staffList(value) {
     return out;
 }
 
+function officialLinks(value) {
+    if (!isArrayLike(value)) return [];
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < value.length && out.length < 6; i++) {
+        var raw = value[i];
+        if (!raw || typeof raw !== "object") continue;
+        var site = cleanText(raw.site, 80);
+        var url = safeUrl(raw.url, false);
+        if (!site || !url || seen[url]) continue;
+        seen[url] = true;
+        out.push({ site: site, url: url });
+    }
+    return out;
+}
+
 function gradientFor(kind, catalogueId) {
     var index = Math.abs(integer(catalogueId, 0, 0, 2000000000)) % GRADIENTS.length;
     if (kind === "manga") index = (index + 2) % GRADIENTS.length;
@@ -303,6 +319,7 @@ function sanitizeMedia(kind, raw) {
         coverColor: HEX_RE.test(String(raw.coverColor || "")) ? raw.coverColor : "",
         banner: safeImage(raw.banner),
         siteUrl: "https://anilist.co/" + safeKind + "/" + catalogueId,
+        officialLinks: officialLinks(raw.officialLinks),
         studios: stringList(raw.studios, 4, 100),
         staff: staff,
         author: cleanText(raw.author, 200),

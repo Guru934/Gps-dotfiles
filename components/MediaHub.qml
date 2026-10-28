@@ -17,6 +17,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
 import QtMultimedia
+import QtQuick.Dialogs
 import Quickshell
 import Quickshell.Io
 import "MusicQueue.js" as MusicQueue
@@ -51,6 +52,9 @@ Item {
     property bool showCloseButton: false
     // Set false to skip loading remote artwork (gradient fallbacks are used instead).
     property bool loadRemoteArt: true
+    property bool toolsStatusReady: false
+    property var toolStatus: ({})
+    property string toolsError: ""
     // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Music · 5 Downloads · 6 My Library
     property int page: 0
 
@@ -154,7 +158,21 @@ Item {
         onSearchSucceeded: (payload, request) => root.handleMusicSearch(payload, request)
         onSearchFailed: (message, code, request) => root.handleMusicSearchFailure(message, code, request)
     }
-    Component.onCompleted: musicBackend.checkStatus()
+    MediaHubTools {
+        id: toolsBackend
+        onStatusFinished: (status) => {
+            root.toolsStatusReady = status !== null
+            root.toolStatus = status || ({})
+            root.toolsError = status === null ? toolsBackend.error : ""
+        }
+        onCommandReady: (payload, action) => root.handleToolCommand(payload, action)
+        onCommandFailed: (message, code, action) => root.handleToolFailure(message, code, action)
+    }
+
+    Component.onCompleted: {
+        musicBackend.checkStatus()
+        toolsBackend.checkStatus()
+    }
 
     // ================================================================
     //  ANILIST CATALOGUES + PERSISTED MEDIA LIBRARY
@@ -720,6 +738,85 @@ Item {
             notify("A wallpaper apply is already running.", "info")
         }
     }
+    function toolPlayers() {
+        return root.toolStatus && root.toolStatus.players && typeof root.toolStatus.players.length === "number"
+            ? root.toolStatus.players : []
+    }
+    function toolTerminals() {
+        return root.toolStatus && root.toolStatus.terminals && typeof root.toolStatus.terminals.length === "number"
+            ? root.toolStatus.terminals : []
+    }
+    function toolGuidance(key) {
+        return root.toolStatus && root.toolStatus.guidance && root.toolStatus.guidance[key]
+            ? String(root.toolStatus.guidance[key]) : ""
+    }
+    function validToolCommand(value) {
+        if (!value || typeof value.length !== "number" || value.length < 1 || value.length > 16)
+            return false
+        for (var i = 0; i < value.length; i++) {
+            if (typeof value[i] !== "string" || value[i] === "" || value[i].length > 4096)
+                return false
+        }
+        return true
+    }
+    function toolCommandList(value) {
+        var command = []
+        for (var i = 0; i < value.length; i++) command.push(String(value[i]))
+        return command
+    }
+    function launchAniCli() {
+        if (!root.toolsStatusReady) {
+            notify("Still checking optional playback tools. Try again in a moment.", "info")
+            return
+        }
+        if (!toolsBackend.prepareAniCli())
+            notify("A playback action is already being prepared.", "info")
+    }
+    function chooseLocalVideo() {
+        localVideoDialog.open()
+    }
+    function launchLocalVideo(path) {
+        if (!path) return
+        if (!root.toolsStatusReady) {
+            notify("Still checking optional playback tools. Try again in a moment.", "info")
+            return
+        }
+        if (!toolsBackend.prepareLocalVideo(path))
+            notify("A playback action is already being prepared.", "info")
+    }
+    function handleToolCommand(payload, action) {
+        if (!payload || !root.validToolCommand(payload.command)) {
+            notify("The playback helper did not return a valid launch command.", "warn")
+            return
+        }
+        Quickshell.execDetached(root.toolCommandList(payload.command))
+        if (action === "ani-cli") {
+            notify("Opened ani-cli in " + (payload.terminal && payload.terminal.label ? payload.terminal.label : "a terminal") + ". Choose a title in its interactive menu.", "ok")
+            logActivity("Opened ani-cli externally")
+        } else {
+            notify(payload.message || "Opened the selected video in an external player.", "ok")
+            logActivity("Opened local video: " + (payload.path || ""))
+        }
+    }
+    function handleToolFailure(message, code, action) {
+        var text = String(message || "The external playback tool could not be started.")
+        var guidance = code === "ani_cli_missing" ? toolGuidance("aniCli")
+            : (code === "terminal_missing" ? toolGuidance("terminal")
+            : (code === "player_missing" ? toolGuidance("player") : ""))
+        if (guidance !== "" && text.indexOf(guidance) === -1) text += " " + guidance
+        notify(text, "warn")
+        if (action === "ani-cli") logActivity("ani-cli launch unavailable: " + code)
+        else logActivity("Local video launch unavailable: " + code)
+    }
+    function openExternalUrl(url, site) {
+        var value = String(url || "")
+        if (!/^https:\/\/[^\s]+$/i.test(value) || value.length > 2048) {
+            notify("That provider link is not a valid HTTPS destination.", "warn")
+            return
+        }
+        sourceLinkRequested(value)
+        notify("Opening " + (site || "official provider") + "\u2026", "info")
+    }
     function openSource(w) {
         if (!w) return
         if (isCatalogueId(w.id) && w.siteUrl) {
@@ -1090,6 +1187,7 @@ Item {
             case "sync": return "\u21C4"
             case "warn": return "\u26A0"
             case "cloud": return "\u2601"
+            case "terminal": return "\u25B8_"
             case "eye": return "\u25C9"
             case "music": return "\u266A"
             case "video": return "\u25B6"
@@ -2479,6 +2577,17 @@ Item {
         }
     }
 
+    FileDialog {
+        id: localVideoDialog
+        title: "Open a local video"
+        fileMode: FileDialog.OpenFile
+        nameFilters: [
+            "Video files (*.mp4 *.mkv *.webm *.mov *.avi *.m4v *.ts *.m2ts *.ogv *.flv *.wmv)",
+            "All files (*)"
+        ]
+        onAccepted: root.launchLocalVideo(selectedFile)
+    }
+
     // ---------------------------------------------------------------- toast
     Rectangle {
         id: toast
@@ -2621,9 +2730,69 @@ Item {
                             Btn { visible: db.st === ""; icon: "plus"; label: db.isA ? "Add to Watchlist" : "Add to Reading List"
                                   onClicked: root.toggleList(db.d.kind, db.d.id, db.d.title) }
                         }
+                        ColumnLayout {
+                            visible: db.isA
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Lbl { text: "WATCH & PLAYBACK"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: db.d.officialLinks || []
+                                    delegate: Btn {
+                                        icon: "link"
+                                        label: "Watch on " + modelData.site
+                                        onClicked: root.openExternalUrl(modelData.url, modelData.site)
+                                    }
+                                }
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                faint: true
+                                font.pixelSize: 11
+                                text: db.d.officialLinks && db.d.officialLinks.length > 0
+                                    ? "Provider links come from AniList. Availability and subscriptions are controlled by the provider."
+                                    : "AniList did not provide an official streaming link for this title. Check the AniList page for current availability."
+                            }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Btn {
+                                    icon: "terminal"
+                                    label: "Launch ani-cli"
+                                    muted: !root.toolsStatusReady || !root.toolStatus.aniReady
+                                    onClicked: root.launchAniCli()
+                                }
+                                Btn { icon: "folder"; label: "Open local video\u2026"; onClicked: root.chooseLocalVideo() }
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                faint: true
+                                font.pixelSize: 11
+                                text: !root.toolsStatusReady
+                                    ? "Checking optional playback tools\u2026"
+                                    : (!root.toolStatus.aniCli
+                                        ? "ani-cli is not installed. " + root.toolGuidance("aniCli")
+                                        : (root.toolTerminals().length === 0
+                                            ? "ani-cli is installed, but no supported terminal was found. " + root.toolGuidance("terminal")
+                                            : "ani-cli and " + root.toolTerminals()[0].label + " are available. It opens an external interactive terminal menu; GPS does not scrape, download or claim playback started."))
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                faint: true
+                                font.pixelSize: 11
+                                text: root.toolPlayers().length > 0
+                                    ? "Local videos open in " + root.toolPlayers()[0].label + ". External-player progress is not reported back, so update episode progress manually."
+                                    : "No supported local video player was found. " + root.toolGuidance("player") + " Progress remains manual."
+                            }
+                        }
                         Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
                               text: "Catalogue data from AniList. GPS Media Hub doesn't stream episodes or host chapters; "
-                                    + "the official AniList page opens in your browser. Optional anime hand-off remains a future integration." }
+                                    + "provider links and the AniList page open in your browser. Local video playback uses an installed external player." }
                     }
                 }
             }
