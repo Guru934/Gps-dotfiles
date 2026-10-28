@@ -16,7 +16,8 @@ PanelWindow {
     property var hub: null
     property bool isOpen: false
     property bool closing: false
-    // Set by the bottom-right sensor while its hot zone is hovered, so the
+    property bool isPinned: false
+    // Set by the right-edge sensor while its hot zone is hovered, so the
     // small gap between the panel edge and the screen corner never counts
     // as "pointer left the console".
     property bool triggerHovered: false
@@ -28,6 +29,11 @@ PanelWindow {
     property int panelVerticalMargin: 8
     property string activeTab: "home"
 
+    // Activation strip geometry properties (mirrored from hub / defaults)
+    property int triggerWidth: root.hub ? root.hub.edgeSensorWidth : 5
+    property int triggerMarginTop: root.hub ? root.hub.edgeSensorMarginTop : 60
+    property int triggerMarginBottom: root.hub ? root.hub.edgeSensorMarginBottom : 40
+
     signal tabChanged(string tabName)
 
     readonly property bool covering: root.isOpen || root.closing
@@ -35,15 +41,20 @@ PanelWindow {
         ? Math.min(Theme.dashboardWidth, root.screen.width - 24)
         : Theme.dashboardWidth
 
-    function open() {
-        if (root.isOpen) return
+    function open(pinned) {
+        if (root.isOpen) {
+            if (pinned) root.isPinned = true
+            return
+        }
         closeResetTimer.stop()
         root.closing = false
+        root.isPinned = Boolean(pinned)
         root.isOpen = true
     }
 
     function close() {
         if (!root.isOpen) return
+        root.isPinned = false
         root.isOpen = false
         root.closing = true
         closeResetTimer.restart()
@@ -51,11 +62,11 @@ PanelWindow {
 
     function toggle() {
         if (root.isOpen) root.close()
-        else root.open()
+        else root.open(true)
     }
 
     function scheduleHide() {
-        if (!root.isOpen) return
+        if (!root.isOpen || root.isPinned) return
         if (root.triggerHovered || contentHover.hovered) {
             hideTimer.stop()
             return
@@ -64,7 +75,7 @@ PanelWindow {
     }
 
     function probePointer() {
-        if (!root.isOpen) return
+        if (!root.isOpen || root.isPinned) return
         if (root.triggerHovered) {
             hideTimer.stop()
             return
@@ -73,7 +84,7 @@ PanelWindow {
     }
 
     function finishPointerProbe(inside) {
-        if (!root.isOpen) return
+        if (!root.isOpen || root.isPinned) return
         if (inside || root.triggerHovered) {
             hideTimer.restart()
             return
@@ -96,8 +107,9 @@ PanelWindow {
             if (root.hub && typeof root.hub.closePopup === "function") root.hub.closePopup()
         } else {
             // Stop any pending auto-hide first, then stamp the cooldown so the
-            // bottom-right sensor cannot instantly reopen the drawer.
+            // edge sensor cannot instantly reopen the drawer.
             hideTimer.stop()
+            root.isPinned = false
             pointerProbe.running = false
             if (root.hub) root.hub.dashLastHide = Date.now()
         }
@@ -197,6 +209,14 @@ PanelWindow {
                 duration: root.isOpen ? root.openDuration : root.closeDuration
                 easing.type: root.isOpen ? Easing.OutCubic : Easing.InCubic
             }
+        }
+
+        TapHandler {
+            onTapped: root.isPinned = true
+        }
+
+        PointHandler {
+            onActiveChanged: if (active) root.isPinned = true
         }
 
         Dashboard {

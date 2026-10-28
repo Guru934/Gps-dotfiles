@@ -21,7 +21,11 @@ Scope {
     property bool edgeHotspotEnabled: true
     property int dashboardAutoHideMs: 400
     property int telemetryTickMs: 1000
-    // Wall-clock ms of the last Dashboard close; the bottom-right sensor
+    // Right-edge activation strip configuration
+    property int edgeSensorWidth: 5
+    property int edgeSensorMarginTop: 60      // Clears top-center island zone / corner
+    property int edgeSensorMarginBottom: 40   // Clears bottom corner widgets
+    // Wall-clock ms of the last Dashboard close; the edge sensor
     // ignores hover until a short cooldown has passed so closing the drawer
     // can never be immediately undone by the surface that appears under the
     // pointer as the panel unmaps.
@@ -135,7 +139,7 @@ Scope {
     IpcHandler {
         target: "dashboard"
         function toggle() { root.toggleDashboard() }
-        function open() { root.openDashboard() }
+        function open() { root.openDashboard(true) }
         function close() { root.closeDashboard() }
     }
 
@@ -651,9 +655,9 @@ Scope {
 
     // Dashboard dispatchers: every entry point (IPC, edge sensor, popup
     // router) routes through these to the single DashboardHost instance.
-    function openDashboard() {
+    function openDashboard(pinned) {
         aiChat.close()
-        dashboardHost.open()
+        dashboardHost.open(pinned)
     }
 
     function closeDashboard() {
@@ -1123,15 +1127,28 @@ Scope {
     }
 
     // Active shell surfaces. Tide Island remains the notification D-Bus owner.
-    // Bottom-right hot zone: a 22x22 transparent layer surface that only opens
-    // the existing DashboardHost. It sits above the island's own corner sensor
-    // so the requested surface is the System Console, not the top-center pill.
+    // Right-edge activation strip: thin vertical overlay sensor that opens
+    // DashboardHost on hover.
     PanelWindow {
         id: dashboardEdgeSensor
         screen: root.popupScreen
-        anchors { bottom: true; right: true }
-        implicitWidth: 22
-        implicitHeight: 22
+
+        // Activation strip configuration
+        property int stripWidth: root.edgeSensorWidth
+        property int stripMarginTop: root.edgeSensorMarginTop
+        property int stripMarginBottom: root.edgeSensorMarginBottom
+
+        anchors {
+            top: true
+            bottom: true
+            right: true
+        }
+        margins {
+            top: stripMarginTop
+            bottom: stripMarginBottom
+            right: 0
+        }
+        implicitWidth: stripWidth
         color: "transparent"
         // While the hotspot is disabled the surface is unmapped, so it cannot
         // capture pointer input at all (a real off, not visual-only).
@@ -1146,7 +1163,7 @@ Scope {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            acceptedButtons: Qt.NoButton
+            acceptedButtons: Qt.LeftButton
             onEntered: {
                 dashboardHost.triggerHovered = true
                 if (!root.edgeHotspotEnabled) return
@@ -1155,6 +1172,13 @@ Scope {
                     root.openDashboard()
             }
             onExited: dashboardHost.triggerHovered = false
+            onClicked: {
+                if (!dashboardHost.isOpen) {
+                    root.openDashboard(true)
+                } else {
+                    root.closeDashboard()
+                }
+            }
         }
     }
 
