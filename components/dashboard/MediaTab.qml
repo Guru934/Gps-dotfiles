@@ -14,6 +14,12 @@ import qs.components.dashboard
 Item {
     id: root
     property bool isOpen: false
+    property var hub: null
+
+    function openMediaHub() {
+        if (root.hub && typeof root.hub.openMediaHub === "function")
+            root.hub.openMediaHub()
+    }
 
     // ------------------------------------------------------------------
     // MPRIS player: same selection policy as the Home now-playing card -
@@ -227,6 +233,27 @@ Item {
     property string sinkNotice: ""
     property bool sinkBusy: false
     property int pendingSinkId: 0
+    property bool sinkExpanded: false
+
+    readonly property var defaultSink: {
+        const list = root.sinks || []
+        for (let i = 0; i < list.length; i++) {
+            if (list[i].default === true) return list[i]
+        }
+        return null
+    }
+    readonly property string outputSummary: {
+        if (root.sinkError !== "") return "device list unavailable"
+        if (root.sinks.length === 0)
+            return sinksProc.running ? "querying devices\u2026" : "no output devices"
+        if (!root.defaultSink) return "no default output"
+        return root.defaultSink.name + (root.defaultSink.available === false ? " \u00b7 unavailable" : "")
+    }
+    readonly property color outputStatusColor: {
+        if (root.sinkError !== "") return Theme.statusDanger
+        if (!root.defaultSink) return Theme.textDim
+        return root.defaultSink.available === false ? Theme.statusDanger : Theme.accentPrimary
+    }
 
     function refreshSinks() {
         if (!sinksProc.running) sinksProc.running = true
@@ -894,12 +921,132 @@ Item {
                 }
             }
 
-            // 7. Output sink selector (real PipeWire devices).
+            // 7. Media Hub entry point (one hosted window, opened by hub).
+            Rectangle {
+                id: mediaHubCard
+                Layout.fillWidth: true
+                implicitHeight: 46
+                radius: 12
+                color: mediaHubHover.hovered
+                    ? Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.10)
+                    : Qt.rgba(Theme.surfaceBase.r, Theme.surfaceBase.g, Theme.surfaceBase.b, 0.85)
+                border.width: 1
+                border.color: mediaHubCard.activeFocus
+                    ? Qt.rgba(Theme.accentSecondary.r, Theme.accentSecondary.g, Theme.accentSecondary.b, 0.65)
+                    : (mediaHubHover.hovered
+                        ? Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.45)
+                        : Theme.outlineSoft)
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Media Hub"
+                Accessible.description: "Open the standalone Media Hub"
+                Accessible.onPressAction: root.openMediaHub()
+                Keys.onSpacePressed: (event) => {
+                    root.openMediaHub()
+                    event.accepted = true
+                }
+                Keys.onReturnPressed: (event) => {
+                    root.openMediaHub()
+                    event.accepted = true
+                }
+                Keys.onEnterPressed: (event) => {
+                    root.openMediaHub()
+                    event.accepted = true
+                }
+                Behavior on color { ColorAnimation { duration: 110 } }
+                Behavior on border.color { ColorAnimation { duration: 110 } }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 10
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        radius: 8
+                        color: Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.14)
+
+                        DashIcon {
+                            anchors.centerIn: parent
+                            name: "hub"
+                            color: Theme.accentPrimary
+                            font.pixelSize: 16
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 1
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "MEDIA HUB"
+                            color: Theme.textMain
+                            font.family: Theme.fontMono
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.letterSpacing: 1
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Wallpapers, anime, manga and music"
+                            color: Theme.textDim
+                            font.family: Theme.fontMono
+                            font.pixelSize: 8
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter
+                        implicitWidth: 42
+                        implicitHeight: 20
+                        radius: 10
+                        color: Qt.rgba(Theme.accentSecondary.r, Theme.accentSecondary.g, Theme.accentSecondary.b, 0.12)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.accentSecondary.r, Theme.accentSecondary.g, Theme.accentSecondary.b, 0.32)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "OPEN"
+                            color: Theme.accentSecondary
+                            font.family: Theme.fontMono
+                            font.pixelSize: 7
+                            font.bold: true
+                            font.letterSpacing: 0.7
+                        }
+                    }
+
+                    DashIcon {
+                        Layout.alignment: Qt.AlignVCenter
+                        name: "arrow_forward"
+                        color: mediaHubHover.hovered ? Theme.accentPrimary : Theme.textDim
+                        font.pixelSize: 15
+                    }
+                }
+
+                HoverHandler {
+                    id: mediaHubHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+
+                TapHandler {
+                    onTapped: root.openMediaHub()
+                }
+            }
+
+            // 8. Collapsible output sink selector (real PipeWire devices).
             DashSurface {
                 Layout.fillWidth: true
                 fill: Qt.rgba(Theme.surfaceBase.r, Theme.surfaceBase.g, Theme.surfaceBase.b, 0.85)
                 radius: 14
                 implicitHeight: sinkCol.implicitHeight + 20
+                clip: true
 
                 ColumnLayout {
                     id: sinkCol
@@ -907,161 +1054,274 @@ Item {
                     anchors.margins: 10
                     spacing: 6
 
-                    RowLayout {
+                    Rectangle {
+                        id: sinkHeader
                         Layout.fillWidth: true
-                        spacing: 6
-
-                        DashIcon {
-                            Layout.alignment: Qt.AlignVCenter
-                            name: "headphones"
-                            color: Theme.accentSecondary
-                            font.pixelSize: 14
+                        implicitHeight: 30
+                        radius: 8
+                        color: sinkHeaderHover.hovered
+                            ? Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.55)
+                            : "transparent"
+                        border.width: sinkHeader.activeFocus ? 1 : 0
+                        border.color: Qt.rgba(Theme.accentSecondary.r, Theme.accentSecondary.g, Theme.accentSecondary.b, 0.55)
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Audio output, " + root.outputSummary
+                        Accessible.description: root.sinkExpanded
+                            ? "Expanded. Activate to collapse the device list."
+                            : "Collapsed. Activate to expand the device list."
+                        Accessible.onPressAction: root.sinkExpanded = !root.sinkExpanded
+                        Keys.onSpacePressed: (event) => {
+                            root.sinkExpanded = !root.sinkExpanded
+                            event.accepted = true
                         }
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: "AUDIO OUTPUT"
-                            color: Theme.textDim
-                            font.family: Theme.fontMono
-                            font.pixelSize: 8
-                            font.bold: true
-                            font.letterSpacing: 0.8
+                        Keys.onReturnPressed: (event) => {
+                            root.sinkExpanded = !root.sinkExpanded
+                            event.accepted = true
                         }
-
-                        Text {
-                            Layout.alignment: Qt.AlignVCenter
-                            visible: root.engineLabel.length > 0
-                            text: root.engineLabel + (root.sinkError === "" ? " \u00b7 active" : "")
-                            color: root.sinkError === "" ? Theme.accentPrimary : Theme.statusDanger
-                            font.family: Theme.fontMono
-                            font.pixelSize: 8
+                        Keys.onEnterPressed: (event) => {
+                            root.sinkExpanded = !root.sinkExpanded
+                            event.accepted = true
                         }
-                    }
+                        Behavior on color { ColorAnimation { duration: 110 } }
 
-                    Repeater {
-                        model: root.sinks
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 6
+                            spacing: 6
 
-                        delegate: Item {
-                            id: sinkRow
-                            required property var modelData
-                            required property int index
+                            DashIcon {
+                                Layout.alignment: Qt.AlignVCenter
+                                name: "headphones"
+                                color: Theme.accentSecondary
+                                font.pixelSize: 14
+                            }
 
-                            Layout.fillWidth: true
-                            implicitHeight: 32
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "AUDIO OUTPUT"
+                                color: Theme.textDim
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                                font.bold: true
+                                font.letterSpacing: 0.8
+                            }
 
-                            readonly property bool isDefault: sinkRow.modelData.default === true
-                            readonly property bool available: sinkRow.modelData.available !== false
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
+                                text: root.outputSummary
+                                color: root.defaultSink ? Theme.textMuted : Theme.textDim
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                                elide: Text.ElideRight
+                            }
 
                             Rectangle {
-                                anchors.fill: parent
-                                radius: 8
-                                color: sinkRow.isDefault
-                                    ? Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.12)
-                                    : (sinkRow.available && sinkHover.hovered && !root.sinkBusy
-                                        ? Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.8)
-                                        : "transparent")
-                                border.width: sinkRow.isDefault ? 1 : 0
-                                border.color: Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.35)
-                                Behavior on color { ColorAnimation { duration: 110 } }
+                                Layout.alignment: Qt.AlignVCenter
+                                implicitWidth: 7
+                                implicitHeight: 7
+                                radius: 4
+                                color: root.outputStatusColor
+                                Behavior on color { ColorAnimation { duration: 140 } }
                             }
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 7
-
-                                DashIcon {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    name: "speaker"
-                                    color: !sinkRow.available
-                                        ? Theme.textDim
-                                        : (sinkRow.isDefault ? Theme.accentPrimary : Theme.textDim)
-                                    font.pixelSize: 14
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: sinkRow.modelData.name
-                                    color: !sinkRow.available
-                                        ? Theme.textDim
-                                        : (sinkRow.isDefault ? Theme.textMain : Theme.textMuted)
-                                    font.family: Theme.fontUi
-                                    font.pixelSize: 10
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    visible: !sinkRow.available
-                                    text: "UNAVAILABLE"
-                                    color: Theme.textDim
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: 7
-                                    font.bold: true
-                                    font.letterSpacing: 0.8
-                                }
-
-                                Text {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    visible: sinkRow.isDefault
-                                    text: "DEFAULT"
-                                    color: Theme.accentPrimary
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: 7
-                                    font.bold: true
-                                    font.letterSpacing: 0.8
-                                }
+                            DashIcon {
+                                Layout.alignment: Qt.AlignVCenter
+                                name: "expand_more"
+                                color: sinkHeaderHover.hovered ? Theme.textMain : Theme.textDim
+                                font.pixelSize: 16
+                                rotation: root.sinkExpanded ? 180 : 0
+                                Behavior on rotation { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                             }
+                        }
 
-                            HoverHandler {
-                                id: sinkHover
-                                enabled: !root.sinkBusy
-                                cursorShape: sinkRow.available ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            }
+                        HoverHandler {
+                            id: sinkHeaderHover
+                            cursorShape: Qt.PointingHandCursor
+                        }
 
-                            TapHandler {
-                                enabled: !root.sinkBusy
-                                onTapped: root.selectSink(sinkRow.modelData.id)
-                            }
+                        TapHandler {
+                            onTapped: root.sinkExpanded = !root.sinkExpanded
                         }
                     }
 
-                    Text {
+                    Item {
+                        id: sinkBody
                         Layout.fillWidth: true
-                        visible: root.sinks.length === 0 || root.sinkError !== ""
-                        text: root.sinkError !== ""
-                            ? ("device list unavailable: " + root.sinkError)
-                            : (sinksProc.running ? "querying devices\u2026" : "no output devices found")
-                        color: root.sinkError !== "" ? Theme.statusDanger : Theme.textDim
-                        font.family: Theme.fontMono
-                        font.pixelSize: 8
-                        wrapMode: Text.WordWrap
-                    }
+                        Layout.preferredHeight: root.sinkExpanded ? sinkBodyCol.implicitHeight : 0
+                        visible: sinkBody.Layout.preferredHeight > 0.5
+                        clip: true
+                        opacity: root.sinkExpanded ? 1 : 0
+                        Behavior on Layout.preferredHeight {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
 
-                    Text {
-                        Layout.fillWidth: true
-                        visible: root.sinkActionError !== ""
-                        text: root.sinkActionError
-                        color: Theme.statusDanger
-                        font.family: Theme.fontMono
-                        font.pixelSize: 8
-                        wrapMode: Text.WordWrap
-                    }
+                        ColumnLayout {
+                            id: sinkBodyCol
+                            width: sinkCol.width
+                            spacing: 6
 
-                    Text {
-                        Layout.fillWidth: true
-                        visible: root.sinkNotice !== ""
-                        text: root.sinkNotice
-                        color: Theme.textMuted
-                        font.family: Theme.fontMono
-                        font.pixelSize: 8
-                        wrapMode: Text.WordWrap
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.engineLabel.length > 0
+                                text: root.engineLabel + (root.sinkError === "" ? " \u00b7 active" : "")
+                                color: root.sinkError === "" ? Theme.accentPrimary : Theme.statusDanger
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                            }
+
+                            Repeater {
+                                model: root.sinks
+
+                                delegate: Item {
+                                    id: sinkRow
+                                    required property var modelData
+                                    required property int index
+
+                                    Layout.fillWidth: true
+                                    implicitHeight: 32
+                                    activeFocusOnTab: !root.sinkBusy
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: sinkRow.modelData.name
+                                        + (sinkRow.isDefault ? ", default output" : "")
+                                        + (sinkRow.available ? "" : ", unavailable")
+                                    Accessible.description: sinkRow.available
+                                        ? "Activate to make this the default output."
+                                        : "This output is not available right now."
+                                    Accessible.onPressAction: root.selectSink(sinkRow.modelData.id)
+                                    Keys.onSpacePressed: (event) => {
+                                        root.selectSink(sinkRow.modelData.id)
+                                        event.accepted = true
+                                    }
+                                    Keys.onReturnPressed: (event) => {
+                                        root.selectSink(sinkRow.modelData.id)
+                                        event.accepted = true
+                                    }
+                                    Keys.onEnterPressed: (event) => {
+                                        root.selectSink(sinkRow.modelData.id)
+                                        event.accepted = true
+                                    }
+
+                                    readonly property bool isDefault: sinkRow.modelData.default === true
+                                    readonly property bool available: sinkRow.modelData.available !== false
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 8
+                                        color: sinkRow.isDefault
+                                            ? Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.12)
+                                            : (sinkRow.available && sinkHover.hovered && !root.sinkBusy
+                                                ? Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.8)
+                                                : "transparent")
+                                        border.width: sinkRow.isDefault || sinkRow.activeFocus ? 1 : 0
+                                        border.color: sinkRow.activeFocus
+                                            ? Qt.rgba(Theme.accentSecondary.r, Theme.accentSecondary.g, Theme.accentSecondary.b, 0.65)
+                                            : Qt.rgba(Theme.accentPrimary.r, Theme.accentPrimary.g, Theme.accentPrimary.b, 0.35)
+                                        Behavior on color { ColorAnimation { duration: 110 } }
+                                    }
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 8
+                                        spacing: 7
+
+                                        DashIcon {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            name: "speaker"
+                                            color: !sinkRow.available
+                                                ? Theme.textDim
+                                                : (sinkRow.isDefault ? Theme.accentPrimary : Theme.textDim)
+                                            font.pixelSize: 14
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: sinkRow.modelData.name
+                                            color: !sinkRow.available
+                                                ? Theme.textDim
+                                                : (sinkRow.isDefault ? Theme.textMain : Theme.textMuted)
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            visible: !sinkRow.available
+                                            text: "UNAVAILABLE"
+                                            color: Theme.textDim
+                                            font.family: Theme.fontMono
+                                            font.pixelSize: 7
+                                            font.bold: true
+                                            font.letterSpacing: 0.8
+                                        }
+
+                                        Text {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            visible: sinkRow.isDefault
+                                            text: "DEFAULT"
+                                            color: Theme.accentPrimary
+                                            font.family: Theme.fontMono
+                                            font.pixelSize: 7
+                                            font.bold: true
+                                            font.letterSpacing: 0.8
+                                        }
+                                    }
+
+                                    HoverHandler {
+                                        id: sinkHover
+                                        enabled: !root.sinkBusy
+                                        cursorShape: sinkRow.available ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    }
+
+                                    TapHandler {
+                                        enabled: !root.sinkBusy
+                                        onTapped: root.selectSink(sinkRow.modelData.id)
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.sinks.length === 0 || root.sinkError !== ""
+                                text: root.sinkError !== ""
+                                    ? ("device list unavailable: " + root.sinkError)
+                                    : (sinksProc.running ? "querying devices\u2026" : "no output devices found")
+                                color: root.sinkError !== "" ? Theme.statusDanger : Theme.textDim
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.sinkActionError !== ""
+                                text: root.sinkActionError
+                                color: Theme.statusDanger
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.sinkNotice !== ""
+                                text: root.sinkNotice
+                                color: Theme.textMuted
+                                font.family: Theme.fontMono
+                                font.pixelSize: 8
+                                wrapMode: Text.WordWrap
+                            }
+                        }
                     }
                 }
             }
 
-            // 8. Lyrics (manual lookup; honest idle/loading/none/error states).
+            // 9. Lyrics (manual lookup; honest idle/loading/none/error states).
             DashSurface {
                 Layout.fillWidth: true
                 fill: Qt.rgba(Theme.surfaceBase.r, Theme.surfaceBase.g, Theme.surfaceBase.b, 0.85)

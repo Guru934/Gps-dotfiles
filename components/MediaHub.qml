@@ -1,0 +1,4006 @@
+// =====================================================================
+//  MediaHub.qml — GPS Media Hub (UI + interaction prototype)
+//  One self-contained QtQuick component. Qt 6 / Quickshell friendly.
+//  Imports: QtQuick, QtQuick.Controls, QtQuick.Layouts, QtQuick.Shapes
+//
+//  PRESENT  : navigation, selection, favorites, watchlist / reading-list
+//             status, progress and mood selection; Wallhaven search plus
+//             download/cache/apply and optional GPS theme sync.
+//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, persistence and
+//             local library scanning. Remaining mock boundaries are marked
+//             with "// >>> BACKEND:" comments.
+// =====================================================================
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQuick.Shapes
+
+Item {
+    id: root
+    implicitWidth: 1280
+    implicitHeight: 800
+    clip: true
+
+    // ================================================================
+    //  PUBLIC API
+    // ================================================================
+    // >>> BACKEND: connect these from the host (e.g. in shell.qml).
+    signal wallpaperApplyRequested(var wallpaper, bool syncTheme)
+    signal themeSyncRequested(string moodId)
+    signal downloadRequested(var request)
+    signal openMediaRequested(var item)
+    signal openLocationRequested(string path)
+    signal sourceLinkRequested(string url)
+    // Emitted by the optional host close button; standalone use can ignore it.
+    signal closeRequested()
+
+    // Wallhaven is the only live catalogue in this component; other pages stay
+    // clearly marked sample data until their own backends exist.
+    property bool wallhavenConnected: false
+    property bool wallhavenUsingRemote: false
+    // Other pages remain mock data, so they must not claim a live backend just
+    // because the Wallhaven catalogue is available.
+    readonly property bool backendConnected: false
+    // Hosted mode: show the close button wired to closeRequested().
+    property bool showCloseButton: false
+    // Set false to skip loading remote artwork (gradient fallbacks are used instead).
+    property bool loadRemoteArt: true
+    // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Downloads · 5 My Library
+    property int page: 0
+
+    readonly property bool compact: width < 940
+    readonly property int sidebarW: compact ? 68 : 208
+
+    // ================================================================
+    //  SESSION STATE (in-memory only — >>> BACKEND: persist later)
+    // ================================================================
+    property string moodId: "midnight"
+    readonly property var mood: findIn(moods, moodId) || moods[0]
+    property color accent: mood.accent
+    Behavior on accent { ColorAnimation { duration: 300 } }
+
+    property var favorites: ({ wp1: true, wp3: true, an1: true, mg1: true })
+    property var statuses: ({ an1: "Watching", an2: "Watching", an9: "Completed", an4: "Plan to Watch",
+                              mg1: "Currently Reading", mg4: "Currently Reading", mg3: "Completed", mg6: "Plan to Read" })
+    property var progress: ({ an1: 14, an2: 8, an9: 24, mg1: 48, mg4: 31, mg3: 86 })
+    property var openedAt: ({ an1: 10, lv1: 9, mg1: 8, wp1: 7, au1: 6, an2: 5 })
+    property int openSeq: 10
+    property var activity: []
+    property var surprisePick: null
+    property string featuredId: "wp0"
+
+    // wallpapers page
+    property string wpQuery: ""
+    property string wpCategory: "All"
+    property string wpColor: "Any"
+    property string wpRes: "Any"
+    property string wpAspect: "Any"
+    property string wpSort: "Relevance"
+    property string wpTag: ""
+    readonly property bool sfwOnly: true
+    property int wpVisible: 6
+    property string wpSelectedId: ""
+    property string wpShownId: ""
+    property var randomRank: ({})
+
+    // Wallhaven catalogue state. Until a search succeeds, the bundled sample
+    // set remains visible and is labelled as such.
+    property var wallhavenWallpapers: []
+    property bool wallhavenLoaded: false
+    property string wallhavenError: ""
+    property string wallhavenErrorCode: ""
+    property int wallhavenPage: 0
+    property int wallhavenLastPage: 0
+    property string wallhavenSeed: ""
+    property int wallhavenSearchSeq: 0
+    property int wallhavenApplySeq: 0
+    readonly property bool wallhavenLoading: wallhavenBackend.searching
+    readonly property bool wallhavenApplying: wallhavenBackend.applying
+    onWpSelectedIdChanged: if (wpSelectedId !== "") wpShownId = wpSelectedId
+
+    Timer {
+        id: wallhavenSearchTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.runWallhavenSearch(false)
+    }
+
+    onPageChanged: {
+        if (page === 1 && !wallhavenLoaded && !wallhavenLoading)
+            wallhavenSearchTimer.restart()
+    }
+    onWpQueryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+    onWpCategoryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+    onWpColorChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+    onWpResChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+    onWpAspectChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+    onWpSortChanged: { wpVisible = 6; scheduleWallhavenSearch() }
+
+    // overlays
+    property string detailKind: ""
+    property string detailId: ""
+    property var detailShown: null
+    readonly property var detailItem: detailKind === "anime" ? findIn(animeList, detailId)
+                                    : (detailKind === "manga" ? findIn(mangaList, detailId) : null)
+    onDetailItemChanged: if (detailItem) detailShown = detailItem
+    property bool vibeOpen: false
+    property string gq: ""
+    property string pendingUrl: ""
+
+    // toast
+    property string toastText: ""
+    property string toastKind: "info"
+    property bool toastShown: false
+    Timer { id: toastTimer; interval: 3600; onTriggered: root.toastShown = false }
+
+    MediaHubWallhaven {
+        id: wallhavenBackend
+        onSearchSucceeded: (payload, request) => root.handleWallhavenSearch(payload, request)
+        onSearchFailed: (message, code, request) => root.handleWallhavenFailure(message, code, request)
+        onApplySucceeded: (payload, request) => root.handleWallhavenApplied(payload, request)
+        onApplyFailed: (message, code, request) => root.handleWallhavenApplyFailure(message, code, request)
+        onThemeSyncFinished: (ok, message) => root.handleWallhavenThemeSync(ok, message)
+    }
+
+    // ================================================================
+    //  SAMPLE DATA
+    // ================================================================
+    // Stitch artwork (remote). Any failure falls back to the gradient + glyph.
+    // >>> BACKEND: replace with Wallhaven thumbnails / local cache paths.
+    readonly property string artBase: "https://lh3.googleusercontent.com/aida-public/"
+    readonly property var artIds: ({
+        hero: "AB6AXuBFNmDHNGkY69HacDDeP4jD9L57JQ0i88karW2a4r2qMOh6ofHR9xKPYc1enF0R3Si51aZnEVaciwvnGtqFseMSWG5bLkJGloDggaGhWSxUwgS63V2xPwCpT_lFEw9p_dTcm49Zu3PsyQpiyEOVClqDzvlag823aSw8qd3zHzhH_IyidJITRgvm5Ml1qOp0-Pdj0Kt5GvEFxCOrcNEOMkw-BxRHqEcbXj5fsp1qXTs",
+        anime1: "AB6AXuAWVwdToEd5uMivBa8MeqJ8zeWUNjpl6ity0e6VDq32HRn-KyV8zop7b2FJyoUz0RhZNi3d1iEcJX0m9rK9KeHunnu09wN5ujdZn1xBWalBZzRwWuhUG18OBlCKm5NBEtiBhp5G-s6uHzDetEfZH229_0ZXPxtuTH9pqz16Ra5mIPX3I7laRYR-OD4lJaqRG8055n7siE-Ifm73_bZrgUlyHEpiiTt9RjlHQ9T5li4",
+        anime2: "AB6AXuClmixBId7QoEbBCwXbdFRtIFjdbUMceHHiRK7zE03ZAh29sArmUuZFXnTiKPkAW-yFj9M-TN6Zo4Ec1kBTaw4CvnwHJ6GXD07znVPxZm8paPEbBM_A_glj9TDjav7UOp9HSh5cYxyUQcmhp0on2tPH8db4Q-eFbFp35wPHVlQNg62nbw4bSnp62wP4yTtQH_P3i04L1B1HWZKpSUBaQqguuPGG8NnQZ1TXERtXUW8",
+        manga1: "AB6AXuCsBcQkQT_KX3KgvfoKQvf16NevhsdyV2iOBMtnyft-h58rE4Xe8zmQAwEL0N-eRoMj30YpBoiHcuCTeWcemEo_lzqRnPeMIE62RBETEVsOYL7mW9pbj2fIrnGYCl8_e-nYVfXcRjAXzXXWTwgahOiAVIi7_k7ZMpzujf_uWC98RdthYJwhyy2Hi1BSqUtTgL_mwmSSWlhC-WDGf7O-HRp-U4HXN8Tfr9MhqLC-DwI",
+        wp1: "AB6AXuD9smgvboZsJ0Jq-TdJ2Nw0Z1XCQpgIgmL89Q0-LhUdeov7geZKgK1ilJmu7Z4i_cO1yNjoIZHCYSXm0Y8QGgB0F-TwVxp4_rZVPdp32YM-ZLDwLt8TBgYXGUHwAz1M8XlisdoV8Ql99Ox4relGQU_BX-1aIG6gVZEdHUnH-mSjPsFL7Qzk6G7JAkcxUXJuLPwLws9oJA7msStH_fZrZcVM1f6zjdWrZqZQ0LLkuBE",
+        wp2: "AB6AXuBgm-Ugckfysb_pNoRbsuNO5LlDysqV10qDU1Wh_tuTLKt8eibv4lDR0IeBLrpXPS9PCX5KtXJ8ihcbbWnbuUo7_bhW_aeV-uiLAELta2dluuX0H_hPzsQWuHIETazP67WcjMPSQnV2twJrgQCcaAhChVaYOVNbjbSk0Gzxst_0GPG2Poc5lRZPU76p4RNOXx1W97GyTH2Jx7RqB0Su0GyQc9DZ2hst-8zfy78YbHg",
+        wp3: "AB6AXuD-y92-OlzXM2bpmlL9dtt0lHDGiXOmnC1yAPPEokcxxUrU7IkFXy79totTCHeFNuoQBr5UoHV13s2QWNo81aNflkIBiTq_o8fZ-cqlQcAN3Tjl43kMLK2dPzRMNa2ILACC6bQ_GemF7CA1Ox3Xhz81i6Sb1eVE0xUp7-i17_l6lYryoReVfRcsefqdykP9BM9KmXwk-9_pTwWtyhK_eHOTgHZmr0R8_N4184zLUPA",
+        wp4: "AB6AXuCwaBq86RHSAw0rMzkVdwGcQBWGcHa_1ZnnKrdPvDmf9I7cb9tWjjZ_xsfciIxE0XMPFy2ljW-mOepKK2bUTOfVrYeL6m6PQYsBjzepYUtFmKVw2d6zkPrzOrb-VeBmJ8Ext-2FeXHz8htg-nDsL4fft3_rk95w6J50-xKlVDQF0nrSaPMNeA1b2DX1uwl7J2VnMDKMUNv4XY_c03DLHHkAOTIWC2BwHkdi6iicGlM",
+        wp5: "AB6AXuBeRkX3zgWs5m453JkI9GX2IoF0OIZ5qR0uQg-V1Y0jjLBpFUoKFJdZzk2kjpE4IiyWr2UGXMyZPStzQgeq76Ba-rd1bQnEq_CMZiSAVmxc1-JHskail5JgFcFdw4MR0aTmBo7gLvjTGa8sK5MA3nMN_IITwecqZW1cDQpKWACUPWcTInEtcJsbzc-dKdDpY_djsgKKHbs4UuGQSrU7aK5hbiSGI2s5oP29yGIRxf4",
+        wp6: "AB6AXuD8EqovB2EdtUnxaYmJeegspzDVtRj27l0CAaErYiBrIzPfW6fGud7DwzMqxGZGmWSANmkJysp1xOYWV3VpRBGKdA4XxXzB7MuxMkiZrMuMt9xXL-RXPflLDosVdd0KlNNFGzmmu7d6-tX_D7mhadfr09oP_34rkVKWoKkOgv4zXSGQBbIIf8JIq664MeZ7ehJhbqI0Tmcdp8DnAxJTK41ITnGuRtBR8cKz-R7Eko"
+    })
+    function artUrl(id) {
+        if (!loadRemoteArt || !id) return ""
+        if (typeof id === "string" && /^(https:\/\/|file:\/\/)/.test(id)) return id
+        return artBase + id
+    }
+
+    readonly property var gradients: ({
+        violet: ["#0b1030", "#2a1b5e", "#0e4a6b"],
+        rose:   ["#2a1236", "#6b2c5f", "#f59e8b"],
+        slate:  ["#0b0f17", "#1f2937", "#475569"],
+        cosmic: ["#05070d", "#1b1060", "#7bd0ff"],
+        amber:  ["#1a1208", "#5a3a14", "#fbbf24"],
+        green:  ["#06150f", "#0f4a3a", "#7bd0ff"],
+        red:    ["#12060a", "#4a1218", "#f97316"],
+        teal:   ["#071a1f", "#0e4a5b", "#a78bfa"]
+    })
+
+    readonly property var moods: [
+        { id: "midnight", name: "Midnight City", desc: "Neon, rainy streets in deep blue and violet.",
+          accent: "#a78bfa", palette: ["#0f172a", "#38bdf8", "#818cf8", "#c084fc"], grad: gradients.violet, art: artIds.wp1, cat: "Cyberpunk" },
+        { id: "soft", name: "Soft Escape", desc: "Pastel colours, peaceful scenery and warm light.",
+          accent: "#f9a8d4", palette: ["#1e1b4b", "#fbcfe8", "#ddb8ff", "#fdba74"], grad: gradients.rose, art: artIds.wp2, cat: "Nature" },
+        { id: "focus", name: "Focus Mode", desc: "Minimal visuals, dark colours and very little clutter.",
+          accent: "#b6c4d9", palette: ["#0b0f17", "#1f2937", "#64748b", "#cbd5e1"], grad: gradients.slate, art: "", cat: "Minimal" },
+        { id: "cosmic", name: "Cosmic Drift", desc: "Galaxies, stars, deep space and luminous gradients.",
+          accent: "#7bd0ff", palette: ["#080e19", "#7bd0ff", "#be82f9", "#fde68a"], grad: gradients.cosmic, art: artIds.wp3, cat: "Dark" }
+    ]
+
+    readonly property var sampleWallpapers: [
+        { id: "wp0", title: "Cybernetic Shinjuku Rain", author: "gps_curated", w: 1920, h: 1200, ratio: "16:10", size: "4.2 MB PNG",
+          tags: ["cyberpunk", "rain", "night drive"], cats: ["Cyberpunk", "Dark", "Anime"], fam: ["Violet", "Cyan"],
+          pal: ["#0f172a", "#38bdf8", "#818cf8", "#c084fc", "#1e1b4b"], likes: 5320, added: 9, art: artIds.hero, g: gradients.violet,
+          desc: "Reflective puddle caustics, soft neon diffusion and a deep violet night palette." },
+        { id: "wp1", title: "Tokyo Neon Rain: Shibuya 2099", author: "aetheric_rice", w: 1920, h: 1200, ratio: "16:10", size: "3.8 MB PNG",
+          tags: ["cyberpunk", "tokyo", "night", "rain", "neon"], cats: ["Cyberpunk", "Dark"], fam: ["Violet", "Cyan"],
+          pal: ["#0f172a", "#38bdf8", "#818cf8", "#c084fc", "#1e1b4b"], likes: 4821, added: 8, art: artIds.wp1, g: gradients.violet,
+          desc: "High-contrast night cityscape with luminous accents that sit well behind bars, docks and translucent widgets." },
+        { id: "wp2", title: "Minimalist Sakura Twilight", author: "kaito_minimal", w: 2560, h: 1600, ratio: "16:10", size: "4.2 MB PNG",
+          tags: ["sakura", "fuji", "twilight", "minimal"], cats: ["Minimal", "Landscape", "Nature"], fam: ["Violet", "Rose"],
+          pal: ["#1e1b4b", "#ddb8ff", "#fbcfe8"], likes: 3902, added: 7, art: artIds.wp2, g: gradients.rose,
+          desc: "A calm silhouette of Mt. Fuji under a pastel violet and peach dusk." },
+        { id: "wp3", title: "Carina Nebula Resonance", author: "astrophile_x", w: 3840, h: 2400, ratio: "16:10", size: "7.1 MB PNG",
+          tags: ["space", "nebula", "galaxy", "stars"], cats: ["Dark", "Nature"], fam: ["Cyan", "Violet"],
+          pal: ["#080e19", "#7bd0ff", "#be82f9"], likes: 6104, added: 6, art: artIds.wp3, g: gradients.cosmic,
+          desc: "Iridescent nebula clouds and star clusters against a deep OLED-friendly void." },
+        { id: "wp4", title: "Rainy Cafe Window Overlook", author: "lofi_drifter", w: 1920, h: 1200, ratio: "16:10", size: "3.2 MB WebP",
+          tags: ["lofi", "cafe", "rain", "cozy"], cats: ["Anime"], fam: ["Amber"],
+          pal: ["#1a202b", "#fde047", "#64748b"], likes: 2877, added: 5, art: artIds.wp4, g: gradients.amber,
+          desc: "Warm amber interior light, a rain-streaked window and a quiet street outside." },
+        { id: "wp5", title: "Lofoten Aurora Borealis", author: "nord_echoes", w: 2560, h: 1600, ratio: "16:10", size: "5.4 MB PNG",
+          tags: ["aurora", "nordic", "fjord", "snow"], cats: ["Nature", "Landscape"], fam: ["Green", "Cyan"],
+          pal: ["#0d131e", "#4ade80", "#7bd0ff"], likes: 4410, added: 4, art: artIds.wp5, g: gradients.green,
+          desc: "Green and violet aurora over a glassy Arctic fjord." },
+        { id: "wp6", title: "Project 09 // Orbital Armor", author: "cyber_forge", w: 1920, h: 1200, ratio: "16:10", size: "4.9 MB WebP",
+          tags: ["mecha", "scifi", "hangar"], cats: ["Anime", "Cyberpunk", "Dark"], fam: ["Red", "Amber"],
+          pal: ["#080e19", "#f97316", "#ef4444"], likes: 3350, added: 3, art: artIds.wp6, g: gradients.red,
+          desc: "A biomechanical armoured silhouette in a dim underground hangar." },
+        { id: "wp7", title: "Quiet Ridge // Monochrome", author: "slate_field", w: 2560, h: 1440, ratio: "16:9", size: "2.1 MB PNG",
+          tags: ["minimal", "mountains", "mono"], cats: ["Minimal", "Landscape", "Dark"], fam: ["Slate"],
+          pal: ["#0b0f17", "#334155", "#94a3b8"], likes: 1980, added: 2, art: "", g: gradients.slate,
+          desc: "Layered grey ridgelines — about as low-clutter as a wallpaper gets." },
+        { id: "wp8", title: "Ultrawide Violet Dunes", author: "dune_atlas", w: 3440, h: 1440, ratio: "21:9", size: "6.0 MB PNG",
+          tags: ["dunes", "violet", "ultrawide"], cats: ["Landscape", "Nature"], fam: ["Violet", "Rose"],
+          pal: ["#1e1b4b", "#a78bfa", "#f9a8d4"], likes: 2240, added: 1, art: "", g: gradients.teal,
+          desc: "Soft violet dunes in an ultrawide frame." }
+    ].map(function (w) { return Object.assign({ kind: "wallpaper", res: w.w + "\u00d7" + w.h }, w) })
+
+    // The wallpaper browser never mixes sample records with live results.
+    readonly property var wallpapers: root.wallhavenUsingRemote ? root.wallhavenWallpapers : root.sampleWallpapers
+
+    // Ordinary categories map directly to Wallhaven. The descriptive chips
+    // map to a tag phrase inside Wallhaven's general category.
+    readonly property var wpCategories: ["All", "Anime", "Nature", "Minimal", "Cyberpunk", "Dark", "Landscape", "General", "People"]
+    readonly property var wpSorts: ["Relevance", "Popular", "Latest", "Random"]
+    readonly property var wpColors: ["Any", "Violet", "Cyan", "Amber", "Green", "Red", "Rose", "Slate"]
+    readonly property var wpResolutions: ["Any", "1920+", "2560+", "4K+"]
+    readonly property var wpAspects: ["Any", "16:10", "16:9", "21:9"]
+    readonly property var resMin: ({ "Any": 0, "1920+": 1920, "2560+": 2560, "4K+": 3840 })
+    readonly property var colorDots: ({ Violet: "#a78bfa", Cyan: "#7bd0ff", Amber: "#fbbf24", Green: "#4ade80", Red: "#ef4444", Rose: "#f9a8d4", Slate: "#94a3b8" })
+
+    readonly property var animeGenres: ["All", "Action", "Adventure", "Cyberpunk", "Drama", "Fantasy", "Mystery", "Romance", "Sci-Fi", "Slice of Life", "Thriller"]
+    readonly property var mangaGenres: ["All", "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Mystery", "Romance", "Sci-Fi", "Slice of Life", "Thriller"]
+    readonly property var animeStatuses: ["Watching", "Plan to Watch", "Completed", "Dropped"]
+    readonly property var mangaStatuses: ["Currently Reading", "Plan to Read", "Completed", "Dropped"]
+
+    readonly property var animeList: [
+        { id: "an1", title: "Aether Chronicles", year: 2026, season: "Fall 2026", genres: ["Sci-Fi", "Drama", "Mystery"], status: "Airing", rating: "8.7", total: 24, studio: "Studio Halcyon",
+          synopsis: "A salvage crew drifts into a derelict orbital station and discovers its AI has been dreaming of the people it lost. Each episode peels back another layer of the Resonance.",
+          art: artIds.anime1, g: gradients.violet, trend: 1, pop: 3, seasonal: true, added: 12 },
+        { id: "an2", title: "Ghost in the Shell: SAC", year: 2002, season: "2002", genres: ["Cyberpunk", "Sci-Fi", "Thriller"], status: "Finished", rating: "8.9", total: 26, studio: "Production I.G",
+          synopsis: "Section 9 investigates cybercrime in a near-future Japan where the line between human and machine keeps blurring.",
+          art: artIds.anime2, g: gradients.teal, trend: 6, pop: 1, seasonal: false, added: 11 },
+        { id: "an3", title: "Neon Requiem", year: 2026, season: "Fall 2026", genres: ["Cyberpunk", "Drama", "Thriller"], status: "Airing", rating: "8.3", total: 12, studio: "Lantern Works",
+          synopsis: "A courier in a rain-soaked megacity carries a memory chip that three syndicates would kill for.",
+          art: artIds.wp1, g: gradients.violet, trend: 2, pop: 5, seasonal: true, added: 10 },
+        { id: "an4", title: "Starlit Cartography", year: 2026, season: "Fall 2026", genres: ["Adventure", "Fantasy", "Sci-Fi"], status: "Airing", rating: "8.5", total: 13, studio: "Northwind Pictures",
+          synopsis: "An apprentice mapmaker charts constellations that rearrange themselves whenever someone tells a lie beneath them.",
+          art: artIds.wp3, g: gradients.cosmic, trend: 3, pop: 8, seasonal: true, added: 9 },
+        { id: "an5", title: "Hollow Meridian", year: 2026, season: "Summer 2026", genres: ["Mystery", "Thriller", "Drama"], status: "Finished", rating: "8.1", total: 12, studio: "Studio Halcyon",
+          synopsis: "A detective returns to the mining town where the sun never rose and finds the same case waiting for her.",
+          art: artIds.wp6, g: gradients.red, trend: 8, pop: 7, seasonal: false, added: 8 },
+        { id: "an6", title: "Paper Lantern Detective", year: 2026, season: "Fall 2026", genres: ["Mystery", "Slice of Life"], status: "Airing", rating: "7.9", total: 12, studio: "Mochi Frame",
+          synopsis: "A night-market detective solves small, strange problems before the lanterns burn out.",
+          art: artIds.wp4, g: gradients.amber, trend: 4, pop: 99, seasonal: true, added: 7 },
+        { id: "an7", title: "Kinetic Garden", year: 2025, season: "Spring 2025", genres: ["Action", "Adventure", "Fantasy"], status: "Finished", rating: "8.4", total: 24, studio: "Verdant Line",
+          synopsis: "Gardeners who grow living machines compete in a tournament to restore a dying world.",
+          art: artIds.wp5, g: gradients.green, trend: 99, pop: 2, seasonal: false, added: 6 },
+        { id: "an8", title: "Glass Ocean Protocol", year: 2027, season: "Winter 2027", genres: ["Sci-Fi", "Romance"], status: "Upcoming", rating: "\u2014", total: 12, studio: "TBA",
+          synopsis: "Two engineers on opposite sides of a tidal-energy treaty keep exchanging messages through a failing sea cable.",
+          art: "", g: gradients.teal, trend: 7, pop: 99, seasonal: false, added: 5 },
+        { id: "an9", title: "Seven Bells of Kyoto", year: 2024, season: "Fall 2024", genres: ["Fantasy", "Drama", "Romance"], status: "Finished", rating: "8.8", total: 24, studio: "Kasumi Animation",
+          synopsis: "Seven temple bells each hold a memory; a young bell-keeper must decide which ones the city may forget.",
+          art: artIds.wp2, g: gradients.rose, trend: 99, pop: 4, seasonal: false, added: 4 },
+        { id: "an10", title: "Ashen Crown", year: 2026, season: "Fall 2026", genres: ["Action", "Fantasy", "Drama"], status: "Airing", rating: "8.2", total: 24, studio: "Ironbark",
+          synopsis: "A disgraced knight carries the last ember of a fallen kingdom across a frozen continent.",
+          art: "", g: gradients.slate, trend: 5, pop: 99, seasonal: true, added: 3 },
+        { id: "an11", title: "Quiet Orbit", year: 2023, season: "Winter 2023", genres: ["Slice of Life", "Sci-Fi"], status: "Finished", rating: "8.0", total: 12, studio: "Mochi Frame",
+          synopsis: "Four residents of a small orbital habitat share meals, repairs and the long wait for supply ships.",
+          art: "", g: gradients.cosmic, trend: 99, pop: 6, seasonal: false, added: 2 }
+    ].map(function (a) { return Object.assign({ kind: "anime" }, a) })
+
+    readonly property var mangaList: [
+        { id: "mg1", title: "Monarch of Fangs", type: "Manhwa", year: 2024, genres: ["Action", "Fantasy"], status: "Ongoing", total: 62, author: "Park Do-yun",
+          synopsis: "After a shattered dungeon swallows his guild, a hunter inherits an army of shadow soldiers and a crown he never wanted.",
+          art: artIds.manga1, g: gradients.violet, trend: 1, pop: 2, added: 20 },
+        { id: "mg2", title: "Moonlit Sovereign", type: "Manhwa", year: 2025, genres: ["Fantasy", "Drama", "Romance"], status: "Ongoing", total: 112, author: "Han Seo-jun",
+          synopsis: "A queen who only rules at night must keep her kingdom — and a secret — from the dawn court.",
+          art: artIds.wp1, g: gradients.violet, trend: 2, pop: 5, added: 19 },
+        { id: "mg3", title: "Ink & Ember", type: "Manga", year: 2022, genres: ["Drama", "Fantasy"], status: "Completed", total: 86, author: "Aoi Tachibana",
+          synopsis: "A calligrapher's brush brings the words she writes to life — and the fires she paints to burn.",
+          art: "", g: gradients.amber, trend: 99, pop: 4, added: 18 },
+        { id: "mg4", title: "Tower of Quiet Bells", type: "Manhwa", year: 2025, genres: ["Adventure", "Fantasy", "Mystery"], status: "Ongoing", total: 74, author: "Min Ha-rin",
+          synopsis: "Each floor of the tower rings a different bell; climbers who ignore the toll never come back down.",
+          art: artIds.wp2, g: gradients.rose, trend: 3, pop: 3, added: 17 },
+        { id: "mg5", title: "Salt Road Chronicle", type: "Manga", year: 2021, genres: ["Adventure", "Drama"], status: "Completed", total: 140, author: "Ren Okabe",
+          synopsis: "A caravan crosses a dried-up sea to deliver one last cargo to the end of the world.",
+          art: "", g: gradients.amber, trend: 99, pop: 6, added: 16 },
+        { id: "mg6", title: "Midnight Convenience Store", type: "Webtoon", year: 2025, genres: ["Slice of Life", "Comedy"], status: "Ongoing", total: 98, author: "Yuna Choi",
+          synopsis: "The night shift at a 24-hour store attracts ghosts, gamers and one extremely polite thief.",
+          art: artIds.wp4, g: gradients.amber, trend: 4, pop: 99, added: 15 },
+        { id: "mg7", title: "Clockwork Heartbeat", type: "Webtoon", year: 2024, genres: ["Romance", "Sci-Fi"], status: "Ongoing", total: 156, author: "Mira Lee",
+          synopsis: "A watchmaker repairs an android whose memories keep resetting at the same hour.",
+          art: "", g: gradients.teal, trend: 99, pop: 1, added: 14 },
+        { id: "mg8", title: "Ashes of the Ninth Gate", type: "Manga", year: 2026, genres: ["Action", "Thriller"], status: "Ongoing", total: 24, author: "Sora Kagami",
+          synopsis: "Eight gates have fallen. The last guardian is a retired courier with a limp and a grudge.",
+          art: artIds.wp6, g: gradients.red, trend: 5, pop: 99, added: 13 },
+        { id: "mg9", title: "Sakura Debug", type: "Webtoon", year: 2026, genres: ["Comedy", "Sci-Fi", "Slice of Life"], status: "Ongoing", total: 31, author: "Jin & Hana",
+          synopsis: "A burned-out programmer discovers her cherry tree is running a very buggy simulation.",
+          art: "", g: gradients.rose, trend: 6, pop: 99, added: 12 },
+        { id: "mg10", title: "Iron Meridian", type: "Manga", year: 2019, genres: ["Action", "Sci-Fi"], status: "Completed", total: 212, author: "Daichi Mori",
+          synopsis: "A railway that circles a ruined planet carries the last survivors — and whatever is chasing them.",
+          art: "", g: gradients.slate, trend: 99, pop: 99, added: 11 }
+    ].map(function (m) { return Object.assign({ kind: "manga" }, m) })
+
+    readonly property var mediaList: [
+        { id: "lv1", kind: "video", title: "Neon Rain Timelapse.mp4", meta: "4:12 \u00b7 1.2 GB \u00b7 MP4", art: artIds.wp1, g: gradients.violet, added: 30 },
+        { id: "lv2", kind: "video", title: "Kyoto Walk 4K.mkv", meta: "18:40 \u00b7 3.4 GB \u00b7 MKV", art: artIds.wp2, g: gradients.rose, added: 29 },
+        { id: "lv3", kind: "video", title: "Orbital Armor Teaser.webm", meta: "1:05 \u00b7 88 MB \u00b7 WebM", art: artIds.wp6, g: gradients.red, added: 28 },
+        { id: "lv4", kind: "video", title: "Lofi Study Session.mp4", meta: "52:10 \u00b7 1.9 GB \u00b7 MP4", art: artIds.wp4, g: gradients.amber, added: 27 },
+        { id: "au1", kind: "audio", title: "Midnight City Mix.flac", meta: "58:20 \u00b7 410 MB \u00b7 FLAC", art: "", g: gradients.violet, added: 26 },
+        { id: "au2", kind: "audio", title: "Rainfall Over Kabukicho.mp3", meta: "3:48 \u00b7 9 MB \u00b7 MP3", art: "", g: gradients.teal, added: 25 },
+        { id: "au3", kind: "audio", title: "Orbital Radio Ambient.opus", meta: "1:12:00 \u00b7 62 MB \u00b7 Opus", art: "", g: gradients.cosmic, added: 24 },
+        { id: "au4", kind: "audio", title: "Soft Escape Piano.m4a", meta: "4:21 \u00b7 11 MB \u00b7 M4A", art: "", g: gradients.rose, added: 23 }
+    ]
+
+    // Download queue — SAMPLE RECORDS. Progress never advances on its own.
+    property int dlSeq: 100
+    property var downloads: [
+        { id: "d1", name: "Aether Chronicles S01E14 [1080p].mp4", type: "video", format: "MP4", quality: "1080p", dest: "~/Videos/GPS", status: "downloading", progress: 0.62, size: "412 / 664 MB", error: "" },
+        { id: "d2", name: "Neon Requiem OST - Full Album.flac", type: "audio", format: "FLAC", quality: "Best", dest: "~/Music/GPS", status: "downloading", progress: 0.18, size: "96 / 530 MB", error: "" },
+        { id: "d3", name: "Starlit Cartography PV [720p].webm", type: "video", format: "WebM", quality: "720p", dest: "~/Videos/GPS", status: "queued", progress: 0, size: "~48 MB est.", error: "" },
+        { id: "d4", name: "Rainy Cafe Lofi Mix.mp3", type: "audio", format: "MP3", quality: "320k", dest: "~/Music/GPS", status: "completed", progress: 1, size: "112 MB", error: "" },
+        { id: "d5", name: "Kinetic Garden Ep 02 [1080p].mkv", type: "video", format: "MKV", quality: "1080p", dest: "~/Videos/GPS", status: "completed", progress: 1, size: "1.1 GB", error: "" },
+        { id: "d6", name: "Hollow Meridian Ep 07 [1080p].mp4", type: "video", format: "MP4", quality: "1080p", dest: "~/Videos/GPS", status: "failed", progress: 0.34, size: "\u2014", error: "HTTP 403 \u2014 the source refused the request (sample error)" }
+    ]
+
+    // ================================================================
+    //  HELPERS & ACTIONS
+    // ================================================================
+    function findIn(list, id) {
+        for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]
+        return null
+    }
+    function wallpaperById(id) { return findIn(wallpapers, id) }
+    function moodById(id) { return findIn(moods, id) || moods[0] }
+
+    function notify(msg, kind) {
+        toastText = msg
+        toastKind = kind || "info"
+        toastShown = true
+        toastTimer.restart()
+    }
+    function logActivity(text) { activity = [text].concat(activity).slice(0, 6) }
+    function go(i) { page = i; vibeOpen = false }
+
+    // --- mood / vibe ------------------------------------------------
+    function setMood(id) { moodId = id }
+    function exploreMood(id) {
+        var m = moodById(id)
+        moodId = id
+        resetWpFilters()
+        wpCategory = m.cat
+        wpVisible = 6
+        page = 1
+        vibeOpen = false
+        notify("Browsing \u201c" + m.name + "\u201d wallpapers" + (wallhavenUsingRemote ? " on Wallhaven." : " in the sample set until Wallhaven loads."), "info")
+        logActivity("Explored vibe: " + m.name)
+    }
+    function syncThemeUnavailable() {
+        themeSyncRequested(moodId)   // >>> BACKEND: GPS theme engine listens to this.
+        notify("Theme sync isn't connected yet \u2014 the request was emitted, but nothing on your desktop changed.", "warn")
+    }
+
+    // --- favorites / lists / progress ---------------------------------
+    function toggleFavorite(id, title) {
+        var f = Object.assign({}, favorites)
+        var on = !f[id]
+        if (on) f[id] = true; else delete f[id]
+        favorites = f
+        logActivity((on ? "Favorited: " : "Unfavorited: ") + title)
+    }
+    function setStatus(id, s) {
+        var m = Object.assign({}, statuses)
+        if (s === "") delete m[id]; else m[id] = s
+        statuses = m
+    }
+    function toggleList(kind, id, title) {
+        if (statuses[id]) {
+            setStatus(id, "")
+            logActivity("Removed from " + (kind === "anime" ? "watchlist: " : "reading list: ") + title)
+        } else {
+            setStatus(id, kind === "anime" ? "Plan to Watch" : "Plan to Read")
+            logActivity("Added to " + (kind === "anime" ? "watchlist: " : "reading list: ") + title)
+        }
+    }
+    function setProgress(id, n, total) {
+        var v = Math.max(0, Math.min(total, n))
+        var p = Object.assign({}, progress)
+        p[id] = v
+        progress = p
+        var s = statuses[id]
+        if (v >= total && total > 0) {
+            if (s !== "Completed") setStatus(id, "Completed")
+        } else if (v > 0 && s !== "Dropped" && s !== "Watching" && s !== "Currently Reading") {
+            setStatus(id, id.indexOf("an") === 0 ? "Watching" : "Currently Reading")
+        }
+    }
+    function markOpened(id) {
+        openSeq++
+        var o = Object.assign({}, openedAt)
+        o[id] = openSeq
+        openedAt = o
+    }
+    function openDetail(kind, id) { detailKind = kind; detailId = id }
+    function closeDetail() { detailKind = ""; detailId = "" }
+
+    // --- wallpapers -----------------------------------------------------
+    function previewWallpaper(id) { wpSelectedId = id; page = 1 }
+
+    function wallhavenCategorySpec() {
+        switch (wpCategory) {
+        case "Anime": return { code: "anime", term: "" }
+        case "General": return { code: "general", term: "" }
+        case "People": return { code: "people", term: "" }
+        case "Nature": return { code: "general", term: "nature" }
+        case "Minimal": return { code: "general", term: "minimal" }
+        case "Cyberpunk": return { code: "general", term: "cyberpunk" }
+        case "Dark": return { code: "general", term: "dark" }
+        case "Landscape": return { code: "general", term: "landscape" }
+        }
+        return { code: "all", term: "" }
+    }
+    function wallhavenSorting() {
+        if (wpSort === "Popular") return "favorites"
+        if (wpSort === "Latest") return "date_added"
+        if (wpSort === "Random") return "random"
+        return "relevance"
+    }
+    function wallhavenAtleast() {
+        if (wpRes === "1920+") return "1920x1080"
+        if (wpRes === "2560+") return "2560x1440"
+        if (wpRes === "4K+") return "3840x2160"
+        return ""
+    }
+    function wallhavenColorCode() {
+        return ({
+            Violet: "663399",
+            Cyan: "0099cc",
+            Amber: "ff9900",
+            Green: "669900",
+            Red: "cc3333",
+            Rose: "ea4c88",
+            Slate: "999999"
+        })[wpColor] || ""
+    }
+    function scheduleWallhavenSearch() {
+        if (root.page !== 1) return
+        wallhavenSearchTimer.restart()
+    }
+    function wallhavenRequest(append) {
+        if (append && (wallhavenLoading || wallhavenPage <= 0
+                       || (wallhavenWallpapers.length > 0 && wallhavenPage >= wallhavenLastPage)))
+            return null
+        var category = wallhavenCategorySpec()
+        var query = wpQuery.trim()
+        if (category.term !== "") query = query === "" ? category.term : query + " " + category.term
+        return {
+            query: query,
+            category: category.code,
+            sorting: wallhavenSorting(),
+            order: "desc",
+            atleast: wallhavenAtleast(),
+            ratios: wpAspect === "Any" ? "" : String(wpAspect).replace(":", "x"),
+            color: wallhavenColorCode(),
+            page: append ? wallhavenPage + 1 : 1,
+            seed: append ? wallhavenSeed : "",
+            append: append === true
+        }
+    }
+    function runWallhavenSearch(append) {
+        var request = wallhavenRequest(append)
+        if (!request) return
+        wallhavenSearchSeq += 1
+        request.seq = wallhavenSearchSeq
+        wallhavenError = ""
+        wallhavenErrorCode = ""
+        wallhavenBackend.search(request)
+    }
+    function retryWallhaven() {
+        wallhavenSearchTimer.stop()
+        runWallhavenSearch(false)
+    }
+    function loadMoreWallhaven() {
+        if (root.wallhavenLoading) return
+        if (wpVisible < wallpapers.length) {
+            wpVisible += 6
+        } else if (wallhavenUsingRemote && wallhavenPage < wallhavenLastPage) {
+            runWallhavenSearch(true)
+        }
+    }
+    function wallhavenGradient(index) {
+        var keys = ["violet", "rose", "cosmic", "amber", "green", "slate", "teal", "red"]
+        return gradients[keys[index % keys.length]]
+    }
+    function normalizeWallhavenWallpaper(w, index) {
+        if (!w || typeof w.id !== "string" || typeof w.full !== "string" || w.full === "") return null
+        var pal = (w.colors && w.colors.length > 0)
+            ? w.colors
+            : ["#0b0f17", "#2a1b5e", "#7bd0ff"]
+        return Object.assign({}, w, {
+            kind: "wallpaper",
+            isRemote: true,
+            art: typeof w.thumb === "string" ? w.thumb : "",
+            cats: [w.category || "General"],
+            fam: [],
+            pal: pal,
+            g: wallhavenGradient(index),
+            likes: Number(w.likes) || 0,
+            added: Number(w.added) || 0
+        })
+    }
+    function handleWallhavenSearch(payload, request) {
+        if (!request || request.seq !== wallhavenSearchSeq) return
+        var incoming = []
+        var results = (payload.results && typeof payload.results.length === "number") ? payload.results : []
+        for (var i = 0; i < results.length; i++) {
+            var mapped = normalizeWallhavenWallpaper(results[i], incoming.length)
+            if (mapped) incoming.push(mapped)
+        }
+        var firstConnect = !wallhavenConnected
+        if (request.append) {
+            var seen = {}
+            var merged = wallhavenWallpapers.slice()
+            for (var j = 0; j < merged.length; j++) seen[merged[j].id] = true
+            for (var k = 0; k < incoming.length; k++) {
+                if (!seen[incoming[k].id]) {
+                    seen[incoming[k].id] = true
+                    merged.push(incoming[k])
+                }
+            }
+            wallhavenWallpapers = merged
+            if (incoming.length > 0)
+                wpVisible = Math.min(wallhavenWallpapers.length, wpVisible + 6)
+        } else {
+            wallhavenWallpapers = incoming
+            wpVisible = 6
+            wpTag = ""
+            if (!findIn(wallhavenWallpapers, featuredId))
+                featuredId = wallhavenWallpapers.length > 0 ? wallhavenWallpapers[0].id : ""
+            if (!findIn(wallhavenWallpapers, wpSelectedId)) {
+                wpSelectedId = ""
+                wpShownId = ""
+            }
+        }
+        wallhavenPage = Number(payload.page) || request.page
+        wallhavenLastPage = Math.max(wallhavenPage, Number(payload.lastPage) || wallhavenPage)
+        wallhavenSeed = typeof payload.seed === "string" ? payload.seed : ""
+        wallhavenUsingRemote = true
+        wallhavenConnected = true
+        wallhavenLoaded = true
+        wallhavenError = ""
+        wallhavenErrorCode = ""
+        logActivity("Wallhaven: " + incoming.length + " result(s) on page " + wallhavenPage)
+        if (firstConnect)
+            notify("Wallhaven connected \u2014 showing real SFW wallpapers.", "ok")
+    }
+    function handleWallhavenFailure(message, code, request) {
+        if (!request || request.seq !== wallhavenSearchSeq) return
+        wallhavenError = message
+        wallhavenErrorCode = code
+        wallhavenConnected = false
+        notify("Wallhaven search failed: " + message, "warn")
+        logActivity("Wallhaven search failed: " + code)
+    }
+    function handleWallhavenApplied(payload, request) {
+        if (!request) return
+        wallhavenConnected = true
+        if (request.syncTheme)
+            notify("Wallpaper applied. Syncing the GPS theme\u2026", "info")
+        else
+            notify("Wallpaper applied: " + request.title, "ok")
+        logActivity("Applied Wallhaven wallpaper: " + request.title)
+    }
+    function handleWallhavenApplyFailure(message, code, request) {
+        notify("Couldn't apply wallpaper: " + message, "warn")
+        logActivity("Wallhaven apply failed: " + code)
+    }
+    function handleWallhavenThemeSync(ok, message) {
+        if (ok) {
+            notify("Wallpaper applied and GPS theme synced.", "ok")
+            logActivity("GPS theme synced after Wallhaven apply")
+        } else {
+            notify("Wallpaper applied, but GPS theme sync failed: " + message, "warn")
+            logActivity("GPS theme sync failed after Wallhaven apply")
+        }
+    }
+    function requestApply(w, sync) {
+        if (!w) return
+        if (!w.isRemote) {
+            notify("Bundled sample cards are previews only. Search Wallhaven to download and apply a wallpaper.", "warn")
+            return
+        }
+        if (!w.full) {
+            notify("This Wallhaven result has no downloadable image URL.", "warn")
+            return
+        }
+        if (wallhavenApplying) {
+            notify("Another wallpaper is still being applied. Give it a moment.", "info")
+            return
+        }
+        wallpaperApplyRequested(w, sync)
+        wallhavenApplySeq += 1
+        var started = wallhavenBackend.apply({
+            seq: wallhavenApplySeq,
+            id: w.id,
+            path: w.full,
+            title: w.title,
+            syncTheme: sync === true
+        })
+        if (started) {
+            notify("Downloading and applying \u201c" + w.title + "\u201d\u2026", "info")
+            logActivity("Applying Wallhaven wallpaper: " + w.title)
+        } else {
+            notify("A wallpaper apply is already running.", "info")
+        }
+    }
+    function openSource(w) {
+        if (!w) return
+        if (!w.isRemote || !w.source) {
+            notify("Bundled sample cards don't have a Wallhaven source page.", "warn")
+            return
+        }
+        sourceLinkRequested(w.source)
+        notify("Opening the Wallhaven source page\u2026", "info")
+    }
+    function wallpaperSourceLabel(w) {
+        return (w && w.isRemote) ? "Wallhaven" : "Bundled sample"
+    }
+    function wallpaperCardExtra(w) {
+        if (!w) return ""
+        if (w.tags && w.tags.length > 0) return "#" + w.tags.slice(0, 2).join("  #")
+        if (w.isRemote) return "Wallhaven \u00b7 SFW" + (w.likes > 0 ? " \u00b7 " + w.likes + " favorites" : "")
+        return ""
+    }
+    function shuffleWp() {
+        var r = {}
+        for (var i = 0; i < wallpapers.length; i++) r[wallpapers[i].id] = Math.random()
+        randomRank = r
+    }
+    function filteredWallpapers() {
+        if (wallhavenUsingRemote) {
+            if (wpTag === "") return wallhavenWallpapers.slice()
+            return wallhavenWallpapers.filter(function (w) {
+                return w.tags && w.tags.indexOf(wpTag) >= 0
+            })
+        }
+        var q = wpQuery.trim().toLowerCase()
+        var out = []
+        for (var i = 0; i < wallpapers.length; i++) {
+            var w = wallpapers[i]
+            if (wpCategory === "General" && w.cats.indexOf("Anime") >= 0) continue
+            if (wpCategory === "People") continue
+            if (wpCategory !== "All" && wpCategory !== "General" && w.cats.indexOf(wpCategory) < 0) continue
+            if (wpColor !== "Any" && w.fam.indexOf(wpColor) < 0) continue
+            if (resMin[wpRes] > 0 && w.w < resMin[wpRes]) continue
+            if (wpAspect !== "Any" && w.ratio !== wpAspect) continue
+            if (wpTag !== "" && w.tags.indexOf(wpTag) < 0) continue
+            if (q && (w.title + " " + w.author + " " + w.tags.join(" ")).toLowerCase().indexOf(q) < 0) continue
+            out.push(w)
+        }
+        if (wpSort === "Popular") out.sort(function (a, b) { return b.likes - a.likes })
+        else if (wpSort === "Latest") out.sort(function (a, b) { return b.added - a.added })
+        else if (wpSort === "Random") out.sort(function (a, b) { return (randomRank[a.id] || 0) - (randomRank[b.id] || 0) })
+        return out
+    }
+    function allTags() {
+        var seen = {}, out = []
+        for (var i = 0; i < wallpapers.length; i++)
+            for (var j = 0; j < wallpapers[i].tags.length; j++) {
+                var t = wallpapers[i].tags[j]
+                if (!seen[t]) { seen[t] = true; out.push(t) }
+            }
+        return out.slice(0, 14)
+    }
+    function activeWpFilters() {
+        return (wpQuery.trim() !== "" ? 1 : 0) + (wpCategory !== "All" ? 1 : 0) + (wpColor !== "Any" ? 1 : 0)
+             + (wpRes !== "Any" ? 1 : 0) + (wpAspect !== "Any" ? 1 : 0) + (wpTag !== "" ? 1 : 0)
+    }
+    function resetWpFilters() {
+        wpQuery = ""; wpCategory = "All"; wpColor = "Any"; wpRes = "Any"; wpAspect = "Any"
+        wpTag = ""; wpSort = "Relevance"; wpVisible = 6
+    }
+
+    // --- continue / counts ------------------------------------------------
+    function continueList(kind) {
+        var list = kind === "anime" ? animeList : mangaList
+        var active = kind === "anime" ? "Watching" : "Currently Reading"
+        var out = list.filter(function (m) { return statuses[m.id] === active && (progress[m.id] || 0) < m.total })
+        out.sort(function (a, b) { return (openedAt[b.id] || 0) - (openedAt[a.id] || 0) })
+        return out
+    }
+    function continueAll() { return continueList("anime").slice(0, 2).concat(continueList("manga").slice(0, 2)) }
+    function countListed(kind) {
+        var list = kind === "anime" ? animeList : mangaList, n = 0
+        for (var i = 0; i < list.length; i++) if (statuses[list[i].id]) n++
+        return n
+    }
+    function favCount() { var n = 0; for (var k in favorites) n++; return n }
+    function continueMedia(item) {
+        // >>> BACKEND: hand off to a player / reader / streaming source of the user's choice.
+        markOpened(item.id)
+        openMediaRequested(item)
+        notify("Open request emitted for \u201c" + item.title + "\u201d. No player or reader is connected in this prototype.", "info")
+        logActivity("Opened: " + item.title + " (hand-off not connected)")
+    }
+
+    // --- library ------------------------------------------------------------
+    function libEntry(src, kind, sub, added) {
+        return { kind: kind, id: src.id, title: src.title, sub: sub, art: src.art, g: src.g, added: added,
+                 opened: openedAt[src.id] || 0, fav: !!favorites[src.id] }
+    }
+    function libraryItems() {
+        var out = [], i
+        for (i = 0; i < wallpapers.length; i++) {
+            var w = wallpapers[i]
+            if (favorites[w.id]) out.push(libEntry(w, "wallpaper", w.res + " \u00b7 " + w.size, 40 + w.added))
+        }
+        for (i = 0; i < animeList.length; i++) {
+            var a = animeList[i]
+            if (statuses[a.id] || favorites[a.id])
+                out.push(libEntry(a, "anime", (statuses[a.id] || "Favorite") + " \u00b7 Ep " + (progress[a.id] || 0) + "/" + a.total, 20 + a.added))
+        }
+        for (i = 0; i < mangaList.length; i++) {
+            var m = mangaList[i]
+            if (statuses[m.id] || favorites[m.id])
+                out.push(libEntry(m, "manga", (statuses[m.id] || "Favorite") + " \u00b7 Ch " + (progress[m.id] || 0) + "/" + m.total, 20 + m.added))
+        }
+        for (i = 0; i < mediaList.length; i++) out.push(libEntry(mediaList[i], mediaList[i].kind, mediaList[i].meta, mediaList[i].added))
+        for (i = 0; i < tracks.length; i++) {
+            var tr = tracks[i]
+            if (favorites[tr.id]) out.push(libEntry(tr, "track", musicSub(tr), 60 + tr.added))
+        }
+        for (i = 0; i < stations.length; i++) {
+            var stn = stations[i]
+            if (favorites[stn.id]) out.push(libEntry(stn, "station", musicSub(stn), 60 + stn.added))
+        }
+        return out
+    }
+    readonly property var libFilterKind: ({ "Videos": "video", "Audio": "audio", "Wallpapers": "wallpaper", "Anime": "anime", "Manga & Manhwa": "manga" })
+    function libraryList(filter, sort, q) {
+        var needle = (q || "").trim().toLowerCase()
+        var items = libraryItems().filter(function (it) {
+            if (filter === "Favorites" && !it.fav) return false
+            if (filter === "Music" && it.kind !== "track" && it.kind !== "station") return false
+            if (libFilterKind[filter] && it.kind !== libFilterKind[filter]) return false
+            if (needle && it.title.toLowerCase().indexOf(needle) < 0) return false
+            return true
+        })
+        if (sort === "Recently Added") items.sort(function (a, b) { return b.added - a.added })
+        else if (sort === "Recently Opened") items.sort(function (a, b) { return b.opened - a.opened || b.added - a.added })
+        else if (sort === "Alphabetical") items.sort(function (a, b) { return a.title.localeCompare(b.title) })
+        else if (sort === "Favorites") items.sort(function (a, b) { return (b.fav ? 1 : 0) - (a.fav ? 1 : 0) || a.title.localeCompare(b.title) })
+        return items
+    }
+    function libraryLabel(kind) {
+        return kind === "wallpaper" ? "Preview" : (kind === "anime" ? "Continue Watching" : (kind === "manga" ? "Continue Reading" : (kind === "station" ? "Listen" : "Play")))
+    }
+    function libraryAction(it) {
+        if (it.kind === "wallpaper") { previewWallpaper(it.id); return }
+        if (it.kind === "track" || it.kind === "station") { var mi = musicItem(it); playNow(mi, [mi]); return }
+        continueMedia(it)
+    }
+    function libraryActivate(it) {
+        if (it.kind === "wallpaper") previewWallpaper(it.id)
+        else if (it.kind === "anime" || it.kind === "manga") openDetail(it.kind, it.id)
+    }
+    function kindLabel(kind) {
+        return ({ wallpaper: "Wallpaper", anime: "Anime", manga: "Manga", video: "Video", audio: "Audio", track: "Track", station: "Radio" })[kind] || kind
+    }
+
+    // --- downloads ----------------------------------------------------------
+    function updateDownload(id, patch) {
+        downloads = downloads.map(function (d) { return d.id === id ? Object.assign({}, d, patch) : d })
+    }
+    function removeDownload(id) { downloads = downloads.filter(function (d) { return d.id !== id }) }
+    function dlCount(status) {
+        var n = 0
+        for (var i = 0; i < downloads.length; i++) if (status === "all" || downloads[i].status === status) n++
+        return n
+    }
+    function enqueue(url, mode, format, quality, dir) {
+        // >>> BACKEND: hand the request to yt-dlp (+ FFmpeg for audio extraction / muxing).
+        var host = url.replace(/^https?:\/\//i, "").split("/")[0]
+        dlSeq++
+        var rec = { id: "d" + dlSeq, name: host + " \u2014 title resolved by yt-dlp later", type: mode, format: format, quality: quality,
+                    dest: dir, status: "queued", progress: 0, size: "waiting for backend", error: "" }
+        downloads = [rec].concat(downloads)
+        downloadRequested({ url: url, mode: mode, format: format, quality: quality, directory: dir })
+        notify("Added to the queue as \u201cqueued\u201d. Nothing downloads until a backend handles downloadRequested.", "warn")
+        logActivity("Queued URL (not started): " + host)
+    }
+    function dlAction(d, action) {
+        if (action === "pause") { updateDownload(d.id, { status: "paused" }); notify("Paused in the UI only \u2014 no real transfer exists to pause.", "info") }
+        else if (action === "resume") { updateDownload(d.id, { status: "downloading" }); notify("Resumed in the UI only \u2014 progress will not advance without a backend.", "info") }
+        else if (action === "cancel") { removeDownload(d.id); notify("Removed from the sample queue.", "info") }
+        else if (action === "remove") { removeDownload(d.id) }
+        else if (action === "retry") { notify("Retry needs the download backend (yt-dlp), which isn't connected yet.", "warn"); downloadRequested({ retry: d.id, name: d.name }) }
+        else if (action === "open") { openLocationRequested(d.dest); notify("Open-location request emitted for " + d.dest + ".", "info") }
+    }
+
+    // --- surprise me --------------------------------------------------------
+    function pickRandom(list) { return list[Math.floor(Math.random() * list.length)] }
+    function surprise() {
+        var k = pickRandom(["mood", "wallpaper", "anime", "manga", "track"])
+        if (k === "mood") {
+            var others = moods.filter(function (m) { return m.id !== moodId })
+            var m = pickRandom(others)
+            setMood(m.id)
+            surprisePick = { kind: "mood", id: m.id, title: m.name, sub: "Mood selected" }
+        } else if (k === "wallpaper") {
+            var w = pickRandom(wallpapers)
+            featuredId = w.id
+            surprisePick = { kind: "wallpaper", id: w.id, title: w.title, sub: "Featured wallpaper updated" }
+        } else if (k === "anime") {
+            var a = pickRandom(animeList)
+            surprisePick = { kind: "anime", id: a.id, title: a.title, sub: "Anime \u00b7 " + a.genres.join(", ") }
+        } else if (k === "track") {
+            var tk = pickRandom(tracks)
+            surprisePick = { kind: "track", id: tk.id, title: tk.title, sub: tk.artist + " \u00b7 " + tk.genre }
+        } else {
+            var g = pickRandom(mangaList)
+            surprisePick = { kind: "manga", id: g.id, title: g.title, sub: g.type + " \u00b7 " + g.genres.join(", ") }
+        }
+        page = 0
+        notify("Surprise: " + surprisePick.title, "ok")
+        logActivity("Surprise Me \u2192 " + surprisePick.title)
+    }
+    function openSurprise() {
+        var s = surprisePick
+        if (!s) return
+        if (s.kind === "mood") exploreMood(s.id)
+        else if (s.kind === "wallpaper") previewWallpaper(s.id)
+        else if (s.kind === "track") { var ti = findIn(tracks, s.id); playNow(ti, [ti]) }
+        else openDetail(s.kind, s.id)
+    }
+
+    // --- global search --------------------------------------------------------
+    function globalResults(query) {
+        var q = (query || "").trim()
+        if (q === "") return []
+        if (/^https?:\/\//i.test(q)) return [{ kind: "url", id: q, title: "Prepare a download for this URL", sub: q }]
+        var lq = q.toLowerCase(), out = []
+        function scan(list, kind, subFn) {
+            for (var i = 0; i < list.length; i++) {
+                var it = list[i]
+                var hay = (it.title + " " + (it.tags ? it.tags.join(" ") : "") + " " + (it.genres ? it.genres.join(" ") : "") + " " + (it.artist || "")).toLowerCase()
+                if (hay.indexOf(lq) >= 0) out.push({ kind: kind, id: it.id, title: it.title, sub: subFn(it) })
+            }
+        }
+        scan(wallpapers, "wallpaper", function (w) { return w.res + " \u00b7 " + w.author })
+        scan(animeList, "anime", function (a) { return a.season + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
+        scan(mangaList, "manga", function (m) { return m.type + " \u00b7 " + m.genres.slice(0, 2).join(", ") })
+        scan(mediaList, "media", function (m) { return m.meta })
+        scan(tracks, "track", function (t) { return t.artist + " \u00b7 " + t.genre })
+        scan(stations, "station", function (s) { return s.genre + " \u00b7 radio" })
+        return out.slice(0, 7)
+    }
+    function openResult(r) {
+        gq = ""
+        gsearch.clear()
+        if (r.kind === "url") { pendingUrl = r.id; page = pgDownloads }
+        else if (r.kind === "wallpaper") previewWallpaper(r.id)
+        else if (r.kind === "anime") { page = 2; openDetail("anime", r.id) }
+        else if (r.kind === "manga") { page = 3; openDetail("manga", r.id) }
+        else if (r.kind === "track" || r.kind === "station") { var mi2 = musicItem(r); page = pgMusic; playNow(mi2, [mi2]) }
+        else page = pgLibrary
+    }
+
+    // ================================================================
+    //  INLINE BUILDING BLOCKS
+    //  (inline components can't see root ids, so they only use properties)
+    // ================================================================
+    component Pal: QtObject {
+        readonly property color bg: "#0d131e"
+        readonly property color lowest: "#080e19"
+        readonly property color low: "#161c27"
+        readonly property color cont: "#1a202b"
+        readonly property color high: "#242a36"
+        readonly property color highest: "#2f3541"
+        readonly property color line: "#2a303c"
+        readonly property color text: "#dde2f2"
+        readonly property color dim: "#cac4d4"
+        readonly property color faint: "#948e9d"
+        readonly property color err: "#ffb4ab"
+        readonly property color ok: "#86efac"
+        readonly property color warn: "#fde047"
+        readonly property color cyan: "#7bd0ff"
+        readonly property color orchid: "#ddb8ff"
+        readonly property color onAcc: "#15112b"
+    }
+    Pal { id: pal }
+
+    component Lbl: Text {
+        property bool mono: false
+        property bool dim: false
+        property bool faint: false
+        // font.family takes one name; Qt falls back to a similar installed font if it is missing.
+        font.family: mono ? "JetBrains Mono" : "Plus Jakarta Sans"
+        font.pixelSize: 13
+        color: faint ? "#948e9d" : (dim ? "#cac4d4" : "#dde2f2")
+    }
+
+    // Icon strategy: plain Unicode glyphs (no icon font needed).
+    // To use Material Symbols / Nerd Font instead, change `g()` and `font.family` here only.
+    component Ico: Text {
+        property string name: ""
+        property color tint: "#cac4d4"
+        property int size: 16
+        function g(n) {
+            switch (n) {
+            case "home": return "\u2302"
+            case "wallpaper": return "\u25A3"
+            case "anime": return "\u25B7"
+            case "manga": return "\u25A4"
+            case "download": return "\u2193"
+            case "library": return "\u2750"
+            case "search": return "\u2315"
+            case "surprise": return "\u2726"
+            case "vibe": return "\u25D0"
+            case "heart": return "\u2665"
+            case "heartO": return "\u2661"
+            case "star": return "\u2605"
+            case "play": return "\u25B6"
+            case "pause": return "\u2016"
+            case "check": return "\u2713"
+            case "close": return "\u2715"
+            case "plus": return "+"
+            case "minus": return "\u2212"
+            case "refresh": return "\u21BB"
+            case "folder": return "\u25AD"
+            case "link": return "\u2197"
+            case "info": return "\u24D8"
+            case "grid": return "\u25A6"
+            case "list": return "\u2630"
+            case "chev": return "\u203A"
+            case "back": return "\u2039"
+            case "sync": return "\u21C4"
+            case "warn": return "\u26A0"
+            case "cloud": return "\u2601"
+            case "eye": return "\u25C9"
+            case "music": return "\u266A"
+            case "video": return "\u25B6"
+            case "tag": return "#"
+            case "dot": return "\u25CF"
+            case "desktop": return "\u25AD"
+            default: return "\u2022"
+            }
+        }
+        text: g(name)
+        color: tint
+        font.pixelSize: size
+        font.family: "DejaVu Sans"
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+    }
+
+    component Btn: Rectangle {
+        id: b
+        property string label: ""
+        property string icon: ""
+        property string kind: "secondary"   // primary | secondary | ghost | danger
+        property color accent: "#a78bfa"
+        property bool compact: false
+        property bool muted: false
+        signal clicked()
+        readonly property color fg: kind === "primary" ? "#15112b" : (kind === "danger" ? "#ffb4ab" : "#dde2f2")
+        implicitHeight: compact ? 30 : 38
+        implicitWidth: brow.implicitWidth + (compact ? 22 : 30)
+        radius: compact ? 9 : 11
+        color: kind === "primary" ? (bma.containsMouse ? Qt.lighter(accent, 1.12) : accent)
+             : kind === "ghost" ? (bma.containsMouse ? "#242a36" : "transparent")
+             : kind === "danger" ? (bma.containsMouse ? "#5a1a1d" : "#3b1417")
+             : (bma.containsMouse ? "#2f3541" : "#242a36")
+        border.width: kind === "secondary" ? 1 : 0
+        border.color: "#363d4b"
+        opacity: muted ? 0.55 : 1
+        scale: bma.pressed ? 0.97 : 1
+        Behavior on color { ColorAnimation { duration: 150 } }
+        Behavior on scale { NumberAnimation { duration: 90 } }
+        Row {
+            id: brow
+            anchors.centerIn: parent
+            spacing: 7
+            Ico { visible: b.icon !== ""; name: b.icon; size: b.compact ? 12 : 14; tint: b.fg; anchors.verticalCenter: parent.verticalCenter }
+            Lbl { visible: b.label !== ""; text: b.label; color: b.fg; font.pixelSize: b.compact ? 12 : 13; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter }
+        }
+        MouseArea { id: bma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: b.clicked() }
+    }
+
+    component IconBtn: Rectangle {
+        id: ib
+        property string icon: ""
+        property string tip: ""
+        property bool active: false
+        property color tint: "#cac4d4"
+        property color activeTint: "#ffb4ab"
+        property int box: 32
+        signal clicked()
+        implicitWidth: box
+        implicitHeight: box
+        radius: box / 2
+        color: ima.containsMouse ? "#333945" : "#d9242a36"
+        scale: ima.pressed ? 0.92 : 1
+        Behavior on color { ColorAnimation { duration: 140 } }
+        Behavior on scale { NumberAnimation { duration: 90 } }
+        Ico { anchors.centerIn: parent; name: ib.icon; size: Math.round(ib.box * 0.45); tint: ib.active ? ib.activeTint : ib.tint }
+        MouseArea { id: ima; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ib.clicked() }
+        ToolTip.visible: ima.containsMouse && ib.tip !== ""
+        ToolTip.text: ib.tip
+        ToolTip.delay: 500
+    }
+
+    component Chip: Rectangle {
+        id: ch
+        property string label: ""
+        property string icon: ""
+        property string badge: ""
+        property bool active: false
+        property color accent: "#a78bfa"
+        property color dot: "transparent"
+        signal clicked()
+        implicitHeight: 30
+        implicitWidth: crow.implicitWidth + 24
+        radius: 15
+        color: active ? Qt.alpha(accent, 0.20) : (cma.containsMouse ? "#242a36" : "#1a202b")
+        border.width: 1
+        border.color: active ? Qt.alpha(accent, 0.75) : "#2a303c"
+        Behavior on color { ColorAnimation { duration: 150 } }
+        Behavior on border.color { ColorAnimation { duration: 150 } }
+        Row {
+            id: crow
+            anchors.centerIn: parent
+            spacing: 6
+            Rectangle { visible: ch.dot.a > 0; width: 9; height: 9; radius: 4.5; color: ch.dot; anchors.verticalCenter: parent.verticalCenter }
+            Ico { visible: ch.icon !== ""; name: ch.icon; size: 12; tint: ch.active ? ch.accent : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
+            Lbl { text: ch.label; font.pixelSize: 12; font.weight: ch.active ? Font.DemiBold : Font.Medium; color: ch.active ? "#f4efff" : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
+            Rectangle {
+                visible: ch.badge !== ""
+                height: 16; width: bdg.implicitWidth + 10; radius: 8
+                color: "#40000000"
+                anchors.verticalCenter: parent.verticalCenter
+                Lbl { id: bdg; anchors.centerIn: parent; text: ch.badge; mono: true; font.pixelSize: 10; faint: true }
+            }
+        }
+        MouseArea { id: cma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ch.clicked() }
+    }
+
+    component Tag: Rectangle {
+        id: tg
+        property string text: ""
+        property color tint: "#cac4d4"
+        property int px: 10
+        implicitHeight: px + 10
+        implicitWidth: tgl.implicitWidth + 14
+        radius: 6
+        color: Qt.alpha(tint, 0.14)
+        Lbl { id: tgl; anchors.centerIn: parent; text: tg.text; mono: true; font.pixelSize: tg.px; color: tg.tint }
+    }
+
+    component Bar: Rectangle {
+        property real value: 0
+        property color tint: "#a78bfa"
+        implicitHeight: 6
+        radius: height / 2
+        color: "#080e19"
+        Rectangle {
+            width: parent.width * Math.max(0, Math.min(1, parent.value))
+            height: parent.height
+            radius: parent.radius
+            color: parent.tint
+            Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+        }
+    }
+
+    component Toggle: Rectangle {
+        id: tgl2
+        property bool checked: false
+        property color accent: "#a78bfa"
+        signal toggled()
+        implicitWidth: 38
+        implicitHeight: 22
+        radius: 11
+        color: checked ? accent : "#2f3541"
+        Behavior on color { ColorAnimation { duration: 160 } }
+        Rectangle {
+            width: 16; height: 16; radius: 8; y: 3
+            x: tgl2.checked ? 19 : 3
+            color: tgl2.checked ? "#15112b" : "#cac4d4"
+            Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: tgl2.toggled() }
+    }
+
+    component VScroll: ScrollBar {
+        id: sb
+        policy: ScrollBar.AsNeeded
+        implicitWidth: 8
+        contentItem: Rectangle {
+            implicitWidth: 5
+            radius: 3
+            color: "#5b5568"
+            opacity: sb.pressed ? 0.95 : (sb.active || sb.hovered ? 0.7 : 0.0)
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+        }
+        background: Item {}
+    }
+
+    component Wrap: Item {
+        id: wr
+        default property alias content: fl.data
+        property real spacing: 8
+        implicitHeight: fl.implicitHeight
+        Flow { id: fl; width: wr.width; spacing: wr.spacing }
+    }
+
+    component Card: Rectangle {
+        id: cd
+        property int pad: 18
+        property int gap: 12
+        property color tint: "transparent"
+        default property alias content: inner.data
+        color: tint.a > 0 ? Qt.alpha(tint, 0.07) : "#161c27"
+        radius: 16
+        border.width: 1
+        border.color: tint.a > 0 ? Qt.alpha(tint, 0.28) : "#232a37"
+        implicitHeight: inner.implicitHeight + pad * 2
+        ColumnLayout { id: inner; x: cd.pad; y: cd.pad; width: cd.width - cd.pad * 2; spacing: cd.gap }
+    }
+
+    component SearchField: Rectangle {
+        id: sf
+        property alias text: input.text
+        property string placeholder: ""
+        property string icon: "search"
+        property color accent: "#a78bfa"
+        signal edited()
+        signal submitted()
+        readonly property bool focused: input.activeFocus
+        function clear() { input.text = "" }
+        function focusField() { input.forceActiveFocus() }
+        implicitHeight: 38
+        radius: 12
+        color: input.activeFocus ? "#242a36" : "#1a202b"
+        border.width: 1
+        border.color: input.activeFocus ? sf.accent : "#2c3340"
+        Behavior on color { ColorAnimation { duration: 150 } }
+        Behavior on border.color { ColorAnimation { duration: 150 } }
+        Ico { id: sfIcon; x: 12; anchors.verticalCenter: parent.verticalCenter; name: sf.icon; size: 15; tint: "#948e9d" }
+        TextInput {
+            id: input
+            anchors { left: sfIcon.right; leftMargin: 8; right: sfClear.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
+            color: "#dde2f2"
+            selectionColor: Qt.alpha(sf.accent, 0.45)
+            selectedTextColor: "#ffffff"
+            font.pixelSize: 13
+            font.family: "Plus Jakarta Sans"
+            clip: true
+            selectByMouse: true
+            onTextEdited: sf.edited()
+            onAccepted: sf.submitted()
+            Keys.onEscapePressed: input.focus = false
+        }
+        Lbl {
+            anchors.fill: input
+            verticalAlignment: Text.AlignVCenter
+            visible: input.text.length === 0
+            text: sf.placeholder
+            color: "#6f6a78"
+            elide: Text.ElideRight
+        }
+        Item {
+            id: sfClear
+            width: 22; height: 22
+            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            visible: input.text.length > 0
+            Ico { anchors.centerIn: parent; name: "close"; size: 11; tint: "#948e9d" }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { input.text = ""; sf.edited(); input.forceActiveFocus() } }
+        }
+    }
+
+    // Artwork with a gradient fallback (used while loading, offline, or on error).
+    component Art: Item {
+        id: art
+        property string src: ""
+        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property string glyph: ""
+        property real radiusPx: 0
+        property color frameColor: "#161c27"
+        property real zoom: 1
+        clip: true
+        Item {
+            anchors.fill: parent
+            scale: art.zoom
+            Behavior on scale { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: art.grad[0] }
+                    GradientStop { position: 1.0; color: art.grad[1] }
+                }
+            }
+            Rectangle {
+                anchors.fill: parent
+                opacity: 0.6
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: art.grad[2] }
+                }
+            }
+            Ico {
+                anchors.centerIn: parent
+                visible: img.status !== Image.Ready
+                name: art.glyph
+                size: Math.round(Math.max(16, Math.min(art.width, art.height) * 0.28))
+                tint: "#33ffffff"
+            }
+            Image {
+                id: img
+                anchors.fill: parent
+                source: art.src
+                asynchronous: true
+                cache: true
+                fillMode: Image.PreserveAspectCrop
+                sourceSize.width: 720
+                opacity: status === Image.Ready ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 260 } }
+            }
+        }
+        // Rounded corners without shaders: paint the four corner slivers in the surface colour.
+        Shape {
+            anchors.fill: parent
+            visible: art.radiusPx > 0
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                fillColor: art.frameColor
+                strokeColor: "transparent"
+                strokeWidth: -1
+                fillRule: ShapePath.OddEvenFill
+                startX: 0; startY: 0
+                PathLine { x: art.width; y: 0 }
+                PathLine { x: art.width; y: art.height }
+                PathLine { x: 0; y: art.height }
+                PathLine { x: 0; y: 0 }
+                PathMove { x: art.radiusPx; y: 0 }
+                PathLine { x: art.width - art.radiusPx; y: 0 }
+                PathArc { x: art.width; y: art.radiusPx; radiusX: art.radiusPx; radiusY: art.radiusPx }
+                PathLine { x: art.width; y: art.height - art.radiusPx }
+                PathArc { x: art.width - art.radiusPx; y: art.height; radiusX: art.radiusPx; radiusY: art.radiusPx }
+                PathLine { x: art.radiusPx; y: art.height }
+                PathArc { x: 0; y: art.height - art.radiusPx; radiusX: art.radiusPx; radiusY: art.radiusPx }
+                PathLine { x: 0; y: art.radiusPx }
+                PathArc { x: art.radiusPx; y: 0; radiusX: art.radiusPx; radiusY: art.radiusPx }
+            }
+        }
+    }
+
+    component Spec: Rectangle {
+        property string k: ""
+        property string v: ""
+        implicitHeight: 28
+        radius: 7
+        color: "#1a202b"
+        Lbl { x: 10; anchors.verticalCenter: parent.verticalCenter; text: parent.k; mono: true; faint: true; font.pixelSize: 11 }
+        Lbl { anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter } width: parent.width * 0.62
+              horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; text: parent.v; mono: true; font.pixelSize: 11 }
+    }
+
+    // Generic grid card used by Wallpapers, Anime, Manga and Library.
+    component MediaCard: Rectangle {
+        id: mc
+        property string title: ""
+        property string meta: ""
+        property string extra: ""
+        property string badge: ""
+        property string corner: ""
+        property string userStatus: ""
+        property string src: ""
+        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property string glyph: ""
+        property real aspect: 1.6
+        property bool selected: false
+        property bool fav: false
+        property bool showList: false
+        property bool listed: false
+        property bool showPreview: false
+        property string previewIcon: "eye"
+        property string previewTip: "Preview"
+        property string primaryLabel: ""
+        property string primaryIcon: "play"
+        property color accent: "#a78bfa"
+        signal activated()
+        signal primary()
+        signal previewed()
+        signal favToggled()
+        signal listToggled()
+        readonly property real artW: width - 12
+        readonly property real artH: artW / aspect
+        implicitHeight: artH + 12 + 64
+        height: implicitHeight
+        radius: 14
+        color: hh.hovered ? "#1f2631" : "#1a202b"
+        border.width: selected ? 2 : 1
+        border.color: selected ? accent : (hh.hovered ? Qt.alpha(accent, 0.5) : "#262d3a")
+        scale: hh.hovered ? 1.012 : 1
+        Behavior on color { ColorAnimation { duration: 160 } }
+        Behavior on border.color { ColorAnimation { duration: 160 } }
+        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        HoverHandler { id: hh }
+        Art {
+            id: cardArt
+            x: 6; y: 6
+            width: mc.artW; height: mc.artH
+            radiusPx: 10
+            frameColor: mc.color
+            src: mc.src; grad: mc.grad; glyph: mc.glyph
+            zoom: hh.hovered ? 1.05 : 1
+        }
+        Tag { visible: mc.badge !== ""; x: 14; y: 14; text: mc.badge; tint: mc.accent; px: 9 }
+        Tag { visible: mc.corner !== ""; anchors { right: cardArt.right; rightMargin: 8 } y: 14; text: mc.corner; tint: "#7bd0ff"; px: 9 }
+        Tag {
+            visible: mc.userStatus !== ""
+            x: 14; y: cardArt.y + cardArt.height - height - 8
+            opacity: hh.hovered ? 0 : 1
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+            text: mc.userStatus; tint: "#86efac"; px: 9
+        }
+        Rectangle {
+            x: cardArt.x; y: cardArt.y + cardArt.height * 0.45
+            width: cardArt.width; height: cardArt.height * 0.55
+            radius: 10
+            opacity: hh.hovered ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 1.0; color: "#e6080e19" }
+            }
+        }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mc.activated() }
+        RowLayout {
+            x: 14
+            y: cardArt.y + cardArt.height - 42
+            width: mc.artW - 16
+            spacing: 6
+            opacity: hh.hovered ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+            Btn { visible: mc.primaryLabel !== ""; compact: true; kind: "primary"; accent: mc.accent; label: mc.primaryLabel; icon: mc.primaryIcon; onClicked: mc.primary() }
+            Item { Layout.fillWidth: true }
+            IconBtn { visible: mc.showPreview; box: 30; icon: mc.previewIcon; tip: mc.previewTip; onClicked: mc.previewed() }
+            IconBtn { visible: mc.showList; box: 30; icon: mc.listed ? "check" : "plus"; tip: mc.listed ? "Remove from list" : "Add to list"; active: mc.listed; activeTint: "#86efac"; onClicked: mc.listToggled() }
+            IconBtn { box: 30; icon: mc.fav ? "heart" : "heartO"; tip: mc.fav ? "Unfavorite" : "Favorite"; active: mc.fav; onClicked: mc.favToggled() }
+        }
+        Lbl { x: 12; y: cardArt.y + cardArt.height + 9; width: mc.width - 24; text: mc.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+        Lbl { x: 12; y: cardArt.y + cardArt.height + 28; width: mc.width - 24; text: mc.meta; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 11 }
+        Lbl { x: 12; y: cardArt.y + cardArt.height + 45; width: mc.width - 24; text: mc.extra; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+    }
+
+    // Continue Watching / Reading shelf card.
+    component ShelfCard: Rectangle {
+        id: sc
+        property string title: ""
+        property string sub: ""
+        property string badge: ""
+        property string src: ""
+        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property string glyph: ""
+        property real value: 0
+        property string valueLabel: ""
+        property string btnLabel: "Continue"
+        property string btnIcon: "play"
+        property color accent: "#a78bfa"
+        signal activated()
+        signal cont()
+        readonly property real artW: width - 12
+        readonly property real artH: artW * 9 / 16
+        implicitHeight: artH + 6 + 78 + 30 + 10
+        height: implicitHeight
+        radius: 14
+        color: shh.hovered ? "#1f2631" : "#1a202b"
+        border.width: 1
+        border.color: shh.hovered ? Qt.alpha(accent, 0.5) : "#262d3a"
+        Behavior on color { ColorAnimation { duration: 160 } }
+        Behavior on border.color { ColorAnimation { duration: 160 } }
+        HoverHandler { id: shh }
+        Art { id: shArt; x: 6; y: 6; width: sc.artW; height: sc.artH; radiusPx: 10; frameColor: sc.color; src: sc.src; grad: sc.grad; glyph: sc.glyph; zoom: shh.hovered ? 1.05 : 1 }
+        Tag { visible: sc.badge !== ""; x: 14; y: 14; text: sc.badge; tint: sc.accent; px: 9 }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sc.activated() }
+        Lbl { x: 12; y: shArt.y + shArt.height + 10; width: sc.width - 24; text: sc.title; elide: Text.ElideRight; font.pixelSize: 14; font.weight: Font.DemiBold }
+        Lbl { x: 12; y: shArt.y + shArt.height + 29; width: sc.width - 24; text: sc.sub; elide: Text.ElideRight; dim: true; font.pixelSize: 12 }
+        Bar { x: 12; y: shArt.y + shArt.height + 52; width: sc.width - 24; height: 5; value: sc.value; tint: sc.accent }
+        Lbl { x: 12; y: shArt.y + shArt.height + 60; text: sc.valueLabel; mono: true; faint: true; font.pixelSize: 10 }
+        Btn { x: 12; y: shArt.y + shArt.height + 78; width: sc.width - 24; compact: true; label: sc.btnLabel; icon: sc.btnIcon; accent: sc.accent; onClicked: sc.cont() }
+    }
+
+    // ================================================================
+    //  MUSIC — sample data + mock playback state
+    //  Phase 2 targets: Jamendo API (tracks + direct streaming) and
+    //  Radio Browser (endless genre stations).
+    //  >>> BACKEND: replace `tracks` / `stations` with API results and drive
+    //      `playing` / `playPos` from a real audio engine (QtMultimedia, mpv...).
+    // ================================================================
+    readonly property int pgMusic: 4
+    readonly property int pgDownloads: 5
+    readonly property int pgLibrary: 6
+
+    readonly property var musicSources: [
+        { id: "jamendo", name: "Jamendo", sub: "Free Creative Commons music", icon: "music", accent: "#a78bfa", note: "Phase 2 \u00b7 API + direct streaming" },
+        { id: "radio", name: "Internet Radio", sub: "Endless genre stations via Radio Browser", icon: "cloud", accent: "#7bd0ff", note: "Phase 2 \u00b7 Radio Browser" },
+        { id: "local", name: "Local files", sub: "Your own music folders", icon: "folder", accent: "#ddb8ff", note: "Later" }
+    ]
+    readonly property var musicMoods: [
+        { name: "Night Drive", vibe: "midnight", accent: "#a78bfa", g: gradients.violet, desc: "Neon synths, wet asphalt" },
+        { name: "Dreamy", vibe: "soft", accent: "#f9a8d4", g: gradients.rose, desc: "Soft pianos, warm light" },
+        { name: "Focus", vibe: "focus", accent: "#b6c4d9", g: gradients.slate, desc: "Low-clutter deep work" },
+        { name: "Cosmic", vibe: "cosmic", accent: "#7bd0ff", g: gradients.cosmic, desc: "Drones, stars, slow orbits" },
+        { name: "Energize", vibe: "", accent: "#fbbf24", g: gradients.amber, desc: "Drive and momentum" },
+        { name: "Rainy Day", vibe: "", accent: "#5eead4", g: gradients.teal, desc: "Lofi, windows and rain" }
+    ]
+    readonly property var radioGenres: ["All", "Lofi", "Ambient", "Synthwave", "Jazz", "Classical", "Electronic", "Rock", "Soundtrack"]
+
+    readonly property var tracks: [
+        { id: "tk1", title: "Rain on Neon Glass", artist: "Velvet Circuit", album: "Midnight Transit", dur: 214, genre: "Synthwave", moods: ["Night Drive", "Rainy Day"], license: "CC BY-SA", plays: 48210, added: 12, art: artIds.wp1, g: gradients.violet },
+        { id: "tk2", title: "Afterglow Boulevard", artist: "Velvet Circuit", album: "Midnight Transit", dur: 198, genre: "Synthwave", moods: ["Night Drive", "Energize"], license: "CC BY", plays: 39120, added: 11, art: artIds.hero, g: gradients.violet },
+        { id: "tk3", title: "Paper Moon Waltz", artist: "Hanami Quartet", album: "Quiet Petals", dur: 241, genre: "Piano", moods: ["Dreamy", "Focus"], license: "CC BY-NC", plays: 27540, added: 10, art: artIds.wp2, g: gradients.rose },
+        { id: "tk4", title: "Slow Orbit", artist: "Luma Drift", album: "Far Field", dur: 305, genre: "Ambient", moods: ["Cosmic", "Focus"], license: "CC BY-SA", plays: 33800, added: 9, art: artIds.wp3, g: gradients.cosmic },
+        { id: "tk5", title: "Nebula Lullaby", artist: "Luma Drift", album: "Far Field", dur: 276, genre: "Ambient", moods: ["Cosmic", "Dreamy"], license: "CC BY", plays: 29310, added: 8, art: artIds.wp3, g: gradients.cosmic },
+        { id: "tk6", title: "Late Night Library", artist: "Quiet Hours", album: "Window Seat", dur: 187, genre: "Lofi", moods: ["Focus", "Rainy Day"], license: "CC BY-NC-SA", plays: 51200, added: 7, art: artIds.wp4, g: gradients.amber },
+        { id: "tk7", title: "Window Seat, Rain", artist: "Quiet Hours", album: "Window Seat", dur: 172, genre: "Lofi", moods: ["Rainy Day", "Dreamy"], license: "CC BY", plays: 44870, added: 6, art: artIds.wp4, g: gradients.amber },
+        { id: "tk8", title: "Hangar 09", artist: "Forge Engine", album: "Heavy Industry", dur: 224, genre: "Electronic", moods: ["Energize", "Night Drive"], license: "CC BY-SA", plays: 21400, added: 5, art: artIds.wp6, g: gradients.red },
+        { id: "tk9", title: "Aurora Drive", artist: "Nord Echoes", album: "Fjord Lights", dur: 262, genre: "Ambient", moods: ["Cosmic", "Dreamy"], license: "CC BY", plays: 18950, added: 4, art: artIds.wp5, g: gradients.green },
+        { id: "tk10", title: "Deep Work Pulse", artist: "Monolith Field", album: "Single Task", dur: 330, genre: "Electronic", moods: ["Focus"], license: "CC BY-SA", plays: 36120, added: 3, art: "", g: gradients.slate },
+        { id: "tk11", title: "Sunrise Over Kyoto", artist: "Hanami Quartet", album: "Quiet Petals", dur: 209, genre: "Piano", moods: ["Dreamy", "Energize"], license: "CC BY", plays: 24470, added: 2, art: artIds.wp2, g: gradients.rose },
+        { id: "tk12", title: "Static Bloom", artist: "Forge Engine", album: "Heavy Industry", dur: 191, genre: "Electronic", moods: ["Energize"], license: "CC BY-NC", plays: 15330, added: 1, art: "", g: gradients.teal }
+    ].map(function (t) { return Object.assign({ kind: "track", genres: [t.genre] }, t) })
+
+    readonly property var stations: [
+        { id: "st1", title: "Neon Static FM", genre: "Synthwave", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 3420, moods: ["Night Drive", "Energize"], added: 10, g: gradients.violet },
+        { id: "st2", title: "Deep Space Ambient", genre: "Ambient", bitrate: "192 kbps", codec: "AAC", country: "Global", listeners: 2810, moods: ["Cosmic", "Focus"], added: 9, g: gradients.cosmic },
+        { id: "st3", title: "Lofi Rain Radio", genre: "Lofi", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 5120, moods: ["Rainy Day", "Focus", "Dreamy"], added: 8, g: gradients.teal },
+        { id: "st4", title: "Midnight Jazz Cellar", genre: "Jazz", bitrate: "160 kbps", codec: "MP3", country: "Global", listeners: 1760, moods: ["Night Drive", "Dreamy"], added: 7, g: gradients.amber },
+        { id: "st5", title: "Piano Dawn", genre: "Classical", bitrate: "256 kbps", codec: "AAC", country: "Global", listeners: 1320, moods: ["Dreamy", "Focus"], added: 6, g: gradients.rose },
+        { id: "st6", title: "Drift Electronica", genre: "Electronic", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 2240, moods: ["Energize", "Night Drive"], added: 5, g: gradients.violet },
+        { id: "st7", title: "Soundtrack Cafe", genre: "Soundtrack", bitrate: "128 kbps", codec: "AAC", country: "Global", listeners: 2010, moods: ["Dreamy", "Rainy Day"], added: 4, g: gradients.green },
+        { id: "st8", title: "Forge Metal Radio", genre: "Rock", bitrate: "192 kbps", codec: "MP3", country: "Global", listeners: 1490, moods: ["Energize"], added: 3, g: gradients.red },
+        { id: "st9", title: "Orbital Chillout", genre: "Ambient", bitrate: "128 kbps", codec: "Opus", country: "Global", listeners: 1180, moods: ["Cosmic", "Dreamy"], added: 2, g: gradients.cosmic },
+        { id: "st10", title: "Focus Beats 24/7", genre: "Lofi", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 4380, moods: ["Focus"], added: 1, g: gradients.slate }
+    ].map(function (s) { return Object.assign({ kind: "station", art: "", artist: "Live radio", album: "", genres: [s.genre] }, s) })
+
+    property string musicSource: "jamendo"
+    property string musicMood: ""
+    property string musicView: "Discover"
+    property string musicQuery: ""
+    property string radioGenre: "All"
+    property bool queueOpen: true
+    property var queue: []
+    property int queueIndex: -1
+    property bool playing: false
+    property real playPos: 0
+    property real volume: 0.7
+    property bool muted: false
+    property bool shuffleOn: false
+    property bool repeatOn: false
+    property bool audioNoteShown: false
+    readonly property var nowPlaying: (queueIndex >= 0 && queueIndex < queue.length) ? musicItem(queue[queueIndex]) : null
+
+    function fmtTime(s) {
+        s = Math.max(0, Math.floor(s))
+        var r = s % 60
+        return Math.floor(s / 60) + ":" + (r < 10 ? "0" : "") + r
+    }
+    function musicItem(ref) {
+        if (!ref) return null
+        return ref.kind === "track" ? findIn(tracks, ref.id) : findIn(stations, ref.id)
+    }
+    function musicRef(it) { return { kind: it.kind, id: it.id } }
+    function musicSub(it) {
+        if (!it) return ""
+        return it.kind === "track" ? (it.artist + " \u00b7 " + it.album) : (it.genre + " \u00b7 " + it.bitrate + " " + it.codec)
+    }
+    function musicMoodFor(vibeId) {
+        for (var i = 0; i < musicMoods.length; i++) if (musicMoods[i].vibe === vibeId) return musicMoods[i].name
+        return ""
+    }
+    function moodInfo(name) { for (var i = 0; i < musicMoods.length; i++) if (musicMoods[i].name === name) return musicMoods[i]; return null }
+    function moodCount(name, kind) {
+        var list = kind === "track" ? tracks : stations, n = 0
+        for (var i = 0; i < list.length; i++) if (list[i].moods.indexOf(name) >= 0) n++
+        return n
+    }
+    function setMusicSource(id) {
+        musicSource = id
+        musicView = id === "radio" ? "Popular" : "Discover"
+        radioGenre = "All"
+        musicQuery = ""
+    }
+    function filteredTracks() {
+        var q = musicQuery.trim().toLowerCase(), out = []
+        for (var i = 0; i < tracks.length; i++) {
+            var t = tracks[i]
+            if (musicMood !== "" && t.moods.indexOf(musicMood) < 0) continue
+            if (q && (t.title + " " + t.artist + " " + t.album + " " + t.genre).toLowerCase().indexOf(q) < 0) continue
+            if (musicView === "Favorites" && !favorites[t.id]) continue
+            out.push(t)
+        }
+        if (musicView === "Trending") out.sort(function (a, b) { return b.plays - a.plays })
+        else if (musicView === "New") out.sort(function (a, b) { return b.added - a.added })
+        return out
+    }
+    function filteredStations() {
+        var q = musicQuery.trim().toLowerCase(), out = []
+        for (var i = 0; i < stations.length; i++) {
+            var s = stations[i]
+            if (musicMood !== "" && s.moods.indexOf(musicMood) < 0) continue
+            if (radioGenre !== "All" && s.genre !== radioGenre) continue
+            if (q && (s.title + " " + s.genre).toLowerCase().indexOf(q) < 0) continue
+            if (musicView === "Favorites" && !favorites[s.id]) continue
+            out.push(s)
+        }
+        if (musicView === "New") out.sort(function (a, b) { return b.added - a.added })
+        else out.sort(function (a, b) { return b.listeners - a.listeners })
+        return out
+    }
+    function audioNote() {
+        if (audioNoteShown) return
+        audioNoteShown = true
+        notify("Playback is a UI preview: no audio engine is connected yet, so nothing will be heard.", "warn")
+    }
+    function playNow(item, context) {
+        // >>> BACKEND: start streaming item.streamUrl (Jamendo) or the resolved station URL (Radio Browser).
+        var list = (context && context.length > 0) ? context : [item]
+        var idx = 0
+        for (var i = 0; i < list.length; i++) if (list[i].id === item.id) idx = i
+        queue = list.map(musicRef)
+        queueIndex = idx
+        playPos = 0
+        playing = true
+        markOpened(item.id)
+        logActivity("Playing (UI preview): " + item.title)
+        audioNote()
+    }
+    function playAll(list, shuffled) {
+        if (!list || list.length === 0) { notify("Nothing to play with the current filters.", "info"); return }
+        var l = list.slice()
+        if (shuffled) l.sort(function () { return Math.random() - 0.5 })
+        playNow(l[0], l)
+    }
+    function queueAdd(item, next) {
+        var ref = musicRef(item)
+        if (queueIndex < 0) {
+            queue = [ref]; queueIndex = 0; playPos = 0; playing = false
+        } else {
+            var q = queue.slice()
+            if (next) q.splice(queueIndex + 1, 0, ref); else q.push(ref)
+            queue = q
+        }
+        notify((next ? "Playing next: " : "Added to queue: ") + item.title, "ok")
+    }
+    function removeFromQueue(i) {
+        var q = queue.slice()
+        q.splice(i, 1)
+        var qi = queueIndex
+        if (i < qi) qi--
+        else if (i === qi) { qi = q.length === 0 ? -1 : Math.min(i, q.length - 1); playPos = 0; if (q.length === 0) playing = false }
+        queue = q
+        queueIndex = qi
+    }
+    function clearQueue() {
+        if (queueIndex >= 0) { queue = [queue[queueIndex]]; queueIndex = 0 } else queue = []
+    }
+    function moveQueue(i, d) {
+        var j = i + d
+        if (j < 0 || j >= queue.length) return
+        var q = queue.slice()
+        var t = q[i]; q[i] = q[j]; q[j] = t
+        var qi = queueIndex
+        if (qi === i) qi = j; else if (qi === j) qi = i
+        queue = q
+        queueIndex = qi
+    }
+    function jumpQueue(i) { queueIndex = i; playPos = 0; playing = true; audioNote() }
+    function skip(dir) {
+        var n = queue.length
+        if (n === 0) return
+        var idx
+        if (shuffleOn && n > 1) { do { idx = Math.floor(Math.random() * n) } while (idx === queueIndex) }
+        else idx = queueIndex + dir
+        if (idx < 0) idx = repeatOn ? n - 1 : 0
+        if (idx >= n) { if (repeatOn) idx = 0; else { playing = false; playPos = 0; return } }
+        queueIndex = idx
+        playPos = 0
+        playing = true
+    }
+    function togglePlay() {
+        if (!nowPlaying) return
+        playing = !playing
+        if (playing) audioNote()
+    }
+    function seekFrac(f) { if (nowPlaying && nowPlaying.kind === "track") playPos = Math.max(0, Math.min(1, f)) * nowPlaying.dur }
+    function stopPlayer() { playing = false; queueIndex = -1; playPos = 0 }
+    function exploreMusicMood(name) {
+        musicMood = name
+        if (musicSource === "local") setMusicSource("jamendo")
+        page = pgMusic
+        vibeOpen = false
+    }
+    function playVibeMix() {
+        var name = musicMoodFor(moodId)
+        if (name === "") name = "Focus"
+        musicMood = name
+        if (musicSource === "local") setMusicSource("jamendo")
+        var list = tracks.filter(function (t) { return t.moods.indexOf(name) >= 0 })
+        playAll(list, false)
+        notify("Playing the \u201c" + name + "\u201d mix \u2014 UI preview only.", "ok")
+    }
+
+    // ================================================================
+    //  SHELL LAYOUT
+    // ================================================================
+    readonly property var navItems: [
+        { name: "Home", icon: "home" },
+        { name: "Wallpapers", icon: "wallpaper" },
+        { name: "Anime", icon: "anime" },
+        { name: "Manga & Manhwa", icon: "manga" },
+        { name: "Music", icon: "music" },
+        { name: "Downloads", icon: "download" },
+        { name: "My Library", icon: "library" }
+    ]
+    readonly property var pageComponents: [homePage, wallPage, animePage, mangaPage, musicPage, dlPage, libPage]
+
+    // tapping empty space drops keyboard focus (closes search results)
+    TapHandler { onTapped: root.forceActiveFocus() }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#0d131e"
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; top: parent.top }
+            height: 280
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.alpha(root.accent, 0.10) }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- sidebar
+    Rectangle {
+        id: sidebar
+        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+        width: root.sidebarW
+        color: "#080e19"
+        z: 10
+        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+        Row {
+            x: root.compact ? 19 : 16
+            y: 18
+            spacing: 10
+            Rectangle {
+                width: 30; height: 30; radius: 9; color: root.accent
+                Ico { anchors.centerIn: parent; name: "surprise"; size: 15; tint: "#15112b" }
+            }
+            Column {
+                visible: !root.compact
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 0
+                Lbl { text: "GPS HUB"; font.pixelSize: 15; font.weight: Font.Bold; font.letterSpacing: 0.6 }
+                Lbl { text: "media prototype"; mono: true; faint: true; font.pixelSize: 10 }
+            }
+        }
+
+        Item {
+            id: navBox
+            x: 8; y: 74
+            width: parent.width - 16
+            height: root.navItems.length * 44
+            Rectangle {
+                id: navInd
+                width: parent.width; height: 40; radius: 11
+                y: root.page * 44
+                color: Qt.alpha(root.accent, 0.15)
+                border.width: 1
+                border.color: Qt.alpha(root.accent, 0.35)
+                Behavior on y { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                Rectangle { x: -1; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 18; radius: 2; color: root.accent }
+            }
+            Repeater {
+                model: root.navItems
+                delegate: Item {
+                    id: ni
+                    y: index * 44
+                    width: navBox.width
+                    height: 40
+                    readonly property bool cur: root.page === index
+                    HoverHandler { id: nh }
+                    Rectangle {
+                        anchors.fill: parent; radius: 11; color: "#1a202b"
+                        opacity: (!ni.cur && nh.hovered) ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 140 } }
+                    }
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: root.compact ? (ni.width - 18) / 2 : 14
+                        spacing: 12
+                        Ico { width: 18; name: modelData.icon; size: 15; tint: ni.cur ? root.accent : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
+                        Lbl {
+                            visible: !root.compact
+                            text: modelData.name
+                            font.weight: ni.cur ? Font.DemiBold : Font.Medium
+                            color: ni.cur ? "#ffffff" : "#cac4d4"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Rectangle {
+                        visible: !root.compact && index === 5 && root.dlCount("downloading") > 0
+                        anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                        width: 20; height: 18; radius: 9
+                        color: Qt.alpha("#7bd0ff", 0.2)
+                        Lbl { anchors.centerIn: parent; text: root.dlCount("downloading"); mono: true; font.pixelSize: 10; color: "#7bd0ff" }
+                    }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.go(index) }
+                }
+            }
+        }
+
+        Column {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
+            spacing: 12
+            IconBtn {
+                visible: root.compact
+                anchors.horizontalCenter: parent.horizontalCenter
+                box: 40; icon: "vibe"; tip: "Vibe Studio"
+                onClicked: root.vibeOpen = !root.vibeOpen
+            }
+            Rectangle {
+                visible: !root.compact
+                width: parent.width; height: 100; radius: 12; color: "#161c27"
+                Lbl { x: 12; y: 10; text: "VIBE STUDIO"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                Grid {
+                    x: 8; y: 32
+                    columns: 2
+                    spacing: 4
+                    Repeater {
+                        model: root.moods
+                        delegate: Rectangle {
+                            width: 82; height: 28; radius: 8
+                            readonly property bool sel: root.moodId === modelData.id
+                            color: sel ? Qt.alpha(modelData.accent, 0.18) : (mh.containsMouse ? "#242a36" : "#1a202b")
+                            Behavior on color { ColorAnimation { duration: 140 } }
+                            Row {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 8; spacing: 6
+                                Rectangle { width: 7; height: 7; radius: 3.5; color: modelData.accent; anchors.verticalCenter: parent.verticalCenter }
+                                Lbl { text: modelData.name.split(" ")[0]; mono: true; font.pixelSize: 10; color: sel ? "#ffffff" : "#cac4d4" }
+                            }
+                            MouseArea { id: mh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMood(modelData.id) }
+                        }
+                    }
+                }
+            }
+            Column {
+                visible: !root.compact
+                width: parent.width
+                spacing: 3
+                RowLayout { width: parent.width
+                    Lbl { text: "Wallhaven"; mono: true; faint: true; font.pixelSize: 10 }
+                    Item { Layout.fillWidth: true }
+                    Lbl { text: root.wallhavenConnected ? "Live" : "Offline"; mono: true; font.pixelSize: 10; color: root.wallhavenConnected ? "#86efac" : "#fde047" }
+                }
+                RowLayout { width: parent.width
+                    Lbl { text: "Catalogue"; mono: true; faint: true; font.pixelSize: 10 }
+                    Item { Layout.fillWidth: true }
+                    Lbl { text: root.wallhavenUsingRemote ? "Wallhaven" : "Bundled samples"; mono: true; font.pixelSize: 10; dim: true }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- main area
+    Item {
+        id: mainArea
+        anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
+
+        Item {
+            id: topbar
+            anchors { left: parent.left; right: parent.right; top: parent.top }
+            height: 62
+            RowLayout {
+                anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
+                spacing: 10
+                SearchField {
+                    id: gsearch
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 520
+                    Layout.preferredHeight: 38
+                    accent: root.accent
+                    placeholder: "Search wallpapers, anime, manga \u2014 or paste a URL"
+                    onEdited: root.gq = text
+                    onSubmitted: {
+                        var r = root.globalResults(root.gq)
+                        if (r.length > 0) root.openResult(r[0])
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Btn { label: root.width < 1100 ? "" : "Surprise Me"; icon: "surprise"; onClicked: root.surprise() }
+                Btn {
+                    label: root.width < 1100 ? "" : "Vibe Studio"
+                    icon: "vibe"
+                    accent: root.accent
+                    kind: root.vibeOpen ? "primary" : "secondary"
+                    onClicked: root.vibeOpen = !root.vibeOpen
+                }
+                Rectangle {
+                    visible: root.width >= 1000
+                    implicitHeight: 30
+                    implicitWidth: strow.implicitWidth + 22
+                    radius: 15
+                    color: "#161c27"
+                    border.width: 1
+                    border.color: "#262d3a"
+                    Row {
+                        id: strow
+                        anchors.centerIn: parent
+                        spacing: 7
+                        Rectangle { width: 8; height: 8; radius: 4; color: root.wallhavenConnected ? "#86efac" : "#fde047"; anchors.verticalCenter: parent.verticalCenter }
+                        Lbl { text: root.wallhavenConnected ? "Wallhaven live \u00b7 samples elsewhere" : "Wallhaven offline \u00b7 samples"; mono: true; font.pixelSize: 11; dim: true }
+                    }
+                }
+                IconBtn {
+                    visible: root.showCloseButton
+                    box: 32
+                    icon: "close"
+                    tip: "Close Media Hub"
+                    onClicked: root.closeRequested()
+                }
+            }
+        }
+
+        Item {
+            id: pageHost
+            anchors { left: parent.left; right: parent.right; top: topbar.bottom; bottom: parent.bottom; bottomMargin: miniPlayer.height }
+            Repeater {
+                model: 7
+                delegate: Item {
+                    id: slot
+                    anchors.fill: parent
+                    readonly property bool current: root.page === index
+                    property bool seen: false
+                    onCurrentChanged: if (current) seen = true
+                    Component.onCompleted: if (current) seen = true
+                    opacity: current ? 1 : 0
+                    visible: opacity > 0.01
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                    transform: Translate {
+                        y: slot.current ? 0 : 14
+                        Behavior on y { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                    }
+                    Loader { anchors.fill: parent; active: slot.seen; sourceComponent: root.pageComponents[index] }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- global search results
+    Rectangle {
+        id: results
+        readonly property var items: root.globalResults(root.gq)
+        x: root.sidebarW + 24
+        y: 56
+        width: gsearch.width
+        height: Math.min(items.length, 7) * 46 + 12
+        z: 40
+        radius: 14
+        color: "#f2161c27"
+        border.width: 1
+        border.color: "#2f3646"
+        opacity: (root.gq.trim() !== "" && gsearch.focused) ? 1 : 0
+        visible: opacity > 0.01 && items.length > 0
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+        Column {
+            x: 6; y: 6
+            width: parent.width - 12
+            Repeater {
+                model: results.items
+                delegate: Rectangle {
+                    width: parent.width; height: 46; radius: 10
+                    color: rh.containsMouse ? "#242a36" : "transparent"
+                    Rectangle {
+                        x: 8; anchors.verticalCenter: parent.verticalCenter
+                        width: 28; height: 28; radius: 8; color: Qt.alpha(root.accent, 0.16)
+                        Ico { anchors.centerIn: parent; size: 13; tint: root.accent
+                              name: modelData.kind === "wallpaper" ? "wallpaper" : (modelData.kind === "anime" ? "anime" : (modelData.kind === "manga" ? "manga" : (modelData.kind === "url" ? "download" : "library"))) }
+                    }
+                    Column {
+                        x: 46; anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 60
+                        Lbl { width: parent.width; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                        Lbl { width: parent.width; text: modelData.sub; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 10 }
+                    }
+                    MouseArea { id: rh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.openResult(modelData) }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- Vibe Studio panel
+    Item {
+        id: vibeLayer
+        anchors.fill: parent
+        z: 60
+        opacity: root.vibeOpen ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        MouseArea { anchors.fill: parent; onClicked: root.vibeOpen = false }
+        Rectangle {
+            id: vpanel
+            anchors { top: parent.top; topMargin: 58; right: parent.right; rightMargin: 16 }
+            width: Math.min(400, parent.width - 32)
+            height: Math.min(parent.height - 80, vcol.implicitHeight + 36)
+            radius: 18
+            color: "#f4161c27"
+            border.width: 1
+            border.color: "#2f3646"
+            transform: Translate { y: root.vibeOpen ? 0 : -10; Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } } }
+            MouseArea { anchors.fill: parent }
+            ColumnLayout {
+                id: vcol
+                x: 18; y: 18
+                width: parent.width - 36
+                spacing: 10
+                RowLayout {
+                    Layout.fillWidth: true
+                    Lbl { text: "Vibe Studio"; font.pixelSize: 16; font.weight: Font.Bold }
+                    Item { Layout.fillWidth: true }
+                    IconBtn { box: 28; icon: "close"; onClicked: root.vibeOpen = false }
+                }
+                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                      text: "Pick a mood to restyle this panel and browse matching wallpapers. Presets don't touch your desktop theme." }
+                Repeater {
+                    model: root.moods
+                    delegate: Rectangle {
+                        id: vrow
+                        readonly property bool sel: root.moodId === modelData.id
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 84
+                        radius: 12
+                        color: vrh.containsMouse ? "#1f2631" : "#1a202b"
+                        border.width: sel ? 2 : 1
+                        border.color: sel ? modelData.accent : "#262d3a"
+                        Art { x: 8; y: 8; width: 104; height: 68; radiusPx: 8; frameColor: vrow.color; src: root.artUrl(modelData.art); grad: modelData.grad; glyph: "vibe" }
+                        MouseArea { id: vrh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMood(modelData.id) }
+                        Lbl { x: 124; y: 10; text: modelData.name; font.pixelSize: 14; font.weight: Font.DemiBold }
+                        Lbl { x: 124; y: 29; width: parent.width - 134; text: modelData.desc; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                        Row { x: 124; y: 52; spacing: 5
+                            Repeater { model: modelData.palette; delegate: Rectangle { width: 12; height: 12; radius: 6; color: modelData; border.width: 1; border.color: "#33ffffff" } }
+                        }
+                        Btn { anchors { right: parent.right; rightMargin: 8; bottom: parent.bottom; bottomMargin: 8 } compact: true; label: "Explore"; onClicked: root.exploreMood(modelData.id) }
+                    }
+                }
+                Btn { Layout.fillWidth: true; label: "Sync GPS Theme"; icon: "sync"; muted: true; onClicked: root.syncThemeUnavailable() }
+                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                      text: "Unavailable until the GPS theme engine is connected to themeSyncRequested." }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- Anime / Manga detail sheet
+    Item {
+        id: detailLayer
+        anchors.fill: parent
+        z: 70
+        opacity: root.detailItem ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        Rectangle { anchors.fill: parent; color: "#d905070d"; MouseArea { anchors.fill: parent; onClicked: root.closeDetail() } }
+        Rectangle {
+            id: dpanel
+            anchors.centerIn: parent
+            width: Math.min(860, parent.width - 64)
+            height: Math.min(580, parent.height - 64)
+            radius: 20
+            color: "#161c27"
+            border.width: 1
+            border.color: "#2f3646"
+            scale: root.detailItem ? 1 : 0.97
+            Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+            MouseArea { anchors.fill: parent }
+            Loader { anchors.fill: parent; active: root.detailShown !== null; sourceComponent: detailBody }
+            IconBtn { anchors { top: parent.top; right: parent.right; margins: 14 } icon: "close"; tip: "Close"; onClicked: root.closeDetail() }
+        }
+    }
+
+    // ---------------------------------------------------------------- toast
+    Rectangle {
+        id: toast
+        z: 100
+        anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 26 + miniPlayer.height }
+        width: Math.min(580, root.width - 48)
+        height: Math.max(46, toastLbl.implicitHeight + 24)
+        radius: 13
+        color: "#f5161c27"
+        border.width: 1
+        border.color: root.toastKind === "warn" ? Qt.alpha("#fde047", 0.45) : (root.toastKind === "ok" ? Qt.alpha("#86efac", 0.45) : "#363d4b")
+        opacity: root.toastShown ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        transform: Translate { y: root.toastShown ? 0 : 12; Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } } }
+        Rectangle { x: 16; anchors.verticalCenter: parent.verticalCenter; width: 8; height: 8; radius: 4
+                    color: root.toastKind === "warn" ? "#fde047" : (root.toastKind === "ok" ? "#86efac" : "#7bd0ff") }
+        Lbl { id: toastLbl; x: 36; y: 12; width: parent.width - 52; wrapMode: Text.WordWrap; text: root.toastText; font.pixelSize: 13 }
+    }
+
+    // ================================================================
+    //  DETAIL SHEET CONTENT (anime + manga share it)
+    // ================================================================
+    Component {
+        id: detailBody
+        Item {
+            id: db
+            readonly property var d: root.detailShown
+            readonly property bool isA: d.kind === "anime"
+            readonly property int total: d.total
+            readonly property int cur: root.progress[d.id] || 0
+            readonly property string st: root.statuses[d.id] || ""
+            readonly property var statusOpts: isA ? root.animeStatuses : root.mangaStatuses
+            readonly property color tint: isA ? "#7bd0ff" : "#ddb8ff"
+            readonly property string unit: isA ? "Ep" : "Ch"
+            RowLayout {
+                anchors { fill: parent; margins: 24 }
+                spacing: 24
+                Art {
+                    Layout.preferredWidth: 220
+                    Layout.preferredHeight: 330
+                    Layout.alignment: Qt.AlignTop
+                    radiusPx: 14
+                    frameColor: "#161c27"
+                    src: root.artUrl(db.d.art)
+                    grad: db.d.g
+                    glyph: db.isA ? "anime" : "manga"
+                }
+                Flickable {
+                    id: df
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    contentWidth: width
+                    contentHeight: dcol.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: VScroll {}
+                    ColumnLayout {
+                        id: dcol
+                        width: df.width - 12
+                        spacing: 12
+                        Lbl { Layout.fillWidth: true; Layout.rightMargin: 40; text: db.d.title; wrapMode: Text.WordWrap; font.pixelSize: 26; font.weight: Font.Bold }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Tag { text: db.isA ? db.d.season : (db.d.type + " \u00b7 " + db.d.year); tint: db.tint }
+                            Tag { text: db.d.status }
+                            Tag { visible: db.isA; text: "\u2605 " + db.d.rating + " (sample)"; tint: "#fde047" }
+                            Tag { text: db.isA ? db.d.studio : db.d.author }
+                            Tag { text: db.total + (db.isA ? " episodes" : " chapters") }
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Repeater { model: db.d.genres; delegate: Tag { text: modelData; tint: "#a78bfa" } }
+                        }
+                        Lbl { Layout.fillWidth: true; text: db.d.synopsis; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13; lineHeight: 1.25 }
+                        Lbl { text: db.isA ? "YOUR WATCH STATUS" : "YOUR READING STATUS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: db.statusOpts
+                                delegate: Chip { label: modelData; active: db.st === modelData; accent: db.tint; onClicked: root.setStatus(db.d.id, modelData) }
+                            }
+                            Btn { visible: db.st !== ""; compact: true; kind: "ghost"; label: "Remove from list"; icon: "close"; onClicked: root.toggleList(db.d.kind, db.d.id, db.d.title) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Lbl { text: db.isA ? "EPISODE PROGRESS" : "CHAPTER PROGRESS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                            Item { Layout.fillWidth: true }
+                            IconBtn { box: 28; icon: "minus"; tip: "One back"; onClicked: root.setProgress(db.d.id, db.cur - 1, db.total) }
+                            Lbl { text: db.unit + " " + db.cur + " / " + db.total; mono: true; font.pixelSize: 12; Layout.preferredWidth: 90; horizontalAlignment: Text.AlignHCenter }
+                            IconBtn { box: 28; icon: "plus"; tip: "Mark next as done"; onClicked: root.setProgress(db.d.id, db.cur + 1, db.total) }
+                        }
+                        Bar { Layout.fillWidth: true; value: db.total > 0 ? db.cur / db.total : 0; tint: db.tint }
+                        Wrap {
+                            visible: db.total <= 26
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Repeater {
+                                model: db.total <= 26 ? db.total : 0
+                                delegate: Rectangle {
+                                    width: 34; height: 26; radius: 7
+                                    color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.28) : (eh.containsMouse ? "#2f3541" : "#1a202b")
+                                    border.width: 1
+                                    border.color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.6) : "#262d3a"
+                                    Lbl { anchors.centerIn: parent; text: index + 1; mono: true; font.pixelSize: 11; dim: true }
+                                    MouseArea { id: eh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.setProgress(db.d.id, index + 1, db.total) }
+                                }
+                            }
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Btn { kind: "primary"; accent: db.tint; icon: "play"; label: db.isA ? "Continue Watching" : "Continue Reading"
+                                  onClicked: root.continueMedia(Object.assign({ action: "continue" }, db.d)) }
+                            Btn { icon: "link"; label: db.isA ? "Open to Watch" : "Open Reader"
+                                  onClicked: root.continueMedia(Object.assign({ action: "open" }, db.d)) }
+                            Btn { icon: root.favorites[db.d.id] ? "heart" : "heartO"; label: root.favorites[db.d.id] ? "Favorited" : "Favorite"
+                                  onClicked: root.toggleFavorite(db.d.id, db.d.title) }
+                            Btn { visible: db.st === ""; icon: "plus"; label: db.isA ? "Add to Watchlist" : "Add to Reading List"
+                                  onClicked: root.toggleList(db.d.kind, db.d.id, db.d.title) }
+                        }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                              text: db.isA ? "Tracking only. GPS Media Hub doesn't stream episodes; \u201cOpen to Watch\u201d will hand off to a source you choose once connected."
+                                           : "Progress tracking only. The chapter reader and catalogue API aren't connected in this prototype." }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    //  HOME
+    // ================================================================
+    Component {
+        id: homePage
+        Item {
+            id: hp
+            readonly property real cw: hf.width - 48
+            readonly property var fw: root.wallpaperById(root.featuredId)
+            readonly property real fwW: Math.min(640, cw * 0.56)
+            readonly property int shelfCols: cw >= 900 ? 4 : 2
+            readonly property var quick: [
+                { name: "Wallpapers", icon: "wallpaper", go: 1, sub: (root.wallhavenUsingRemote ? "Wallhaven live" : "Bundled samples") + " \u00b7 " + root.favCount() + " favorites" },
+                { name: "Anime", icon: "anime", go: 2, sub: root.countListed("anime") + " on watchlist" },
+                { name: "Manga & Manhwa", icon: "manga", go: 3, sub: root.countListed("manga") + " on reading list" },
+                { name: "Downloads", icon: "download", go: 5, sub: root.dlCount("downloading") + " active \u00b7 " + root.dlCount("queued") + " queued" },
+                { name: "My Library", icon: "library", go: 6, sub: root.libraryItems().length + " items" },
+                { name: "Music", icon: "music", go: 4, sub: root.tracks.length + " tracks \u00b7 " + root.stations.length + " stations" }
+            ]
+            readonly property var recent: root.libraryList("All", "Recently Opened", "").filter(function (it) { return it.opened > 0 }).slice(0, 4)
+
+            Flickable {
+                id: hf
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: hcol.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+
+                Column {
+                    id: hcol
+                    x: 24; y: 6
+                    width: hf.width - 48
+                    spacing: 18
+
+                    // ---- A. hero
+                    Rectangle {
+                        width: parent.width; height: 224; radius: 18
+                        color: "#161c27"
+                        border.width: 1
+                        border.color: "#232a37"
+                        Art {
+                            id: heroArt
+                            anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
+                            width: Math.max(260, parent.width * 0.52)
+                            radiusPx: 18
+                            frameColor: "#0d131e"
+                            src: root.artUrl(root.mood.art)
+                            grad: root.mood.grad
+                            glyph: "wallpaper"
+                        }
+                        Rectangle {
+                            anchors.fill: heroArt
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "#161c27" }
+                                GradientStop { position: 0.55; color: "#c0161c27" }
+                                GradientStop { position: 1.0; color: "#26161c27" }
+                            }
+                        }
+                        Column {
+                            x: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(580, parent.width * 0.62)
+                            spacing: 10
+                            Row {
+                                spacing: 8
+                                Tag { text: "PROTOTYPE"; tint: root.accent }
+                                Tag { text: "SAMPLE DATA"; tint: "#948e9d" }
+                            }
+                            Lbl { text: "Find your next escape."; font.pixelSize: 34; font.weight: Font.Bold }
+                            Lbl { width: parent.width; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 14
+                                  text: "Discover wallpapers, anime, manga and media \u2014 then keep everything in one personal library." }
+                            Row {
+                                spacing: 10
+                                Btn { kind: "primary"; accent: root.accent; icon: "surprise"; label: "Surprise Me"; onClicked: root.surprise() }
+                                Btn { icon: "wallpaper"; label: "Discover Wallpapers"; onClicked: root.go(1) }
+                            }
+                            Row {
+                                visible: root.surprisePick !== null
+                                spacing: 10
+                                Lbl { anchors.verticalCenter: parent.verticalCenter; font.pixelSize: 12; dim: true
+                                      text: root.surprisePick ? ("\u2726 " + root.surprisePick.title + "  \u00b7  " + root.surprisePick.sub) : "" }
+                                Btn { compact: true; kind: "ghost"; label: "Open"; icon: "chev"; onClicked: root.openSurprise() }
+                            }
+                        }
+                    }
+
+                    // ---- B. today's vibe
+                    Card {
+                        width: parent.width
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 14
+                            ColumnLayout {
+                                spacing: 2
+                                Lbl { text: "TODAY'S VIBE"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1.2 }
+                                Lbl { text: root.mood.name; font.pixelSize: 22; font.weight: Font.Bold }
+                            }
+                            Row {
+                                spacing: 6
+                                Repeater { model: root.mood.palette; delegate: Rectangle { width: 22; height: 22; radius: 11; color: modelData; border.width: 1; border.color: "#33ffffff" } }
+                            }
+                            Item { Layout.fillWidth: true }
+                            Tag { visible: hp.cw > 760; text: "UNAVAILABLE"; tint: "#fde047" }
+                            Btn { label: hp.cw > 760 ? "Play vibe music" : ""; icon: "music"; onClicked: root.playVibeMix() }
+                            Btn { label: "Sync GPS Theme"; icon: "sync"; muted: true; onClicked: root.syncThemeUnavailable() }
+                        }
+                        Lbl { Layout.fillWidth: true; text: root.mood.desc; wrapMode: Text.WordWrap; dim: true }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: hp.cw >= 900 ? 4 : 2
+                            columnSpacing: 14
+                            rowSpacing: 14
+                            Repeater {
+                                model: root.moods
+                                delegate: Rectangle {
+                                    id: vc
+                                    readonly property bool sel: root.moodId === modelData.id
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 100
+                                    Layout.preferredHeight: 200
+                                    radius: 14
+                                    color: "#1a202b"
+                                    border.width: sel ? 2 : 1
+                                    border.color: sel ? modelData.accent : "#262d3a"
+                                    Behavior on border.color { ColorAnimation { duration: 180 } }
+                                    HoverHandler { id: vh }
+                                    scale: vh.hovered ? 1.01 : 1
+                                    Behavior on scale { NumberAnimation { duration: 180 } }
+                                    Art { id: vArt; x: 6; y: 6; width: parent.width - 12; height: 108; radiusPx: 10; frameColor: vc.color
+                                          src: root.artUrl(modelData.art); grad: modelData.grad; glyph: "vibe"; zoom: vh.hovered ? 1.05 : 1 }
+                                    Tag { visible: vc.sel; x: 14; y: 14; text: "SELECTED"; tint: modelData.accent; px: 9 }
+                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.setMood(modelData.id) }
+                                    Lbl { x: 12; y: 122; text: modelData.name; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                    Row { x: 12; y: 146; spacing: 5
+                                        Repeater { model: modelData.palette; delegate: Rectangle { width: 14; height: 14; radius: 7; color: modelData; border.width: 1; border.color: "#33ffffff" } }
+                                    }
+                                    Btn { x: 12; y: 164; width: parent.width - 24; compact: true; label: "Explore this vibe"; icon: "chev"; onClicked: root.exploreMood(modelData.id) }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- C. featured wallpaper
+                    Card {
+                        width: parent.width
+                        visible: hp.fw !== null
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 22
+                            Art {
+                                Layout.preferredWidth: hp.fwW
+                                Layout.preferredHeight: hp.fwW / 1.6
+                                Layout.alignment: Qt.AlignTop
+                                radiusPx: 12
+                                frameColor: "#161c27"
+                                src: hp.fw ? root.artUrl(hp.fw.art) : ""
+                                grad: hp.fw ? hp.fw.g : ["#161c27", "#2a1b5e", "#0e4a6b"]
+                                glyph: "wallpaper"
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignTop
+                                spacing: 10
+                                Tag { text: "FEATURED WALLPAPER"; tint: root.accent }
+                                Lbl { Layout.fillWidth: true; text: hp.fw ? hp.fw.title : ""; wrapMode: Text.WordWrap; font.pixelSize: 22; font.weight: Font.Bold }
+                                Lbl { text: hp.fw ? (root.wallpaperSourceLabel(hp.fw) + (hp.fw.author ? " \u00b7 by " + hp.fw.author : "")) : ""; dim: true; font.pixelSize: 12 }
+                                Wrap { Layout.fillWidth: true; spacing: 6
+                                    Tag { text: hp.fw ? (hp.fw.res + " \u00b7 " + hp.fw.ratio) : ""; tint: "#7bd0ff" }
+                                    Tag { text: hp.fw ? hp.fw.size : "" }
+                                    Repeater { model: hp.fw ? hp.fw.tags : []; delegate: Tag { text: "#" + modelData; tint: "#cebdff" } }
+                                }
+                                Row { spacing: 6
+                                    Repeater { model: hp.fw ? hp.fw.pal : []; delegate: Rectangle { width: 24; height: 24; radius: 7; color: modelData; border.width: 1; border.color: "#33ffffff" } }
+                                }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13; text: hp.fw ? hp.fw.desc : "" }
+                                Item { Layout.preferredHeight: 2 }
+                                Btn { Layout.fillWidth: true; icon: "eye"; label: "Preview"; onClicked: root.previewWallpaper(root.featuredId) }
+                                Btn { Layout.fillWidth: true; icon: "desktop"; label: "Apply Wallpaper"; onClicked: root.requestApply(hp.fw, false) }
+                                Btn { Layout.fillWidth: true; kind: "primary"; accent: root.accent; icon: "sync"; label: "Apply + Sync GPS Theme"; onClicked: root.requestApply(hp.fw, true) }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                                      text: hp.fw && hp.fw.isRemote
+                                            ? "Apply downloads and caches the SFW image, sets it with awww, and can optionally regenerate the GPS theme."
+                                            : "Bundled preview only. Open Wallpapers and search Wallhaven to download or apply a real image." }
+                            }
+                        }
+                    }
+
+                    // ---- D. continue
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        RowLayout {
+                            width: parent.width
+                            Lbl { text: "Jump back in"; font.pixelSize: 17; font.weight: Font.Bold }
+                            Lbl { text: "  Continue Watching & Reading"; faint: true; font.pixelSize: 12 }
+                            Item { Layout.fillWidth: true }
+                            Btn { compact: true; kind: "ghost"; label: "Open Library"; icon: "chev"; onClicked: root.go(root.pgLibrary) }
+                        }
+                        Wrap {
+                            width: parent.width
+                            spacing: 14
+                            Repeater {
+                                model: root.continueAll()
+                                delegate: ShelfCard {
+                                    readonly property bool isA: modelData.kind === "anime"
+                                    readonly property int cur: root.progress[modelData.id] || 0
+                                    width: (hp.cw - 14 * (hp.shelfCols - 1)) / hp.shelfCols
+                                    title: modelData.title
+                                    sub: (isA ? "Episode " : "Chapter ") + cur + " of " + modelData.total
+                                    badge: isA ? "Anime" : modelData.type
+                                    src: root.artUrl(modelData.art)
+                                    grad: modelData.g
+                                    glyph: isA ? "anime" : "manga"
+                                    value: cur / modelData.total
+                                    valueLabel: Math.round(cur / modelData.total * 100) + "% \u00b7 " + (isA ? "Ep " : "Ch ") + cur + "/" + modelData.total
+                                    btnLabel: isA ? "Continue Watching" : "Continue Reading"
+                                    btnIcon: isA ? "play" : "manga"
+                                    accent: isA ? "#7bd0ff" : "#ddb8ff"
+                                    onActivated: root.openDetail(modelData.kind, modelData.id)
+                                    onCont: root.continueMedia(modelData)
+                                }
+                            }
+                        }
+                        Card {
+                            width: parent.width
+                            visible: root.continueAll().length === 0
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                                  text: "Nothing in progress yet. Set an anime to Watching or a manga to Currently Reading and it will show up here." }
+                        }
+                    }
+
+                    // ---- E. quick access + activity
+                    RowLayout {
+                        width: parent.width
+                        spacing: 18
+                        Card {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignTop
+                            Lbl { text: "Quick access"; font.pixelSize: 15; font.weight: Font.Bold }
+                            Wrap {
+                                id: qaWrap
+                                Layout.fillWidth: true
+                                spacing: 10
+                                Repeater {
+                                    model: hp.quick
+                                    delegate: Rectangle {
+                                        id: qt
+                                        width: (qaWrap.width - 20) / 3
+                                        height: 68
+                                        radius: 12
+                                        color: qh.containsMouse ? "#242a36" : "#1a202b"
+                                        border.width: 1
+                                        border.color: qh.containsMouse ? Qt.alpha(root.accent, 0.5) : "#262d3a"
+                                        Behavior on color { ColorAnimation { duration: 140 } }
+                                        Rectangle { x: 12; anchors.verticalCenter: parent.verticalCenter; width: 36; height: 36; radius: 10; color: Qt.alpha(root.accent, 0.16)
+                                                    Ico { anchors.centerIn: parent; name: modelData.icon; size: 16; tint: root.accent } }
+                                        Column { x: 58; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 66; spacing: 2
+                                            Lbl { width: parent.width; text: modelData.name; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                            Lbl { width: parent.width; text: modelData.sub; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 10 }
+                                        }
+                                        MouseArea { id: qh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                    onClicked: { if (modelData.go >= 0) root.go(modelData.go); else root.vibeOpen = true } }
+                                    }
+                                }
+                            }
+                        }
+                        Card {
+                            Layout.preferredWidth: 340
+                            Layout.alignment: Qt.AlignTop
+                            Lbl { text: "Recently opened"; font.pixelSize: 15; font.weight: Font.Bold }
+                            Repeater {
+                                model: hp.recent
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+                                    Art { Layout.preferredWidth: 52; Layout.preferredHeight: 34; radiusPx: 6; frameColor: "#161c27"; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "library" }
+                                    Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13 }
+                                    Tag { text: root.kindLabel(modelData.kind).toUpperCase(); px: 9 }
+                                }
+                            }
+                            Lbl { visible: hp.recent.length === 0; text: "Nothing opened yet."; faint: true; font.pixelSize: 12 }
+                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#262d3a" }
+                            Lbl { text: "This session"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                            Repeater {
+                                model: root.activity
+                                delegate: Lbl { Layout.fillWidth: true; text: "\u2022 " + modelData; elide: Text.ElideRight; dim: true; font.pixelSize: 12 }
+                            }
+                            Lbl { visible: root.activity.length === 0; text: "No activity yet \u2014 favorite or open something."; faint: true; font.pixelSize: 12 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    //  WALLPAPERS
+    // ================================================================
+    Component {
+        id: wallPage
+        Item {
+            id: wp
+            readonly property bool wide: width >= 1020
+            readonly property bool hasSel: root.wpSelectedId !== ""
+            property real inspW: (wide && hasSel) ? 352 : 0
+            Behavior on inspW { NumberAnimation { duration: 230; easing.type: Easing.OutCubic } }
+            property bool moreOpen: false
+            readonly property var list: root.filteredWallpapers()
+            readonly property var shown: list.slice(0, root.wpVisible)
+            readonly property real gridW: gf.width - 48
+            readonly property int cols: Math.max(1, Math.floor((gridW + 16) / 276))
+            readonly property real cardW: (gridW - 16 * (cols - 1)) / cols
+            readonly property var tagList: root.allTags()
+
+            Flickable {
+                id: gf
+                anchors { left: parent.left; top: parent.top; bottom: parent.bottom; right: parent.right; rightMargin: wp.inspW }
+                contentWidth: width
+                contentHeight: gcol.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+
+                Column {
+                    id: gcol
+                    x: 24; y: 6
+                    width: gf.width - 48
+                    spacing: 16
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 12
+                        ColumnLayout {
+                            spacing: 3
+                            Lbl { text: "Wallpapers"; font.pixelSize: 26; font.weight: Font.Bold }
+                            Lbl { text: "Live SFW Wallhaven search with local caching and optional theme sync."; dim: true; font.pixelSize: 13 }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Tag { visible: wp.gridW > 620; text: root.wallhavenUsingRemote ? "LIVE WALLHAVEN \u00b7 LOCAL CACHE" : "BUNDLED SAMPLE PREVIEW"; tint: root.wallhavenUsingRemote ? "#7bd0ff" : "#fde047" }
+                        Tag { text: "SFW ONLY \u00b7 LOCKED"; tint: "#86efac" }
+                    }
+
+                    Card {
+                        width: parent.width
+                        tint: "#fde047"
+                        visible: !root.wallhavenConnected && !root.wallhavenLoading && root.wallhavenError === ""
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "cloud"; size: 20; tint: "#fde047" }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 13; dim: true
+                                  text: "Wallhaven isn't connected yet. Until the first search succeeds you're looking at "
+                                        + root.wallpapers.length + " bundled sample wallpapers. Opening this page starts an SFW search automatically." }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: root.wallhavenLoading && !root.wallhavenLoaded
+                        tint: root.accent
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "refresh"; size: 20; tint: root.accent }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 13; dim: true
+                                  text: "Searching Wallhaven \u2014 SFW results only. Your current cards stay visible until the response arrives." }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: root.wallhavenError !== ""
+                        tint: "#ef4444"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "warn"; size: 20; tint: "#fca5a5" }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Lbl { text: "Wallhaven search failed"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                                      text: root.wallhavenError }
+                            }
+                            Btn { compact: true; label: "Retry"; icon: "refresh"; onClicked: root.retryWallhaven() }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            SearchField {
+                                Layout.fillWidth: true
+                                accent: root.accent
+                                placeholder: "Search Wallhaven by tag, colour or collection"
+                                text: root.wpQuery
+                                onEdited: { root.wpQuery = text; root.wpVisible = 6 }
+                            }
+                            Btn { compact: true; label: "Reset filters"; icon: "refresh"; muted: root.activeWpFilters() === 0; onClicked: root.resetWpFilters() }
+                            Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; color: "#2a303c" }
+                            Tag { text: "SFW only"; tint: "#86efac" }
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: root.wpCategories
+                                delegate: Chip { label: modelData; active: root.wpCategory === modelData; accent: root.accent
+                                                 onClicked: { root.wpCategory = modelData; root.wpVisible = 6 } }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Sort"; mono: true; faint: true; font.pixelSize: 11 }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: root.wpSorts
+                                    delegate: Chip { label: modelData; active: root.wpSort === modelData; accent: root.accent
+                                                     onClicked: { root.wpSort = modelData } }
+                                }
+                            }
+                            Btn { compact: true; kind: "ghost"; label: wp.moreOpen ? "Fewer filters" : "More filters"; icon: "list"; onClicked: wp.moreOpen = !wp.moreOpen }
+                        }
+                        Item {
+                            id: more
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: h
+                            property real h: wp.moreOpen ? moreCol.implicitHeight : 0
+                            Behavior on h { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                            clip: true
+                            opacity: wp.moreOpen ? 1 : 0
+                            Behavior on opacity { NumberAnimation { duration: 180 } }
+                            ColumnLayout {
+                                id: moreCol
+                                width: parent.width
+                                spacing: 10
+                                RowLayout { Layout.fillWidth: true; spacing: 10
+                                    Lbl { text: "Colour"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 70 }
+                                    Wrap { Layout.fillWidth: true; spacing: 8
+                                        Repeater { model: root.wpColors
+                                            delegate: Chip { label: modelData; active: root.wpColor === modelData; accent: root.accent
+                                                             dot: root.colorDots[modelData] ? root.colorDots[modelData] : "transparent"
+                                                             onClicked: { root.wpColor = modelData; root.wpVisible = 6 } } }
+                                    }
+                                }
+                                RowLayout { Layout.fillWidth: true; spacing: 10
+                                    Lbl { text: "Resolution"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 70 }
+                                    Wrap { Layout.fillWidth: true; spacing: 8
+                                        Repeater { model: root.wpResolutions
+                                            delegate: Chip { label: modelData; active: root.wpRes === modelData; accent: root.accent
+                                                             onClicked: { root.wpRes = modelData; root.wpVisible = 6 } } }
+                                    }
+                                }
+                                RowLayout { Layout.fillWidth: true; spacing: 10
+                                    Lbl { text: "Ratio"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 70 }
+                                    Wrap { Layout.fillWidth: true; spacing: 8
+                                        Repeater { model: root.wpAspects
+                                            delegate: Chip { label: modelData; active: root.wpAspect === modelData; accent: root.accent
+                                                             onClicked: { root.wpAspect = modelData; root.wpVisible = 6 } } }
+                                    }
+                                }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            visible: wp.tagList.length > 0
+                            Lbl { text: "Tags"; mono: true; faint: true; font.pixelSize: 11 }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                Repeater {
+                                    model: wp.tagList
+                                    delegate: Chip { label: "#" + modelData; active: root.wpTag === modelData; accent: "#cebdff"
+                                                     onClicked: { root.wpTag = (root.wpTag === modelData) ? "" : modelData; root.wpVisible = 6 } }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        width: parent.width
+                        Lbl { mono: true; faint: true; font.pixelSize: 11
+                              text: (root.wallhavenLoading ? "Refreshing \u00b7 " : "")
+                                    + "Showing " + wp.shown.length + " of " + wp.list.length
+                                    + (root.wallhavenUsingRemote ? " Wallhaven results" : " bundled samples")
+                                    + (root.wallhavenUsingRemote && root.wallhavenPage > 0 ? "  \u00b7  page " + root.wallhavenPage + " of " + root.wallhavenLastPage : "")
+                                    + (root.activeWpFilters() > 0 ? "  \u00b7  " + root.activeWpFilters() + " filter(s) active" : "") }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Wrap {
+                        width: parent.width
+                        spacing: 16
+                        Repeater {
+                            model: wp.shown
+                            delegate: MediaCard {
+                                width: wp.cardW
+                                title: modelData.title
+                                meta: modelData.res + " \u00b7 " + modelData.size
+                                extra: root.wallpaperCardExtra(modelData)
+                                corner: modelData.ratio
+                                src: root.artUrl(modelData.art)
+                                grad: modelData.g
+                                glyph: "wallpaper"
+                                aspect: 1.6
+                                accent: root.accent
+                                selected: root.wpSelectedId === modelData.id
+                                fav: !!root.favorites[modelData.id]
+                                showPreview: true
+                                primaryLabel: "Apply"
+                                primaryIcon: "check"
+                                onActivated: root.wpSelectedId = modelData.id
+                                onPreviewed: root.wpSelectedId = modelData.id
+                                onPrimary: root.requestApply(modelData, false)
+                                onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
+                            }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: wp.list.length === 0 && !root.wallhavenLoading && root.wallhavenError === ""
+                        Lbl { text: root.wallhavenUsingRemote ? "No SFW wallpapers match these filters" : "No bundled samples match these filters"
+                              font.pixelSize: 15; font.weight: Font.DemiBold }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                              text: root.wallhavenUsingRemote
+                                    ? "Wallhaven returned an empty page. Try a broader query, another category, or fewer filters."
+                                    : "The bundled set is intentionally small. Search Wallhaven or reset the filters." }
+                        RowLayout {
+                            spacing: 8
+                            Btn { label: "Reset filters"; icon: "refresh"; onClicked: root.resetWpFilters() }
+                            Btn { visible: !root.wallhavenUsingRemote; kind: "primary"; accent: root.accent; label: "Search Wallhaven"; icon: "search"; onClicked: root.retryWallhaven() }
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: 40
+                        visible: wp.list.length > 0 || (root.wallhavenUsingRemote && root.wallhavenPage < root.wallhavenLastPage)
+                        Btn {
+                            anchors.centerIn: parent
+                            visible: wp.list.length > root.wpVisible || (root.wallhavenUsingRemote && root.wallhavenPage < root.wallhavenLastPage)
+                            label: wp.list.length > root.wpVisible
+                                   ? "Load more  (" + (wp.list.length - root.wpVisible) + " more loaded)"
+                                   : "Load more from Wallhaven"
+                            icon: "plus"
+                            onClicked: root.loadMoreWallhaven()
+                        }
+                        Lbl {
+                            anchors.centerIn: parent
+                            visible: wp.list.length > 0 && wp.list.length <= root.wpVisible
+                                    && !(root.wallhavenUsingRemote && root.wallhavenPage < root.wallhavenLastPage)
+                            text: root.wallhavenUsingRemote ? "End of the Wallhaven results." : "End of the bundled samples."
+                            faint: true; font.pixelSize: 12
+                        }
+                    }
+                }
+            }
+
+            // ---- inspector (wide: docked)
+            Item {
+                id: inspHost
+                visible: wp.wide && opacity > 0.01
+                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                width: 352
+                opacity: wp.hasSel ? 1 : 0
+                clip: true
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+                transform: Translate { x: wp.hasSel ? 0 : 36; Behavior on x { NumberAnimation { duration: 230; easing.type: Easing.OutCubic } } }
+                Loader { anchors.fill: parent; anchors.rightMargin: 24; anchors.bottomMargin: 8; active: wp.wide && root.wpShownId !== ""; sourceComponent: wpInspectorC }
+            }
+
+            // ---- inspector (narrow: slide-over)
+            Item {
+                id: inspOverlay
+                anchors.fill: parent
+                visible: !wp.wide && opacity > 0.01
+                opacity: wp.hasSel ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+                Rectangle { anchors.fill: parent; color: "#99080e19"; MouseArea { anchors.fill: parent; onClicked: root.wpSelectedId = "" } }
+                Rectangle {
+                    anchors { top: parent.top; bottom: parent.bottom; right: parent.right; margins: 8 }
+                    width: Math.min(380, parent.width - 24)
+                    radius: 16
+                    color: "#161c27"
+                    border.width: 1
+                    border.color: "#2f3646"
+                    clip: true
+                    MouseArea { anchors.fill: parent }
+                    Loader { anchors.fill: parent; anchors.margins: 0; active: !wp.wide && root.wpShownId !== ""; sourceComponent: wpInspectorC }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: wpInspectorC
+        Rectangle {
+            id: ins
+            readonly property var w: root.wallpaperById(root.wpShownId)
+            color: wallPageIsWide ? "#161c27" : "transparent"
+            readonly property bool wallPageIsWide: root.width - root.sidebarW >= 1020
+            radius: 16
+            border.width: wallPageIsWide ? 1 : 0
+            border.color: "#232a37"
+            Flickable {
+                id: inf
+                anchors { fill: parent; margins: 16 }
+                contentWidth: width
+                contentHeight: icol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                ColumnLayout {
+                    id: icol
+                    width: inf.width - 6
+                    spacing: 12
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Rectangle { width: 8; height: 8; radius: 4; color: root.accent }
+                        Lbl { text: "INSPECTOR"; mono: true; font.pixelSize: 11; font.letterSpacing: 1.2; dim: true }
+                        Item { Layout.fillWidth: true }
+                        Lbl { text: ins.w ? ("#" + ins.w.id.toUpperCase()) : ""; mono: true; faint: true; font.pixelSize: 10 }
+                        IconBtn { box: 26; icon: "close"; tip: "Close inspector"; onClicked: root.wpSelectedId = "" }
+                    }
+                    Art {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: width / 1.6
+                        radiusPx: 12
+                        frameColor: ins.color.a > 0 ? "#161c27" : "#161c27"
+                        src: ins.w ? root.artUrl(ins.w.art) : ""
+                        grad: ins.w ? ins.w.g : ["#161c27", "#2a1b5e", "#0e4a6b"]
+                        glyph: "wallpaper"
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Lbl { Layout.fillWidth: true; text: ins.w ? ins.w.title : ""; wrapMode: Text.WordWrap; font.pixelSize: 17; font.weight: Font.Bold }
+                        IconBtn { box: 32; icon: (ins.w && root.favorites[ins.w.id]) ? "heart" : "heartO"; active: ins.w ? !!root.favorites[ins.w.id] : false
+                                  tip: "Favorite"; onClicked: root.toggleFavorite(ins.w.id, ins.w.title) }
+                    }
+                    Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12; text: ins.w ? ins.w.desc : "" }
+                    Spec { Layout.fillWidth: true; k: "Resolution"; v: ins.w ? ins.w.res : "" }
+                    Spec { Layout.fillWidth: true; k: "Aspect ratio"; v: ins.w ? ins.w.ratio : "" }
+                    Spec { Layout.fillWidth: true; k: "File size"; v: ins.w ? ins.w.size : "" }
+                    Spec { Layout.fillWidth: true; k: "Source"; v: root.wallpaperSourceLabel(ins.w) }
+                    Spec { Layout.fillWidth: true; k: "Uploader"; v: ins.w ? ins.w.author : "" }
+                    Lbl { text: "DOMINANT COLOURS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: ins.w ? ins.w.pal : []
+                            delegate: Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 28; radius: 8; color: modelData; border.width: 1; border.color: "#33ffffff" }
+                        }
+                    }
+                    Lbl { visible: ins.w && ins.w.tags && ins.w.tags.length > 0; text: "TAGS"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                    Wrap {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        visible: ins.w && ins.w.tags && ins.w.tags.length > 0
+                        Repeater {
+                            model: ins.w && ins.w.tags ? ins.w.tags : []
+                            delegate: Chip { label: "#" + modelData; accent: "#cebdff"; active: root.wpTag === modelData
+                                             onClicked: { root.wpTag = (root.wpTag === modelData) ? "" : modelData; root.wpVisible = 6 } }
+                        }
+                    }
+                    Item { Layout.preferredHeight: 2 }
+                    Btn { Layout.fillWidth: true; kind: "primary"; accent: root.accent; icon: "sync"; label: "Apply + Sync GPS Theme"; onClicked: root.requestApply(ins.w, true) }
+                    Btn { Layout.fillWidth: true; icon: "desktop"; label: "Apply Wallpaper"; onClicked: root.requestApply(ins.w, false) }
+                    Btn { Layout.fillWidth: true; icon: "link"; label: "Open source page"; onClicked: root.openSource(ins.w) }
+                    Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                          text: ins.w && ins.w.isRemote
+                                ? "Apply downloads or reuses a cached copy, sets it with awww, and optionally runs the existing GPS theme extraction. Apply never enables adult content."
+                                : "This card is bundled sample data. Search Wallhaven to select a real SFW wallpaper that can be downloaded and applied." }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    //  ANIME + MANGA — one shared browse page, configured by `kind`
+    // ================================================================
+    Component { id: animePage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: item.kind = "anime" } }
+    Component { id: mangaPage; Loader { anchors.fill: parent; sourceComponent: browseC; onLoaded: item.kind = "manga" } }
+
+    Component {
+        id: browseC
+        Item {
+            id: bp
+            property string kind: "anime"
+            readonly property bool isA: kind === "anime"
+            property string view: "Trending"
+            property string query: ""
+            property string genre: "All"
+            property string statusF: "All"
+            property string typeF: "All"
+            readonly property var views: isA ? ["Trending", "Seasonal", "Popular", "Watchlist"] : ["Trending", "Popular", "Latest", "Reading List"]
+            readonly property string listView: isA ? "Watchlist" : "Reading List"
+            readonly property var statusOpts: isA ? ["All", "Airing", "Finished", "Upcoming"] : ["All", "Ongoing", "Completed"]
+            readonly property var genreOpts: isA ? root.animeGenres : root.mangaGenres
+            readonly property color tint: isA ? "#7bd0ff" : "#ddb8ff"
+            readonly property real gw: bf.width - 48
+            readonly property int cols: Math.max(2, Math.floor((gw + 14) / 190))
+            readonly property real cardW: (gw - 14 * (cols - 1)) / cols
+            readonly property int shelfCols: gw >= 900 ? 4 : 2
+            readonly property var shelf: root.continueList(kind).slice(0, 4)
+            readonly property var entries: compute()
+
+            function compute() {
+                var src = isA ? root.animeList : root.mangaList
+                var q = query.trim().toLowerCase()
+                var out = []
+                for (var i = 0; i < src.length; i++) {
+                    var m = src[i]
+                    if (genre !== "All" && m.genres.indexOf(genre) < 0) continue
+                    if (statusF !== "All" && m.status !== statusF) continue
+                    if (!isA && typeF !== "All" && m.type !== typeF) continue
+                    if (q && (m.title + " " + m.genres.join(" ") + " " + (isA ? m.studio : m.author)).toLowerCase().indexOf(q) < 0) continue
+                    if (view === listView && !root.statuses[m.id]) continue
+                    if (view === "Seasonal" && !m.seasonal) continue
+                    if (view === "Trending" && m.trend >= 99) continue
+                    if (view === "Popular" && m.pop >= 99) continue
+                    out.push(m)
+                }
+                if (view === "Trending" || view === "Seasonal") out.sort(function (a, b) { return a.trend - b.trend })
+                else if (view === "Popular") out.sort(function (a, b) { return a.pop - b.pop })
+                else if (view === "Latest") out.sort(function (a, b) { return b.added - a.added })
+                else out.sort(function (a, b) { return (root.openedAt[b.id] || 0) - (root.openedAt[a.id] || 0) })
+                return out
+            }
+            function resetFilters() { query = ""; genre = "All"; statusF = "All"; typeF = "All" }
+
+            Flickable {
+                id: bf
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: bcol.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                Column {
+                    id: bcol
+                    x: 24; y: 6
+                    width: bf.width - 48
+                    spacing: 16
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 12
+                        ColumnLayout {
+                            spacing: 3
+                            Lbl { text: bp.isA ? "Anime" : "Manga & Manhwa"; font.pixelSize: 26; font.weight: Font.Bold }
+                            Lbl { dim: true; font.pixelSize: 13
+                                  text: bp.isA ? "Discover, track and pick up where you left off." : "Discover, track chapters and keep a reading list." }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Tag { visible: bp.gw > 640; tint: bp.tint
+                              text: bp.isA ? "TRACKING ONLY \u00b7 NOT A STREAMING SERVICE" : "READER + CATALOGUE API NOT CONNECTED" }
+                    }
+
+                    Card {
+                        width: parent.width
+                        SearchField {
+                            Layout.fillWidth: true
+                            accent: bp.tint
+                            placeholder: bp.isA ? "Search anime by title, genre or studio" : "Search by title, genre or author"
+                            text: bp.query
+                            onEdited: bp.query = text
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: bp.views
+                                delegate: Chip {
+                                    label: modelData
+                                    accent: bp.tint
+                                    active: bp.view === modelData
+                                    badge: modelData === bp.listView ? ("" + root.countListed(bp.kind)) : ""
+                                    onClicked: bp.view = modelData
+                                }
+                            }
+                        }
+                        Wrap {
+                            visible: !bp.isA
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: ["All", "Manga", "Manhwa", "Webtoon"]
+                                delegate: Chip { label: modelData === "All" ? "All types" : modelData; icon: "manga"; accent: bp.tint; active: bp.typeF === modelData; onClicked: bp.typeF = modelData }
+                            }
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Repeater {
+                                model: bp.genreOpts
+                                delegate: Chip { label: modelData; accent: "#a78bfa"; active: bp.genre === modelData; onClicked: bp.genre = modelData }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Status"; mono: true; faint: true; font.pixelSize: 11 }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: bp.statusOpts
+                                    delegate: Chip { label: modelData; accent: bp.tint; active: bp.statusF === modelData; onClicked: bp.statusF = modelData }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- continue shelf
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        visible: bp.shelf.length > 0 && bp.query.trim() === "" && bp.view !== bp.listView
+                        Lbl { text: bp.isA ? "Continue Watching" : "Continue Reading"; font.pixelSize: 16; font.weight: Font.Bold }
+                        Wrap {
+                            width: parent.width
+                            spacing: 14
+                            Repeater {
+                                model: bp.shelf
+                                delegate: ShelfCard {
+                                    readonly property int cur: root.progress[modelData.id] || 0
+                                    width: (bp.gw - 14 * (bp.shelfCols - 1)) / bp.shelfCols
+                                    title: modelData.title
+                                    sub: (bp.isA ? "Episode " : "Chapter ") + cur + " of " + modelData.total
+                                    badge: modelData.type ? modelData.type : modelData.status
+                                    src: root.artUrl(modelData.art)
+                                    grad: modelData.g
+                                    glyph: bp.isA ? "anime" : "manga"
+                                    value: cur / modelData.total
+                                    valueLabel: Math.round(cur / modelData.total * 100) + "% \u00b7 " + (bp.isA ? "Ep " : "Ch ") + cur + "/" + modelData.total
+                                    btnLabel: bp.isA ? "Continue Watching" : "Continue Reading"
+                                    btnIcon: bp.isA ? "play" : "manga"
+                                    accent: bp.tint
+                                    onActivated: root.openDetail(modelData.kind, modelData.id)
+                                    onCont: root.continueMedia(modelData)
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- manga: local collections entry point
+                    Card {
+                        width: parent.width
+                        visible: !bp.isA
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 14
+                            Rectangle { Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 12; color: Qt.alpha("#ddb8ff", 0.15)
+                                        Ico { anchors.centerIn: parent; name: "folder"; size: 18; tint: "#ddb8ff" } }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Lbl { text: "Local collections"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                                      text: "Bring your own CBZ, CBR and image-folder series. Nothing is scanned in this prototype \u2014 no local collections are connected." }
+                            }
+                            Btn { compact: true; label: "Add CBZ / CBR"; icon: "plus"
+                                  onClicked: root.notify("Local collection import isn't connected yet (CBZ / CBR). A backend indexer will handle this.", "warn") }
+                            Btn { compact: true; label: "Add image folder"; icon: "folder"
+                                  onClicked: root.notify("Local collection import isn't connected yet (image folders). A backend indexer will handle this.", "warn") }
+                        }
+                    }
+
+                    RowLayout {
+                        width: parent.width
+                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: bp.entries.length + " titles \u00b7 " + bp.view }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Wrap {
+                        width: parent.width
+                        spacing: 14
+                        Repeater {
+                            model: bp.entries
+                            delegate: MediaCard {
+                                width: bp.cardW
+                                title: modelData.title
+                                meta: bp.isA ? (modelData.season + " \u00b7 " + modelData.total + " eps") : (modelData.year + " \u00b7 " + modelData.total + " ch")
+                                extra: modelData.genres.slice(0, 2).join(" \u00b7 ")
+                                badge: bp.isA ? modelData.status : modelData.type
+                                corner: bp.isA ? ("\u2605 " + modelData.rating) : modelData.status
+                                userStatus: root.statuses[modelData.id] || ""
+                                src: root.artUrl(modelData.art)
+                                grad: modelData.g
+                                glyph: bp.isA ? "anime" : "manga"
+                                aspect: 0.6667
+                                accent: bp.tint
+                                fav: !!root.favorites[modelData.id]
+                                showList: true
+                                listed: !!root.statuses[modelData.id]
+                                primaryLabel: "Details"
+                                primaryIcon: "info"
+                                onActivated: root.openDetail(modelData.kind, modelData.id)
+                                onPrimary: root.openDetail(modelData.kind, modelData.id)
+                                onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
+                                onListToggled: root.toggleList(modelData.kind, modelData.id, modelData.title)
+                            }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: bp.entries.length === 0
+                        Lbl { font.pixelSize: 15; font.weight: Font.DemiBold
+                              text: bp.view === bp.listView ? (bp.isA ? "Your watchlist is empty" : "Your reading list is empty") : "Nothing matches these filters" }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                              text: bp.view === bp.listView ? "Hover a poster and press + to add it, then set a status like Watching or Plan to Read."
+                                                            : "Try clearing a genre or status filter." }
+                        Btn { label: "Reset filters"; icon: "refresh"; onClicked: bp.resetFilters() }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    //  MUSIC
+    // ================================================================
+    component Seek: Item {
+        id: sk
+        property real value: 0
+        property color tint: "#a78bfa"
+        property bool interactive: true
+        signal moved(real v)
+        implicitHeight: 16
+        readonly property real clamped: Math.max(0, Math.min(1, value))
+        Rectangle {
+            id: trk
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width; height: 4; radius: 2
+            color: "#2f3541"
+            Rectangle { width: parent.width * sk.clamped; height: parent.height; radius: 2; color: sk.tint }
+        }
+        Rectangle {
+            visible: sk.interactive && (sma.containsMouse || sma.pressed)
+            width: 12; height: 12; radius: 6; color: "#ffffff"
+            anchors.verticalCenter: parent.verticalCenter
+            x: trk.width * sk.clamped - 6
+        }
+        MouseArea {
+            id: sma
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: sk.interactive
+            cursorShape: Qt.PointingHandCursor
+            onPressed: function (mouse) { sk.moved(Math.max(0, Math.min(1, mouse.x / width))) }
+            onPositionChanged: function (mouse) { if (pressed) sk.moved(Math.max(0, Math.min(1, mouse.x / width))) }
+        }
+    }
+
+    Component {
+        id: musicPage
+        Item {
+            id: mp
+            readonly property bool wide: width >= 1040
+            property real dockW: (wide && root.queueOpen) ? 330 : 0
+            Behavior on dockW { NumberAnimation { duration: 230; easing.type: Easing.OutCubic } }
+            readonly property string src: root.musicSource
+            readonly property var srcInfo: root.findIn(root.musicSources, src)
+            readonly property real cw: mf.width - 48
+            readonly property string vibeMood: root.musicMoodFor(root.moodId)
+            readonly property string activeMood: root.musicMood !== "" ? root.musicMood : vibeMood
+            readonly property var trackList: root.filteredTracks()
+            readonly property var stationList: root.filteredStations()
+            readonly property var views: src === "radio" ? ["Popular", "New", "Favorites"] : ["Discover", "Trending", "New", "Favorites"]
+            readonly property int moodCols: cw >= 900 ? 6 : (cw >= 600 ? 3 : 2)
+            readonly property real moodW: (cw - 12 * (moodCols - 1)) / moodCols
+            readonly property int cols: Math.max(1, Math.floor((cw + 16) / 266))
+            readonly property real cardW: (cw - 16 * (cols - 1)) / cols
+            readonly property var mixList: root.tracks.filter(function (t) { return mp.activeMood === "" || t.moods.indexOf(mp.activeMood) >= 0 })
+
+            Flickable {
+                id: mf
+                anchors { left: parent.left; top: parent.top; bottom: parent.bottom; right: parent.right; rightMargin: mp.dockW }
+                contentWidth: width
+                contentHeight: mcol.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                Column {
+                    id: mcol
+                    x: 24; y: 6
+                    width: mf.width - 48
+                    spacing: 16
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 12
+                        ColumnLayout {
+                            spacing: 3
+                            Lbl { text: "Music"; font.pixelSize: 26; font.weight: Font.Bold }
+                            Lbl { text: "Free streaming from Jamendo and endless internet radio."; dim: true; font.pixelSize: 13 }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Btn { compact: true; icon: "list"; kind: root.queueOpen ? "primary" : "secondary"; accent: root.accent
+                              label: (mp.wide ? (root.queueOpen ? "Hide queue" : "Show queue") : "Queue") + " (" + root.queue.length + ")"
+                              onClicked: root.queueOpen = !root.queueOpen }
+                    }
+
+                    // ---- source selection
+                    Wrap {
+                        id: srcWrap
+                        width: parent.width
+                        spacing: 12
+                        Repeater {
+                            model: root.musicSources
+                            delegate: Rectangle {
+                                id: sc2
+                                readonly property bool sel: root.musicSource === modelData.id
+                                width: (srcWrap.width - 24) / 3 < 220 ? srcWrap.width : (srcWrap.width - 24) / 3
+                                height: 84
+                                radius: 14
+                                color: sh.containsMouse ? "#1f2631" : "#1a202b"
+                                border.width: sel ? 2 : 1
+                                border.color: sel ? modelData.accent : "#262d3a"
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                                Rectangle { x: 14; anchors.verticalCenter: parent.verticalCenter; width: 44; height: 44; radius: 12; color: Qt.alpha(modelData.accent, 0.16)
+                                            Ico { anchors.centerIn: parent; name: modelData.icon; size: 20; tint: modelData.accent } }
+                                Column {
+                                    x: 70; anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - 84
+                                    spacing: 3
+                                    Lbl { width: parent.width; text: modelData.name; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Lbl { width: parent.width; text: modelData.sub; dim: true; font.pixelSize: 11; elide: Text.ElideRight }
+                                    Tag { text: modelData.note.toUpperCase(); tint: root.backendConnected ? "#86efac" : "#fde047"; px: 9 }
+                                }
+                                MouseArea { id: sh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMusicSource(modelData.id) }
+                            }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: !root.backendConnected
+                        tint: "#fde047"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "warn"; size: 18; tint: "#fde047" }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
+                                  text: mp.src === "jamendo" ? "Jamendo isn't connected. These are sample tracks. Phase 2 connects the Jamendo API for real Creative Commons tracks with direct streaming; the licence shown on each row is what the API will report."
+                                      : (mp.src === "radio" ? "Radio Browser isn't connected. These are sample stations. Phase 2 queries Radio Browser for endless genre-based listening and resolves each station's stream URL."
+                                                            : "Local music is planned for later. Nothing on disk is scanned in this prototype.") }
+                        }
+                    }
+
+                    // ---- mood discovery
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 10
+                        visible: mp.src !== "local"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Lbl { text: "Mood discovery"; font.pixelSize: 16; font.weight: Font.Bold }
+                            Item { Layout.fillWidth: true }
+                            Btn { compact: true; icon: "vibe"; label: "Match my GPS vibe"; onClicked: { root.musicMood = mp.vibeMood; root.notify("Matched " + root.mood.name + " \u2192 " + mp.vibeMood, "ok") } }
+                            Btn { compact: true; kind: "ghost"; icon: "close"; label: "Clear"; visible: root.musicMood !== ""; onClicked: root.musicMood = "" }
+                        }
+                        Wrap {
+                            id: moodWrap
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Repeater {
+                                model: root.musicMoods
+                                delegate: Rectangle {
+                                    id: mood
+                                    readonly property bool sel: root.musicMood === modelData.name
+                                    width: mp.moodW
+                                    height: 84
+                                    radius: 14
+                                    color: "#1a202b"
+                                    border.width: sel ? 2 : 1
+                                    border.color: sel ? modelData.accent : "#262d3a"
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                                    HoverHandler { id: mh2 }
+                                    scale: mh2.hovered ? 1.02 : 1
+                                    Behavior on scale { NumberAnimation { duration: 160 } }
+                                    Art { x: 4; y: 4; width: parent.width - 8; height: parent.height - 8; radiusPx: 11; frameColor: mood.color; grad: modelData.g; glyph: "music"; zoom: mh2.hovered ? 1.06 : 1 }
+                                    Rectangle { x: 4; y: 4; width: parent.width - 8; height: parent.height - 8; radius: 11; color: mood.sel ? "#33000000" : "#55000000" }
+                                    Column {
+                                        x: 14; anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 24
+                                        spacing: 2
+                                        Lbl { width: parent.width; text: modelData.name; font.pixelSize: 14; font.weight: Font.Bold; elide: Text.ElideRight }
+                                        Lbl { text: root.moodCount(modelData.name, "track") + " tracks \u00b7 " + root.moodCount(modelData.name, "station") + " stations"; mono: true; font.pixelSize: 10; color: "#cfd6e6" }
+                                    }
+                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.musicMood = mood.sel ? "" : modelData.name }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- vibe mix hero
+                    Card {
+                        width: parent.width
+                        visible: mp.src !== "local"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 18
+                            Art {
+                                Layout.preferredWidth: 150; Layout.preferredHeight: 94
+                                radiusPx: 12; frameColor: "#161c27"
+                                grad: (root.moodInfo(mp.activeMood) ? root.moodInfo(mp.activeMood).g : root.mood.grad)
+                                glyph: "music"
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Tag { text: root.musicMood !== "" ? "MOOD MIX" : "MATCHES YOUR GPS VIBE"; tint: root.accent }
+                                Lbl { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 19; font.weight: Font.Bold
+                                      text: mp.activeMood !== "" ? (mp.activeMood + " mix") : "Everything mix" }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                                      text: mp.mixList.length + " sample tracks. Play them as a queue, or shuffle." }
+                            }
+                            Btn { kind: "primary"; accent: root.accent; icon: "play"; label: "Play mix"; onClicked: root.playAll(mp.mixList, false) }
+                            Btn { icon: "sync"; label: mp.wide ? "Shuffle" : ""; onClicked: root.playAll(mp.mixList, true) }
+                        }
+                    }
+
+                    // ---- search + views
+                    Card {
+                        width: parent.width
+                        visible: mp.src !== "local"
+                        SearchField {
+                            Layout.fillWidth: true
+                            accent: root.accent
+                            placeholder: mp.src === "radio" ? "Search stations or genres" : "Search tracks, artists or albums"
+                            text: root.musicQuery
+                            onEdited: root.musicQuery = text
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: mp.views
+                                delegate: Chip { label: modelData; accent: root.accent; active: root.musicView === modelData; onClicked: root.musicView = modelData }
+                            }
+                        }
+                        Wrap {
+                            visible: mp.src === "radio"
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Repeater {
+                                model: root.radioGenres
+                                delegate: Chip { label: modelData; accent: "#7bd0ff"; active: root.radioGenre === modelData; onClicked: root.radioGenre = modelData }
+                            }
+                        }
+                    }
+
+                    // ---- Jamendo tracks
+                    Column {
+                        width: parent.width
+                        spacing: 6
+                        visible: mp.src === "jamendo"
+                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: mp.trackList.length + " sample tracks" + (root.musicMood !== "" ? " \u00b7 " + root.musicMood : "") }
+                        Repeater {
+                            model: mp.trackList
+                            delegate: Rectangle {
+                                id: row
+                                readonly property bool cur: root.nowPlaying !== null && root.nowPlaying.id === modelData.id
+                                width: parent.width
+                                height: 58
+                                radius: 12
+                                color: rh2.containsMouse ? "#1f2631" : (cur ? Qt.alpha(root.accent, 0.10) : "#161c27")
+                                border.width: 1
+                                border.color: cur ? Qt.alpha(root.accent, 0.45) : "#232a37"
+                                Behavior on color { ColorAnimation { duration: 140 } }
+                                MouseArea { id: rh2; anchors.fill: parent; hoverEnabled: true; onDoubleClicked: root.playNow(modelData, mp.trackList) }
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 12; rightMargin: 10 }
+                                    spacing: 12
+                                    Lbl { Layout.preferredWidth: 22; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 11
+                                          text: row.cur ? (root.playing ? "\u25B6" : "\u2016") : (index + 1); color: row.cur ? root.accent : "#948e9d" }
+                                    Art { Layout.preferredWidth: 40; Layout.preferredHeight: 40; radiusPx: 8; frameColor: row.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "music" }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: row.cur ? root.accent : "#dde2f2" }
+                                        Lbl { Layout.fillWidth: true; text: modelData.artist + " \u00b7 " + modelData.album; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                                    }
+                                    Tag { visible: mp.cw > 760; text: modelData.genre.toUpperCase(); px: 9 }
+                                    Tag { visible: mp.cw > 640; text: modelData.license; tint: "#86efac"; px: 9 }
+                                    Lbl { text: root.fmtTime(modelData.dur); mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 38; horizontalAlignment: Text.AlignRight }
+                                    IconBtn { box: 30; icon: root.favorites[modelData.id] ? "heart" : "heartO"; active: !!root.favorites[modelData.id]; tip: "Favorite"
+                                              onClicked: root.toggleFavorite(modelData.id, modelData.title) }
+                                    IconBtn { box: 30; icon: "plus"; tip: "Add to queue"; onClicked: root.queueAdd(modelData, false) }
+                                    IconBtn { box: 30; icon: "chev"; tip: "Play next"; onClicked: root.queueAdd(modelData, true) }
+                                    IconBtn { box: 30; icon: "play"; tip: "Play"; tint: root.accent; onClicked: root.playNow(modelData, mp.trackList) }
+                                }
+                            }
+                        }
+                        Card {
+                            width: parent.width
+                            visible: mp.trackList.length === 0
+                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: root.musicView === "Favorites" ? "No favorite tracks yet" : "No tracks match" }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Clear the mood or search, or heart a few tracks to build your favorites." }
+                            Btn { label: "Clear mood & search"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.musicView = "Discover" } }
+                        }
+                    }
+
+                    // ---- radio stations
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        visible: mp.src === "radio"
+                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: mp.stationList.length + " sample stations \u00b7 pick one and Next/Previous move through this list" }
+                        Wrap {
+                            width: parent.width
+                            spacing: 16
+                            Repeater {
+                                model: mp.stationList
+                                delegate: MediaCard {
+                                    width: mp.cardW
+                                    title: modelData.title
+                                    meta: modelData.genre + " \u00b7 " + modelData.bitrate
+                                    extra: modelData.listeners.toLocaleString(Qt.locale("en_US"), "f", 0) + " listeners (sample)"
+                                    badge: "LIVE"
+                                    corner: modelData.codec
+                                    grad: modelData.g
+                                    glyph: "music"
+                                    aspect: 1.9
+                                    accent: "#7bd0ff"
+                                    selected: root.nowPlaying !== null && root.nowPlaying.id === modelData.id
+                                    fav: !!root.favorites[modelData.id]
+                                    showPreview: true
+                                    previewIcon: "plus"
+                                    previewTip: "Add to queue"
+                                    primaryLabel: "Listen"
+                                    primaryIcon: "play"
+                                    onActivated: root.playNow(modelData, mp.stationList)
+                                    onPrimary: root.playNow(modelData, mp.stationList)
+                                    onPreviewed: root.queueAdd(modelData, false)
+                                    onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
+                                }
+                            }
+                        }
+                        Card {
+                            width: parent.width
+                            visible: mp.stationList.length === 0
+                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: root.musicView === "Favorites" ? "No favorite stations yet" : "No stations match" }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Try another genre or clear the mood filter." }
+                            Btn { label: "Reset"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.radioGenre = "All"; root.musicView = "Popular" } }
+                        }
+                    }
+
+                    // ---- local files (later)
+                    Card {
+                        width: parent.width
+                        visible: mp.src === "local"
+                        Lbl { font.pixelSize: 16; font.weight: Font.Bold; text: "Your music, your folders" }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                              text: "Point GPS at folders of FLAC, MP3, Opus or M4A and they appear here with covers and tags. This is planned after Jamendo and Radio Browser." }
+                        Btn { icon: "folder"; label: "Add music folder"; onClicked: root.notify("Local music isn't connected yet \u2014 planned after the streaming sources.", "warn") }
+                    }
+
+                    // ---- narrow layouts: queue sits below the content
+                    Loader {
+                        width: parent.width
+                        height: item ? item.implicitHeight : 0
+                        active: !mp.wide && root.queueOpen
+                        sourceComponent: queuePanelC
+                    }
+                }
+            }
+
+            // ---- docked queue (wide)
+            Item {
+                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                width: 330
+                opacity: (mp.wide && root.queueOpen) ? 1 : 0
+                visible: opacity > 0.01
+                clip: true
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+                Loader { anchors.fill: parent; anchors.rightMargin: 24; anchors.bottomMargin: 10; anchors.topMargin: 6; active: mp.wide && (root.queueOpen || mp.dockW > 1); sourceComponent: queuePanelC }
+            }
+        }
+    }
+
+    Component {
+        id: queuePanelC
+        Rectangle {
+            id: qp
+            readonly property var np: root.nowPlaying
+            color: "#161c27"
+            radius: 16
+            border.width: 1
+            border.color: "#232a37"
+            implicitHeight: Math.min(560, qcol.implicitHeight + 32)
+            Flickable {
+                id: qf
+                anchors { fill: parent; margins: 16 }
+                contentWidth: width
+                contentHeight: qcol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                ColumnLayout {
+                    id: qcol
+                    width: qf.width - 6
+                    spacing: 10
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Lbl { text: "Queue"; font.pixelSize: 16; font.weight: Font.Bold }
+                        Lbl { text: "  " + root.queue.length + " item" + (root.queue.length === 1 ? "" : "s"); mono: true; faint: true; font.pixelSize: 11 }
+                        Item { Layout.fillWidth: true }
+                        Btn { compact: true; kind: "ghost"; label: "Clear"; icon: "close"; muted: root.queue.length === 0; onClicked: root.clearQueue() }
+                    }
+                    Lbl { text: "NOW PLAYING"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 62
+                        radius: 12
+                        color: Qt.alpha(root.accent, 0.10)
+                        border.width: 1
+                        border.color: Qt.alpha(root.accent, 0.4)
+                        visible: qp.np !== null
+                        Art { x: 8; y: 8; width: 46; height: 46; radiusPx: 8; frameColor: "#1b2030"; src: qp.np ? root.artUrl(qp.np.art) : ""; grad: qp.np ? qp.np.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+                        Column {
+                            x: 64; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 76; spacing: 2
+                            Lbl { width: parent.width; text: qp.np ? qp.np.title : ""; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                            Lbl { width: parent.width; text: qp.np ? root.musicSub(qp.np) : ""; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                        }
+                    }
+                    Lbl { visible: qp.np === null; Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12; text: "Nothing playing. Press play on a track or station." }
+                    Lbl { text: "UP NEXT"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
+                    Repeater {
+                        model: root.queue
+                        delegate: Rectangle {
+                            id: qr
+                            readonly property var it: root.musicItem(modelData)
+                            readonly property bool cur: index === root.queueIndex
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 52
+                            radius: 10
+                            color: qrh.containsMouse ? "#242a36" : (cur ? Qt.alpha(root.accent, 0.08) : "#1a202b")
+                            Behavior on color { ColorAnimation { duration: 130 } }
+                            MouseArea { id: qrh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.jumpQueue(index) }
+                            RowLayout {
+                                anchors { fill: parent; leftMargin: 8; rightMargin: 6 }
+                                spacing: 8
+                                Lbl { Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 10; text: qr.cur ? "\u25B6" : (index + 1); color: qr.cur ? root.accent : "#948e9d" }
+                                Art { Layout.preferredWidth: 34; Layout.preferredHeight: 34; radiusPx: 6; frameColor: qr.color; src: qr.it ? root.artUrl(qr.it.art) : ""; grad: qr.it ? qr.it.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 0
+                                    Lbl { Layout.fillWidth: true; text: qr.it ? qr.it.title : ""; elide: Text.ElideRight; font.pixelSize: 12; font.weight: Font.DemiBold; color: qr.cur ? root.accent : "#dde2f2" }
+                                    Lbl { Layout.fillWidth: true; text: qr.it ? (qr.it.kind === "station" ? "Live station" : qr.it.artist) : ""; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                                }
+                                IconBtn { box: 24; icon: "chev"; tip: "Move down"; onClicked: root.moveQueue(index, 1) }
+                                IconBtn { box: 24; icon: "back"; tip: "Move up"; onClicked: root.moveQueue(index, -1) }
+                                IconBtn { box: 24; icon: "close"; tip: "Remove"; onClicked: root.removeFromQueue(index) }
+                            }
+                        }
+                    }
+                    Lbl { visible: root.queue.length === 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 12
+                          text: "The queue is empty. Use + on a track, or play a mood mix." }
+                    Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                          text: "Radio stations are endless streams: Next and Previous move between stations in the list you started from." }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- persistent mini-player
+    Rectangle {
+        id: miniPlayer
+        anchors { left: sidebar.right; right: parent.right; bottom: parent.bottom }
+        height: root.nowPlaying ? 76 : 0
+        Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+        visible: height > 1
+        clip: true
+        z: 30
+        color: "#f5080e19"
+        readonly property var np: root.nowPlaying
+        readonly property bool live: np !== null && np.kind === "station"
+        readonly property real frac: (np !== null && np.kind === "track" && np.dur > 0) ? root.playPos / np.dur : 0
+        Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: 1; color: "#232a37" }
+        RowLayout {
+            anchors { fill: parent; leftMargin: 20; rightMargin: 20; topMargin: 6; bottomMargin: 6 }
+            spacing: 14
+            Art { Layout.preferredWidth: 54; Layout.preferredHeight: 54; radiusPx: 9; frameColor: "#080e19"
+                  src: miniPlayer.np ? root.artUrl(miniPlayer.np.art) : ""; grad: miniPlayer.np ? miniPlayer.np.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+            ColumnLayout {
+                Layout.preferredWidth: root.width < 1150 ? 150 : 230
+                spacing: 2
+                Lbl { Layout.fillWidth: true; text: miniPlayer.np ? miniPlayer.np.title : ""; elide: Text.ElideRight; font.pixelSize: 14; font.weight: Font.DemiBold }
+                Lbl { Layout.fillWidth: true; text: miniPlayer.np ? root.musicSub(miniPlayer.np) : ""; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+            }
+            IconBtn { box: 30; icon: (miniPlayer.np && root.favorites[miniPlayer.np.id]) ? "heart" : "heartO"; active: miniPlayer.np ? !!root.favorites[miniPlayer.np.id] : false; tip: "Favorite"
+                      onClicked: root.toggleFavorite(miniPlayer.np.id, miniPlayer.np.title) }
+            Row {
+                spacing: 8
+                Layout.alignment: Qt.AlignVCenter
+                IconBtn { visible: root.width > 1000; box: 30; icon: "sync"; tip: "Shuffle"; active: root.shuffleOn; activeTint: root.accent; onClicked: root.shuffleOn = !root.shuffleOn }
+                IconBtn { box: 34; icon: "back"; tip: "Previous"; onClicked: root.skip(-1) }
+                Rectangle {
+                    width: 42; height: 42; radius: 21
+                    color: pph.containsMouse ? Qt.lighter(root.accent, 1.12) : root.accent
+                    scale: pph.pressed ? 0.94 : 1
+                    Behavior on scale { NumberAnimation { duration: 90 } }
+                    Ico { anchors.centerIn: parent; name: root.playing ? "pause" : "play"; size: 16; tint: "#15112b" }
+                    MouseArea { id: pph; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.togglePlay() }
+                }
+                IconBtn { box: 34; icon: "chev"; tip: "Next"; onClicked: root.skip(1) }
+                IconBtn { visible: root.width > 1000; box: 30; icon: "refresh"; tip: "Repeat queue"; active: root.repeatOn; activeTint: root.accent; onClicked: root.repeatOn = !root.repeatOn }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                visible: !miniPlayer.live
+                RowLayout {
+                    Layout.fillWidth: true
+                    Lbl { text: miniPlayer.np ? root.fmtTime(root.playPos) : "0:00"; mono: true; faint: true; font.pixelSize: 11 }
+                    Seek { Layout.fillWidth: true; value: miniPlayer.frac; tint: root.accent; onMoved: function (v) { root.seekFrac(v) } }
+                    Lbl { text: (miniPlayer.np && miniPlayer.np.dur) ? root.fmtTime(miniPlayer.np.dur) : "0:00"; mono: true; faint: true; font.pixelSize: 11 }
+                }
+                Lbl { visible: !root.backendConnected; text: "UI preview \u00b7 audio engine not connected"; mono: true; faint: true; font.pixelSize: 10 }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 3
+                visible: miniPlayer.live
+                Row { spacing: 8
+                    Tag { text: "LIVE"; tint: "#ff7a8a" }
+                    Lbl { anchors.verticalCenter: parent.verticalCenter; text: miniPlayer.np ? (miniPlayer.np.bitrate + " \u00b7 " + miniPlayer.np.codec + " \u00b7 endless stream") : ""; mono: true; faint: true; font.pixelSize: 11 }
+                }
+                Lbl { visible: !root.backendConnected; text: "UI preview \u00b7 audio engine not connected"; mono: true; faint: true; font.pixelSize: 10 }
+            }
+            Row {
+                visible: root.width > 1050
+                spacing: 6
+                Layout.alignment: Qt.AlignVCenter
+                IconBtn { box: 28; icon: root.muted ? "close" : "music"; tip: root.muted ? "Unmute" : "Mute"; active: root.muted; activeTint: "#fde047"; onClicked: root.muted = !root.muted }
+                Seek { width: 84; anchors.verticalCenter: parent.verticalCenter; value: root.muted ? 0 : root.volume; tint: "#cac4d4"; onMoved: function (v) { root.volume = v; root.muted = false } }
+            }
+            Btn { compact: true; icon: "list"; label: root.width > 1100 ? ("Queue (" + root.queue.length + ")") : ""; onClicked: { root.queueOpen = true; root.go(root.pgMusic) } }
+            IconBtn { box: 28; icon: "close"; tip: "Stop and hide player"; onClicked: root.stopPlayer() }
+        }
+    }
+
+    // ================================================================
+    //  DOWNLOADS
+    // ================================================================
+    Component {
+        id: dlPage
+        Item {
+            id: dp
+            property string mode: "video"
+            property string format: "MP4"
+            property string quality: "1080p"
+            property string dir: "~/Videos/GPS"
+            property string urlText: ""
+            property string err: ""
+            property string filter: "All"
+            readonly property var formats: mode === "video" ? ["MP4", "MKV", "WebM"] : ["MP3", "M4A", "FLAC", "Opus"]
+            readonly property var qualities: mode === "video" ? ["Best", "1080p", "720p", "480p"] : ["320k", "256k", "192k", "128k"]
+            readonly property var filters: ["All", "Downloading", "Queued", "Completed", "Failed"]
+            readonly property var rows: root.downloads.filter(function (d) {
+                if (dp.filter === "All") return true
+                if (dp.filter === "Downloading") return d.status === "downloading" || d.status === "paused"
+                return d.status === dp.filter.toLowerCase()
+            })
+            function countFor(f) {
+                var n = 0
+                for (var i = 0; i < root.downloads.length; i++) {
+                    var s = root.downloads[i].status
+                    if (f === "All" || (f === "Downloading" && (s === "downloading" || s === "paused")) || s === f.toLowerCase()) n++
+                }
+                return n
+            }
+            function setMode(m) {
+                mode = m
+                format = m === "video" ? "MP4" : "MP3"
+                quality = m === "video" ? "1080p" : "320k"
+                dir = m === "video" ? "~/Videos/GPS" : "~/Music/GPS"
+            }
+            function submit() {
+                var u = urlText.trim()
+                if (u === "") { err = "Paste a video or audio URL first."; return }
+                if (!/^https?:\/\/[^\s\/$.?#][^\s]*$/i.test(u)) { err = "That doesn't look like a valid http(s) URL."; return }
+                if (dir.trim() === "") { err = "Choose an output folder."; return }
+                for (var i = 0; i < root.downloads.length; i++)
+                    if (root.downloads[i].url === u) { err = "This URL is already in the queue."; return }
+                err = ""
+                root.enqueue(u, mode, format, quality, dir.trim())
+                urlText = ""
+            }
+            function consumePending() {
+                if (root.pendingUrl !== "") { urlText = root.pendingUrl; root.pendingUrl = ""; err = "" }
+            }
+            Component.onCompleted: consumePending()
+            Connections { target: root; function onPendingUrlChanged() { dp.consumePending() } }
+
+            Flickable {
+                id: df2
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: dcol2.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                Column {
+                    id: dcol2
+                    x: 24; y: 6
+                    width: df2.width - 48
+                    spacing: 16
+
+                    RowLayout {
+                        width: parent.width
+                        ColumnLayout {
+                            spacing: 3
+                            Lbl { text: "Downloads"; font.pixelSize: 26; font.weight: Font.Bold }
+                            Lbl { text: "Prepare video and audio downloads. Nothing starts without you pressing Add."; dim: true; font.pixelSize: 13 }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Tag { visible: df2.width > 700; text: "SAMPLE QUEUE"; tint: "#fde047" }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: !root.backendConnected
+                        tint: "#fde047"
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "warn"; size: 18; tint: "#fde047" }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
+                                  text: "Download backend not connected. yt-dlp and FFmpeg will run here in a future build. The records below are samples; progress does not advance, and pause, resume and retry only change the UI." }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            SearchField {
+                                Layout.fillWidth: true
+                                icon: "link"
+                                accent: root.accent
+                                placeholder: "Paste a video or audio URL (https://...)"
+                                text: dp.urlText
+                                onEdited: { dp.urlText = text; dp.err = "" }
+                                onSubmitted: dp.submit()
+                            }
+                            Btn { kind: "primary"; accent: root.accent; icon: "plus"; label: "Add to Queue"; onClicked: dp.submit() }
+                        }
+                        Lbl { visible: dp.err !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: dp.err; color: "#ffb4ab"; font.pixelSize: 12 }
+                        Lbl { visible: dp.err === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                              text: "Pasting or clipboard changes never start a download. Press Add to Queue (or Enter) deliberately." }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Mode"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                            Chip { label: "Video"; icon: "video"; accent: root.accent; active: dp.mode === "video"; onClicked: dp.setMode("video") }
+                            Chip { label: "Audio"; icon: "music"; accent: root.accent; active: dp.mode === "audio"; onClicked: dp.setMode("audio") }
+                            Item { Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Format"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                            Wrap { Layout.fillWidth: true; spacing: 8
+                                Repeater { model: dp.formats; delegate: Chip { label: modelData; accent: root.accent; active: dp.format === modelData; onClicked: dp.format = modelData } } }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Quality"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                            Wrap { Layout.fillWidth: true; spacing: 8
+                                Repeater { model: dp.qualities; delegate: Chip { label: modelData; accent: root.accent; active: dp.quality === modelData; onClicked: dp.quality = modelData } } }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Save to"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
+                            SearchField { Layout.fillWidth: true; icon: "folder"; accent: root.accent; placeholder: "Output folder"; text: dp.dir; onEdited: dp.dir = text }
+                            Btn { compact: true; label: "Browse\u2026"; onClicked: root.notify("A folder picker needs the host (e.g. a FolderDialog). Type a path for now.", "info") }
+                        }
+                    }
+
+                    Wrap {
+                        width: parent.width
+                        spacing: 8
+                        Repeater {
+                            model: dp.filters
+                            delegate: Chip { label: modelData; accent: root.accent; active: dp.filter === modelData; badge: "" + dp.countFor(modelData); onClicked: dp.filter = modelData }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        Repeater {
+                            model: dp.rows
+                            delegate: Rectangle {
+                                id: dr
+                                readonly property bool failed: modelData.status === "failed"
+                                width: parent.width
+                                height: failed ? 98 : 80
+                                radius: 12
+                                color: "#1a202b"
+                                border.width: 1
+                                border.color: failed ? Qt.alpha("#ffb4ab", 0.35) : "#262d3a"
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 14; rightMargin: 12 }
+                                    spacing: 14
+                                    Rectangle {
+                                        Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 11
+                                        color: Qt.alpha(modelData.type === "video" ? "#7bd0ff" : "#ddb8ff", 0.15)
+                                        Ico { anchors.centerIn: parent; name: modelData.type === "video" ? "video" : "music"; size: 16; tint: modelData.type === "video" ? "#7bd0ff" : "#ddb8ff" }
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 4
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Lbl { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                            Tag { px: 9
+                                                  text: modelData.status.toUpperCase()
+                                                  tint: modelData.status === "completed" ? "#86efac" : (modelData.status === "failed" ? "#ffb4ab" : (modelData.status === "downloading" ? "#7bd0ff" : (modelData.status === "paused" ? "#fde047" : "#cac4d4"))) }
+                                        }
+                                        Lbl { Layout.fillWidth: true; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 11
+                                              text: modelData.format + " \u00b7 " + modelData.quality + " \u00b7 " + modelData.dest + " \u00b7 " + modelData.size }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: modelData.progress > 0 && modelData.status !== "queued"
+                                            spacing: 10
+                                            Bar { Layout.fillWidth: true; height: 5; value: modelData.progress; tint: modelData.status === "completed" ? "#86efac" : (dr.failed ? "#ffb4ab" : "#7bd0ff") }
+                                            Lbl { text: Math.round(modelData.progress * 100) + "%"; mono: true; font.pixelSize: 11; dim: true }
+                                        }
+                                        Lbl { visible: dr.failed; Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.error; color: "#ffb4ab"; font.pixelSize: 12 }
+                                    }
+                                    Row {
+                                        spacing: 6
+                                        IconBtn { visible: modelData.status === "downloading"; icon: "pause"; tip: "Pause"; onClicked: root.dlAction(modelData, "pause") }
+                                        IconBtn { visible: modelData.status === "paused"; icon: "play"; tip: "Resume"; onClicked: root.dlAction(modelData, "resume") }
+                                        IconBtn { visible: dr.failed; icon: "refresh"; tip: "Retry"; onClicked: root.dlAction(modelData, "retry") }
+                                        IconBtn { visible: modelData.status === "completed"; icon: "folder"; tip: "Open location"; onClicked: root.dlAction(modelData, "open") }
+                                        IconBtn { icon: "close"; tip: (modelData.status === "completed" || dr.failed) ? "Remove" : "Cancel"
+                                                  onClicked: root.dlAction(modelData, (modelData.status === "completed" || dr.failed) ? "remove" : "cancel") }
+                                    }
+                                }
+                            }
+                        }
+                        Card {
+                            width: parent.width
+                            visible: dp.rows.length === 0
+                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: dp.filter === "All" ? "The queue is empty" : ("No " + dp.filter.toLowerCase() + " items") }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Add a URL above to prepare a download." }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    //  MY LIBRARY
+    // ================================================================
+    Component {
+        id: libPage
+        Item {
+            id: lp
+            property string filter: "All"
+            property string sort: "Recently Opened"
+            property bool grid: true
+            property string q: ""
+            readonly property var filters: ["All", "Videos", "Audio", "Music", "Wallpapers", "Anime", "Manga & Manhwa", "Favorites"]
+            readonly property var sorts: ["Recently Added", "Recently Opened", "Alphabetical", "Favorites"]
+            readonly property var items: root.libraryList(filter, sort, q)
+            readonly property var recent: root.libraryList("All", "Recently Opened", "").filter(function (it) { return it.opened > 0 }).slice(0, 4)
+            readonly property real gw: lf.width - 48
+            readonly property int cols: Math.max(1, Math.floor((gw + 14) / 250))
+            readonly property real cardW: (gw - 14 * (cols - 1)) / cols
+            readonly property var empties: ({
+                "All": "Your library is empty. Favorite a wallpaper, track or title to start filling it.",
+                "Videos": "No local videos. A future scan of your video folders will list them here.",
+                "Audio": "No local audio files yet.",
+                "Music": "No favorite tracks or stations yet. Heart a few on the Music page.",
+                "Wallpapers": "No saved wallpapers. Heart a wallpaper to save it here.",
+                "Anime": "No anime on your list. Add one from the Anime page.",
+                "Manga & Manhwa": "Your reading list is empty. Add a series from the Manga page.",
+                "Favorites": "Nothing favorited yet."
+            })
+            function glyphFor(k) {
+                return k === "wallpaper" ? "wallpaper" : (k === "anime" ? "anime" : (k === "manga" ? "manga" : (k === "video" ? "video" : "music")))
+            }
+            Flickable {
+                id: lf
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: lcol.height + 40
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: VScroll {}
+                Column {
+                    id: lcol
+                    x: 24; y: 6
+                    width: lf.width - 48
+                    spacing: 16
+
+                    RowLayout {
+                        width: parent.width
+                        ColumnLayout {
+                            spacing: 3
+                            Lbl { text: "My Library"; font.pixelSize: 26; font.weight: Font.Bold }
+                            Lbl { text: "Everything you've saved, in one place. In-memory only for now."; dim: true; font.pixelSize: 13 }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Tag { visible: lf.width > 700; text: "NO FILES SCANNED"; tint: "#948e9d" }
+                    }
+
+                    Card {
+                        width: parent.width
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            SearchField { Layout.fillWidth: true; accent: root.accent; placeholder: "Search your library"; text: lp.q; onEdited: lp.q = text }
+                            IconBtn { box: 36; icon: "grid"; tip: "Grid view"; active: lp.grid; activeTint: root.accent; onClicked: lp.grid = true }
+                            IconBtn { box: 36; icon: "list"; tip: "List view"; active: !lp.grid; activeTint: root.accent; onClicked: lp.grid = false }
+                        }
+                        Wrap {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: lp.filters
+                                delegate: Chip { label: modelData; accent: root.accent; active: lp.filter === modelData
+                                                 badge: "" + root.libraryList(modelData, "", "").length; onClicked: lp.filter = modelData }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Lbl { text: "Sort"; mono: true; faint: true; font.pixelSize: 11 }
+                            Wrap {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Repeater {
+                                    model: lp.sorts
+                                    delegate: Chip { label: modelData; accent: "#cebdff"; active: lp.sort === modelData; onClicked: lp.sort = modelData }
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        visible: lp.filter === "All" && lp.q.trim() === "" && lp.recent.length > 0
+                        Lbl { text: "Recently opened"; font.pixelSize: 16; font.weight: Font.Bold }
+                        Wrap {
+                            width: parent.width
+                            spacing: 14
+                            Repeater {
+                                model: lp.recent
+                                delegate: Rectangle {
+                                    width: Math.min(260, (lp.gw - 14) / 2)
+                                    height: 66
+                                    radius: 12
+                                    color: rrh.containsMouse ? "#1f2631" : "#1a202b"
+                                    border.width: 1
+                                    border.color: "#262d3a"
+                                    Art { x: 8; y: 8; width: 76; height: 50; radiusPx: 8; frameColor: parent.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: lp.glyphFor(modelData.kind) }
+                                    Column {
+                                        x: 94; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 104; spacing: 2
+                                        Lbl { width: parent.width; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                        Lbl { width: parent.width; text: root.kindLabel(modelData.kind); mono: true; faint: true; font.pixelSize: 10 }
+                                    }
+                                    MouseArea { id: rrh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.libraryAction(modelData) }
+                                }
+                            }
+                        }
+                    }
+
+                    Lbl { mono: true; faint: true; font.pixelSize: 11; text: lp.items.length + " item" + (lp.items.length === 1 ? "" : "s") + " \u00b7 " + lp.filter + " \u00b7 " + lp.sort }
+
+                    Wrap {
+                        width: parent.width
+                        spacing: 14
+                        visible: lp.grid
+                        Repeater {
+                            model: lp.grid ? lp.items : []
+                            delegate: MediaCard {
+                                width: lp.cardW
+                                title: modelData.title
+                                meta: modelData.sub
+                                extra: root.kindLabel(modelData.kind)
+                                badge: modelData.fav ? "\u2665 FAVORITE" : ""
+                                src: root.artUrl(modelData.art)
+                                grad: modelData.g
+                                glyph: lp.glyphFor(modelData.kind)
+                                aspect: 1.6
+                                accent: root.accent
+                                fav: modelData.fav
+                                primaryLabel: root.libraryLabel(modelData.kind)
+                                primaryIcon: modelData.kind === "wallpaper" ? "eye" : "play"
+                                onActivated: root.libraryActivate(modelData)
+                                onPrimary: root.libraryAction(modelData)
+                                onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 8
+                        visible: !lp.grid
+                        Repeater {
+                            model: lp.grid ? [] : lp.items
+                            delegate: Rectangle {
+                                id: lr
+                                width: parent.width
+                                height: 64
+                                radius: 12
+                                color: lrh.containsMouse ? "#1f2631" : "#1a202b"
+                                border.width: 1
+                                border.color: "#262d3a"
+                                MouseArea { id: lrh; anchors.fill: parent; hoverEnabled: true; onClicked: root.libraryActivate(modelData) }
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 8; rightMargin: 12 }
+                                    spacing: 12
+                                    Art { Layout.preferredWidth: 80; Layout.preferredHeight: 50; radiusPx: 8; frameColor: lr.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: lp.glyphFor(modelData.kind) }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+                                        Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                        Lbl { Layout.fillWidth: true; text: modelData.sub; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 11 }
+                                    }
+                                    Tag { visible: lf.width > 620; text: root.kindLabel(modelData.kind).toUpperCase(); px: 9 }
+                                    IconBtn { box: 30; icon: modelData.fav ? "heart" : "heartO"; active: modelData.fav; tip: "Favorite"; onClicked: root.toggleFavorite(modelData.id, modelData.title) }
+                                    Btn { compact: true; label: root.libraryLabel(modelData.kind); icon: modelData.kind === "wallpaper" ? "eye" : "play"; onClicked: root.libraryAction(modelData) }
+                                }
+                            }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: lp.items.length === 0
+                        Lbl { text: "Nothing here yet"; font.pixelSize: 15; font.weight: Font.DemiBold }
+                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: lp.q.trim() !== "" ? "No library items match that search." : lp.empties[lp.filter] }
+                        Btn { visible: lp.filter !== "All" || lp.q !== ""; label: "Show everything"; icon: "refresh"; onClicked: { lp.filter = "All"; lp.q = "" } }
+                    }
+                }
+            }
+        }
+    }
+}

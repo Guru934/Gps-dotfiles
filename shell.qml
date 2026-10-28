@@ -672,6 +672,20 @@ Scope {
         aiChat.toggle()
     }
 
+    // Media Hub is a single hosted surface; open() is idempotent so repeated
+    // entry-point clicks can never spawn a second window.
+    function openMediaHub() {
+        mediaHubWindow.open()
+    }
+
+    function closeMediaHub() {
+        mediaHubWindow.close()
+    }
+
+    function toggleMediaHub() {
+        mediaHubWindow.toggle()
+    }
+
     function closeWallpaperCarousel() {
         wallpaperCarousel.isOpen = false
     }
@@ -1156,6 +1170,7 @@ Scope {
     }
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
     AIChat             { id: aiChat; hub: root }
+    MediaHubWindow     { id: mediaHubWindow; hub: root }
     WifiPopup          { hub: root }
     BluetoothPopup     { hub: root }
     BatteryPopup       { id: batteryPopup; hub: root }

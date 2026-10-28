@@ -161,6 +161,7 @@ Item {
                     id: mediaPane
                     MediaTab {
                         isOpen: root.isOpen
+                        hub: root.hub
                     }
                 }
 
