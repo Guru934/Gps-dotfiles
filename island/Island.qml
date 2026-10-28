@@ -41,6 +41,9 @@ Scope {
     property int maxToasts: 6
     property bool lyricsEnabled: true        // fetch synced lyrics from lrclib.net (sends song title online)
     property int topMargin: 6
+    property int hoverZoneWidth: 300
+    property int hoverZoneHeight: 5
+    property bool isResting: false
     property int expireSeconds: 900          // agent alerts expire after this long
     property string searchUrl: "https://duckduckgo.com/?q="
     property string debugMode: ""            // force a state: idle music charge clip osd alert focus launcher
@@ -77,6 +80,7 @@ Scope {
     property string timeText: Qt.formatTime(clock.date, "hh:mm")
     property int wsId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0
     property var wsList: Hyprland.workspaces.values.map(w => w.id).filter(i => i > 0).sort((a, b) => a - b)
+    readonly property bool isFullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen)
     property int temp: 0
 
     readonly property var player: pickPlayer()
@@ -136,7 +140,8 @@ Scope {
     property bool clipHistoryOn: false
     property var bars: [0, 0, 0, 0, 0, 0, 0, 0]
     property bool cavaOk: true
-    property bool hovered: hover.hovered
+    property bool topHovered: false
+    property bool hovered: hover.hovered || topHovered
 
     // ───────────── island mascot ─────────────
     // Read the desktop pet's selected skin but never write settings. The single
@@ -928,7 +933,7 @@ Scope {
     // ───────────── window ─────────────
     PanelWindow {
         id: win
-        visible: true
+        visible: !root.isResting
         screen: {
             const m = Hyprland.focusedMonitor
             const hit = m ? Quickshell.screens.find(s => s.name === m.name) : null
@@ -1002,6 +1007,39 @@ Scope {
             acceptedButtons: Qt.NoButton
             onEntered: root.controlTriggerEntered()
             onExited: root.controlTriggerExited()
+        }
+    }
+
+    PanelWindow {
+        id: hoverTrigger
+        screen: win.screen
+        anchors.top: true
+        margins.top: 0
+        exclusiveZone: 0
+        color: "transparent"
+        implicitWidth: root.hoverZoneWidth
+        implicitHeight: root.hoverZoneHeight
+        width: root.hoverZoneWidth
+        height: root.hoverZoneHeight
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "island-hover"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        visible: !root.isFullscreen
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+            onEntered: {
+                root.topHovered = true
+                root.controlTriggerEntered()
+                root.controlPanelChanged(true)
+            }
+            onExited: {
+                root.topHovered = false
+                root.controlTriggerExited()
+                root.controlPanelChanged(false)
+            }
         }
     }
 }
