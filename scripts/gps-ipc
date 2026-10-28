@@ -38,7 +38,7 @@ case "$cmd" in
         action="${1:-}"
         shift || true
         if [[ -z "$action" ]]; then
-            echo "Usage: gps-ipc island <action> [args...]" >&2
+            echo "Usage: gps-ipc island <show|hide|pin|unpin|status|action> [args...]" >&2
             exit 1
         fi
         backend="$(get_backend)"
@@ -62,7 +62,7 @@ case "$cmd" in
         echo "Usage: gps-ipc <shell|settings|island|clipboard> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  settings [action] [args...]" >&2
-        echo "  island <action> [args...]" >&2
+        echo "  island <show|hide|pin|unpin|status|action> [args...]" >&2
         echo "  clipboard [action]" >&2
         exit 1
         ;;

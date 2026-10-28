@@ -620,5 +620,239 @@ check("DND and Focus states show in resting mode when workspace has no focused w
     assert.strictEqual(resHidden.state, "hidden");
 });
 
+// 27. Status formatting
+check("status formatting produces expected scriptable string for various states", () => {
+    // Hidden resting
+    assert.strictEqual(
+        IV.formatStatus("hidden", "window_focused_resting", false, false),
+        "state: hidden, reason: window_focused_resting, visible: false, pinned: false"
+    );
+    // Idle on empty workspace
+    assert.strictEqual(
+        IV.formatStatus("idle", "workspace_empty", true, false),
+        "state: idle, reason: workspace_empty, visible: true, pinned: false"
+    );
+    // Control pinned
+    assert.strictEqual(
+        IV.formatStatus("control", "pinned_open", true, true),
+        "state: control, reason: pinned_open, visible: true, pinned: true"
+    );
+    // Control manual show
+    assert.strictEqual(
+        IV.formatStatus("control", "manual_show", true, false),
+        "state: control, reason: manual_show, visible: true, pinned: false"
+    );
+    // Object signature
+    assert.strictEqual(
+        IV.formatStatus({ state: "music", reason: "persistent_music", visible: true, pinned: false }),
+        "state: music, reason: persistent_music, visible: true, pinned: false"
+    );
+    // Null / empty fallback handling
+    assert.strictEqual(
+        IV.formatStatus(null),
+        "state: hidden, reason: unknown, visible: false, pinned: false"
+    );
+    assert.strictEqual(
+        IV.formatStatus(undefined, undefined, true, false),
+        "state: hidden, reason: unknown, visible: true, pinned: false"
+    );
+});
+
+// 28. GPS_DEBUG transition logging formatting
+check("GPS_DEBUG transition log formatting produces standard [GPS Island] format", () => {
+    assert.strictEqual(
+        IV.formatTransitionLog("hidden", "control", "manual_show"),
+        "[GPS Island] Transition: hidden -> control (reason: manual_show)"
+    );
+    assert.strictEqual(
+        IV.formatTransitionLog("idle", "hidden", "window_focused_resting"),
+        "[GPS Island] Transition: idle -> hidden (reason: window_focused_resting)"
+    );
+    assert.strictEqual(
+        IV.formatTransitionLog("hidden", "alert", "active_alert"),
+        "[GPS Island] Transition: hidden -> alert (reason: active_alert)"
+    );
+    assert.strictEqual(
+        IV.formatTransitionLog("control", "hidden", "manual_hide"),
+        "[GPS Island] Transition: control -> hidden (reason: manual_hide)"
+    );
+    // Fallback on missing or empty states
+    assert.strictEqual(
+        IV.formatTransitionLog("", "idle", ""),
+        "[GPS Island] Transition: none -> idle (reason: unknown)"
+    );
+});
+
+// 29. Manual show IPC command evaluation
+check("manual show command expands control and yields to fullscreen or active alert", () => {
+    // Normal window focused, manual show opens control
+    const resShow = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: true,
+        workspaceEmpty: false,
+        manualShow: true
+    });
+    assert.strictEqual(resShow.visible, true);
+    assert.strictEqual(resShow.state, "control");
+    assert.strictEqual(resShow.reason, "manual_show");
+    assert.strictEqual(resShow.wantsKeyboard, false);
+    assert.strictEqual(resShow.nextExpiry, null);
+
+    // Fullscreen suppresses manual show
+    const resFs = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: true,
+        fullscreen: true,
+        manualShow: true
+    });
+    assert.strictEqual(resFs.visible, false);
+    assert.strictEqual(resFs.state, "hidden");
+    assert.strictEqual(resFs.reason, "fullscreen_suppressed");
+
+    // Active alert overrides manual show
+    const resAlert = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: true,
+        manualShow: true,
+        activeAlert: true
+    });
+    assert.strictEqual(resAlert.visible, true);
+    assert.strictEqual(resAlert.state, "alert");
+    assert.strictEqual(resAlert.reason, "active_alert");
+
+    // Pinned takes precedence over manual show
+    const resPinned = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: true,
+        manualShow: true,
+        pinned: true
+    });
+    assert.strictEqual(resPinned.visible, true);
+    assert.strictEqual(resPinned.state, "control");
+    assert.strictEqual(resPinned.reason, "pinned_open");
+    assert.strictEqual(resPinned.wantsKeyboard, true);
+});
+
+// 30. Manual hide IPC command evaluation
+check("manual hide forces hidden state but never suppresses critical alert", () => {
+    // Empty workspace normally shows idle, manualHide suppresses it
+    const resEmpty = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: false,
+        workspaceEmpty: true,
+        manualHide: true
+    });
+    assert.strictEqual(resEmpty.visible, false);
+    assert.strictEqual(resEmpty.state, "hidden");
+    assert.strictEqual(resEmpty.reason, "manual_hide");
+
+    // Active transient event is suppressed by manualHide
+    const resTransient = IV.evaluateVisibility({
+        now: 1000,
+        windowFocused: true,
+        transientQueue: [{ kind: "osd", priority: PRIORITY.TRANSIENT, expiry: 2500 }],
+        manualHide: true
+    });
+    assert.strictEqual(resTransient.visible, false);
+    assert.strictEqual(resTransient.state, "hidden");
+    assert.strictEqual(resTransient.reason, "manual_hide");
+
+    // Critical pet-alert prompt is NEVER suppressed by manualHide
+    const resAlert = IV.evaluateVisibility({
+        now: 1000,
+        manualHide: true,
+        activeAlert: true
+    });
+    assert.strictEqual(resAlert.visible, true);
+    assert.strictEqual(resAlert.state, "alert");
+    assert.strictEqual(resAlert.reason, "active_alert");
+    assert.strictEqual(resAlert.wantsKeyboard, true);
+});
+
+// 31. Simulated state transition lifecycle with logging
+check("simulated lifecycle generates correct transitions and status outputs", () => {
+    const logs = [];
+    let currentState = "hidden";
+    let currentReason = "window_focused_resting";
+    let isPinned = false;
+
+    function applyTransition(inputs, debugEnabled) {
+        const decision = IV.evaluateVisibility(inputs);
+        const oldState = currentState;
+        const newState = decision.state;
+        const reason = decision.reason;
+
+        if (debugEnabled && oldState !== newState) {
+            logs.push(IV.formatTransitionLog(oldState, newState, reason));
+        }
+
+        currentState = newState;
+        currentReason = reason;
+        if (inputs.pinned !== undefined) isPinned = Boolean(inputs.pinned);
+        return decision;
+    }
+
+    // Step 1: At rest with focused window
+    applyTransition({ now: 1000, windowFocused: true, workspaceEmpty: false }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, false, isPinned),
+        "state: hidden, reason: window_focused_resting, visible: false, pinned: false"
+    );
+    assert.strictEqual(logs.length, 0); // No transition from initial hidden
+
+    // Step 2: User runs `gps-ipc island show`
+    applyTransition({ now: 1050, windowFocused: true, manualShow: true }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, true, isPinned),
+        "state: control, reason: manual_show, visible: true, pinned: false"
+    );
+    assert.strictEqual(logs[0], "[GPS Island] Transition: hidden -> control (reason: manual_show)");
+
+    // Step 3: User runs `gps-ipc island pin`
+    applyTransition({ now: 1100, windowFocused: true, pinned: true }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, true, isPinned),
+        "state: control, reason: pinned_open, visible: true, pinned: true"
+    );
+    // State remained "control", so transition count does not increase
+    assert.strictEqual(logs.length, 1);
+
+    // Step 4: User runs `gps-ipc island unpin`
+    applyTransition({ now: 1200, windowFocused: true, pinned: false }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, false, isPinned),
+        "state: hidden, reason: window_focused_resting, visible: false, pinned: false"
+    );
+    assert.strictEqual(logs[1], "[GPS Island] Transition: control -> hidden (reason: window_focused_resting)");
+
+    // Step 5: User switches to empty workspace
+    applyTransition({ now: 1300, windowFocused: false, workspaceEmpty: true }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, true, isPinned),
+        "state: idle, reason: workspace_empty, visible: true, pinned: false"
+    );
+    assert.strictEqual(logs[2], "[GPS Island] Transition: hidden -> idle (reason: workspace_empty)");
+
+    // Step 6: User runs `gps-ipc island hide`
+    applyTransition({ now: 1400, windowFocused: false, workspaceEmpty: true, manualHide: true }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, false, isPinned),
+        "state: hidden, reason: manual_hide, visible: false, pinned: false"
+    );
+    assert.strictEqual(logs[3], "[GPS Island] Transition: idle -> hidden (reason: manual_hide)");
+
+    // Step 7: Pet alert arrives during manual hide
+    applyTransition({ now: 1500, manualHide: true, activeAlert: true }, true);
+    assert.strictEqual(
+        IV.formatStatus(currentState, currentReason, true, isPinned),
+        "state: alert, reason: active_alert, visible: true, pinned: false"
+    );
+    assert.strictEqual(logs[4], "[GPS Island] Transition: hidden -> alert (reason: active_alert)");
+
+    // Total 5 state transitions logged
+    assert.strictEqual(logs.length, 5);
+});
+
 console.log("ALL PASS (" + passed + " island visibility checks)");
+
 

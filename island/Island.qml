@@ -82,9 +82,12 @@ Scope {
 
     property bool isResting: false
     property bool isPinned: false
+    property bool manualShow: false
+    property bool manualHide: false
     property double hoverLeaveExpiry: 0
     property var transientQueue: []
     property string currentMode: "idle"
+    property string currentReason: "initial"
     property int expireSeconds: 900          // agent alerts expire after this long
     property string searchUrl: "https://duckduckgo.com/?q="
     property string debugMode: ""            // force a state: idle music charge clip osd alert focus launcher
@@ -287,6 +290,7 @@ Scope {
         root.updateVisibility()
     }
     function openControl() {
+        root.manualHide = false
         controlOpen = true
         controlExpanded = true
         controlPanelEntered = hovered
@@ -295,6 +299,7 @@ Scope {
     }
     function closeControl() {
         root.isPinned = false
+        root.manualShow = false
         root.hoverLeaveExpiry = 0
         controlOpen = false
         controlExpanded = false
@@ -308,6 +313,7 @@ Scope {
         root.updateVisibility()
     }
     function controlTriggerEntered() {
+        root.manualHide = false
         controlEdgeHovered = true
         root.hoverLeaveExpiry = 0
         controlPanelEntered = false
@@ -567,6 +573,7 @@ Scope {
 
     function postEvent(kind, priority, duration) {
         if (!ready) return
+        root.manualHide = false
         var dur = typeof duration === "number" ? duration : 1500
         var prio = priority !== undefined ? priority : IslandVisibility.PRIORITY.TRANSIENT
         root.transientQueue = IslandVisibility.postEvent(root.transientQueue, {
@@ -599,6 +606,8 @@ Scope {
             workspaceEmpty: wsEmpty,
             hovered: root.hovered,
             pinned: root.isPinned,
+            manualShow: root.manualShow,
+            manualHide: root.manualHide,
             activeAlert: Boolean(root.alerts && root.alerts.length > 0) || root.alertResolvedOn,
             transientQueue: root.transientQueue,
             hoverLeaveExpiry: root.hoverLeaveExpiry,
@@ -619,8 +628,17 @@ Scope {
 
     function updateVisibility() {
         var decision = IslandVisibility.evaluateVisibility(gatherInputs())
+        var oldState = root.currentMode
+        var newState = decision.state
+        var reason = decision.reason
+
+        if (Quickshell.env("GPS_DEBUG") === "1" && oldState !== newState) {
+            console.log(IslandVisibility.formatTransitionLog(oldState, newState, reason))
+        }
+
         root.isResting = !decision.visible
         root.currentMode = decision.state
+        root.currentReason = decision.reason
 
         var now = Date.now()
         root.transientQueue = (root.transientQueue || []).filter(function(ev) {
@@ -794,13 +812,33 @@ Scope {
         function dnd(state: string): void { root.setDnd(state === "toggle" ? !root.dnd : state === "on") }
         function launcher(state: string): void { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
         function control(action: string): void { root.setControl(action) }
+        function show(): void {
+            root.manualHide = false
+            root.manualShow = true
+            root.openControl()
+            root.updateVisibility()
+        }
+        function hide(): void {
+            root.manualShow = false
+            root.manualHide = true
+            root.closeControl()
+            root.updateVisibility()
+        }
         function pin(): void {
+            root.manualHide = false
+            root.manualShow = false
             root.isPinned = true
             root.openControl()
             root.updateVisibility()
         }
         function unpin(): void {
+            root.isPinned = false
+            root.manualShow = false
             root.closeControl()
+            root.updateVisibility()
+        }
+        function status(): string {
+            return IslandVisibility.formatStatus(root.currentMode, root.currentReason, !root.isResting, root.isPinned)
         }
         function clear(): void { root.dismissAllNotifs() }
         function debug(mode: string): void { root.debugMode = mode }
@@ -1163,7 +1201,7 @@ Scope {
 
         Shortcut {
             sequence: "Escape"
-            enabled: win.visible && (root.isPinned || root.mode === "control" || root.controlOpen)
+            enabled: win.visible && (root.isPinned || root.mode === "control" || root.controlOpen || root.manualShow)
             onActivated: root.closeControl()
         }
 

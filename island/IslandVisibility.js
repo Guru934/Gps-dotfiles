@@ -138,6 +138,17 @@ function evaluateVisibility(inputs) {
     };
   }
 
+  // Explicit manual hide (e.g. gps-ipc island hide)
+  if (inputs.manualHide) {
+    return {
+      visible: false,
+      state: "hidden",
+      nextExpiry: null,
+      wantsKeyboard: false,
+      reason: "manual_hide"
+    };
+  }
+
   // Fullscreen suppresses all non-alert states
   if (inputs.fullscreen) {
     return {
@@ -157,6 +168,16 @@ function evaluateVisibility(inputs) {
       nextExpiry: null,
       wantsKeyboard: true,
       reason: "pinned_open"
+    };
+  }
+
+  if (inputs.manualShow) {
+    return {
+      visible: true,
+      state: "control",
+      nextExpiry: null,
+      wantsKeyboard: false,
+      reason: "manual_show"
     };
   }
 
@@ -321,13 +342,55 @@ function postEvent(queue, newEvent, now) {
   return result;
 }
 
+/**
+ * Formats island status into standard human-readable and scriptable string:
+ * state: <mode>, reason: <reason>, visible: <bool>, pinned: <bool>
+ *
+ * @param {string|Object} state - State string or object with { state, reason, visible, pinned }
+ * @param {string} [reason] - Reason string
+ * @param {boolean} [visible] - Visibility boolean
+ * @param {boolean} [pinned] - Pinned boolean
+ * @returns {string} Formatted status string
+ */
+function formatStatus(state, reason, visible, pinned) {
+  var s = (typeof state === "object" && state !== null) ? state : {
+    state: state,
+    reason: reason,
+    visible: visible,
+    pinned: pinned
+  };
+  var stateVal = s.state !== undefined && s.state !== null ? s.state : "hidden";
+  var reasonVal = s.reason !== undefined && s.reason !== null ? s.reason : "unknown";
+  var visibleVal = Boolean(s.visible);
+  var pinnedVal = Boolean(s.pinned);
+  return "state: " + stateVal + ", reason: " + reasonVal + ", visible: " + visibleVal + ", pinned: " + pinnedVal;
+}
+
+/**
+ * Formats state transition message for GPS_DEBUG logging.
+ *
+ * @param {string} oldState - Previous state
+ * @param {string} newState - Next/new state
+ * @param {string} reason - Transition reason
+ * @returns {string} Formatted log message
+ */
+function formatTransitionLog(oldState, newState, reason) {
+  var oldVal = oldState ? oldState : "none";
+  var newVal = newState ? newState : "none";
+  var r = reason ? reason : "unknown";
+  return "[GPS Island] Transition: " + oldVal + " -> " + newVal + " (reason: " + r + ")";
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     PRIORITY: PRIORITY,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     resolveIslandSettings: resolveIslandSettings,
     evaluateVisibility: evaluateVisibility,
-    postEvent: postEvent
+    postEvent: postEvent,
+    formatStatus: formatStatus,
+    formatTransitionLog: formatTransitionLog
   };
 }
+
 
