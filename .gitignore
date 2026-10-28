@@ -5,6 +5,9 @@ __pycache__/
 # Local-only snapshots and backups
 .snapshots/
 
+# Editor & IDE settings
+.vscode/
+
 # Local environment/credentials
 .env
 .env.*

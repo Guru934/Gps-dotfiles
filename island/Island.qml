@@ -734,7 +734,7 @@ Scope {
                 || typeof a.token !== "string" || a.token === ""
                 || (decision !== "allow" && decision !== "deny")) return false
         if (alertResponseIds.indexOf(a.id) >= 0) return false
-        Quickshell.execDetached(["/home/rice/.local/bin/pet-alert", "respond",
+        Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/pet-alert", "respond",
                                  a.token, decision])
         alertResponseIds = alertResponseIds.concat([a.id])
         return true

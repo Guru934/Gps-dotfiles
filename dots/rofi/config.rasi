@@ -1,0 +1,81 @@
+configuration {
+    modi: "drun,window,run";
+    show-icons: true;
+    display-drun: "✦ Apps";
+    display-window: "󰖯 Windows";
+    display-run: "󰆍 Run";
+    drun-display-format: "{name}";
+    font: "JetBrainsMono Nerd Font Propo 11";
+}
+
+@theme "/dev/null"
+
+/* Palette is generated from the current wallpaper by
+   ~/Projects/my-rice/scripts/extract-theme.py (same source as the shell). */
+@import "colors.rasi"
+
+* {
+    background-color: transparent;
+    text-color: @text;
+    margin: 0;
+    padding: 0;
+}
+
+window {
+    width: 520px;
+    background-color: @bg;
+    border: 2px;
+    border-color: @accent;
+    border-radius: 16px;
+    padding: 18px;
+}
+
+mainbox {
+    spacing: 12px;
+}
+
+inputbar {
+    background-color: @card;
+    border: 1px;
+    border-color: @border-col;
+    border-radius: 10px;
+    padding: 10px 14px;
+    spacing: 10px;
+    children: [ prompt, entry ];
+}
+
+prompt {
+    text-color: @accent;
+}
+
+entry {
+    placeholder: "Search apps, windows, commands...";
+    placeholder-color: @muted;
+}
+
+listview {
+    lines: 7;
+    columns: 1;
+    fixed-height: true;
+    spacing: 6px;
+}
+
+element {
+    padding: 8px 12px;
+    border-radius: 10px;
+    spacing: 10px;
+}
+
+element selected.normal {
+    background-color: @accent;
+    text-color: @accent-fg;
+}
+
+element-icon {
+    size: 24px;
+}
+
+element-text {
+    vertical-align: 0.5;
+    text-color: inherit;
+}

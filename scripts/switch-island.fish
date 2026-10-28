@@ -2,8 +2,9 @@
 # Switch between the installed Tide Island and the GPS project island.
 # Exactly one top-center island is allowed to run at a time.
 
+set -l REPO_DIR (realpath (status dirname)/..)
 set -l mode $argv[1]
-set -l gps_path "$HOME/Projects/my-rice/island/IslandProduction.qml"
+set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
 set -l tide_path "$HOME/.local/share/tide-island"
 set -l backend_file "$HOME/.config/quickshell/gps-island-backend"
 

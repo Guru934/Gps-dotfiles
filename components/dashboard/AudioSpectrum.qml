@@ -33,7 +33,7 @@ Singleton {
         id: spectrumProc
         command: [
             "python3",
-            "/home/rice/Projects/my-rice/scripts/audio-spectrum.py",
+            Qt.resolvedUrl("../../scripts/audio-spectrum.py").toString().replace(/^file:\/\//, ""),
             String(root.barCount)
         ]
         running: root.active

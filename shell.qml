@@ -11,6 +11,8 @@ import "pet"
 Scope {
     id: root
 
+    readonly property string repoRoot: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+
     // UI Popup Routing: "wifi", "bt", "battery", "clock", or "settings"
     property bool dashboardOpen: false
     property string activePopup: "settings"
@@ -702,7 +704,7 @@ Scope {
 
     function cycleWallpaper() {
         root.wallpaperMode = (root.wallpaperMode + 1) % 3
-        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/cycle-wall.fish"])
+        Quickshell.execDetached([root.repoRoot + "/scripts/cycle-wall.fish"])
     }
 
     function toggleWallpaperCarousel() {
@@ -791,7 +793,7 @@ Scope {
         // Secured networks need a secret: delegate the password prompt to the
         // helper script (rofi -password). The password never enters QML state.
         if (secured) {
-            Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+            Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
             root.wifiNotice = "Connecting to " + ssid + "… (password prompt if required)"
             wifiVerifyTimer.restart()
             return
@@ -802,7 +804,7 @@ Scope {
 
     // Called when a direct connect fails, most likely for a missing secret.
     function connectWifiWithPrompt(ssid) {
-        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+        Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
         root.wifiNotice = "Password required — answer the prompt for " + ssid + "…"
         root.wifiVerifyTries = 0
         wifiVerifyTimer.restart()
@@ -1022,7 +1024,8 @@ Scope {
         const lines = raw.trim().split("\n")
         let foundType = "disconnected"
         let foundName = "Offline"
-        let foundDev = "wlan0"
+        let foundDev = root.netDevice || "wlan0"
+        let firstWifiDev = ""
 
         for (let i = 0; i < lines.length; i++) {
             const parts = lines[i].split(":")
@@ -1032,12 +1035,19 @@ Scope {
             const state = parts[2]
             const conn = parts.slice(3).join(":")
 
+            if (type === "wifi" && !firstWifiDev) {
+                firstWifiDev = dev
+            }
+
             if ((type === "wifi" || type === "ethernet") && state === "connected") {
                 foundDev = dev
                 foundType = type
                 foundName = conn !== "" ? conn : dev
                 break
             }
+        }
+        if (foundType === "disconnected" && firstWifiDev) {
+            foundDev = firstWifiDev
         }
         root.netDevice = foundDev
         root.netType = foundType
