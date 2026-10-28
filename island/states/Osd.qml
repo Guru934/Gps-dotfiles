@@ -77,7 +77,7 @@ Item {
     Timer {
         interval: 800
         repeat: true
-        running: st.active && st.core.hovered && Boolean(st.core.osdOn)
+        running: false
         onTriggered: st.core.pokeOsd(st.kind)
     }
 

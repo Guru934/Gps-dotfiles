@@ -28,6 +28,7 @@ import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
 import Quickshell.Services.Notifications
 import qs.config
+import "IslandVisibility.js" as IslandVisibility
 
 Scope {
     id: root
@@ -44,12 +45,20 @@ Scope {
     property int hoverZoneWidth: 300
     property int hoverZoneHeight: 5
     property bool isResting: false
+    property bool isPinned: false
+    property double hoverLeaveExpiry: 0
+    property var transientQueue: []
+    property string currentMode: "idle"
+    property bool persistentMusicPill: false
+    property int hoverGraceMs: 300
+    property int workspaceFlashMs: 1500
     property int expireSeconds: 900          // agent alerts expire after this long
     property string searchUrl: "https://duckduckgo.com/?q="
     property string debugMode: ""            // force a state: idle music charge clip osd alert focus launcher
     property bool alertExpanded: false
     property var alertResponseIds: []
     property bool alertResolvedOn: false
+    onAlertResolvedOnChanged: root.updateVisibility()
     property double alertResolvedAt: 0
     property string alertResolvedLabel: ""
     readonly property string alertResolvedElapsed: alertResolvedOn && alertResolvedAt > 0 ? waited(alertResolvedAt) : ""
@@ -79,6 +88,21 @@ Scope {
     readonly property var clock: SystemClock { precision: SystemClock.Minutes }
     property string timeText: Qt.formatTime(clock.date, "hh:mm")
     property int wsId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0
+    onWsIdChanged: {
+        if (ready) {
+            root.postEvent("idle", IslandVisibility.PRIORITY.TRANSIENT, root.workspaceFlashMs)
+        }
+        root.updateVisibility()
+    }
+    Connections {
+        target: Hyprland
+        function onActiveToplevelChanged() { root.updateVisibility() }
+        function onFocusedWorkspaceChanged() { root.updateVisibility() }
+    }
+    Connections {
+        target: Hyprland.focusedWorkspace
+        function onHasFullscreenChanged() { root.updateVisibility() }
+    }
     property var wsList: Hyprland.workspaces.values.map(w => w.id).filter(i => i > 0).sort((a, b) => a - b)
     readonly property bool isFullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen)
     property int temp: 0
@@ -130,6 +154,7 @@ Scope {
     }
 
     property var alerts: []
+    onAlertsChanged: root.updateVisibility()
     property string clipText: ""
     property int clipChars: 0
     property string clipKind: ""
@@ -142,6 +167,10 @@ Scope {
     property bool cavaOk: true
     property bool topHovered: false
     property bool hovered: hover.hovered || topHovered
+    onHoveredChanged: {
+        root.controlPanelChanged(root.hovered)
+        root.updateVisibility()
+    }
 
     // ───────────── island mascot ─────────────
     // Read the desktop pet's selected skin but never write settings. The single
@@ -201,71 +230,84 @@ Scope {
     readonly property color accent: cur && cur.accent ? cur.accent : teal
 
     // ───────────── state machine ─────────────
-    property bool osdOn: false
-    property bool chargeOn: false
-    property bool clipOn: false
+    property bool osdOn: currentMode === "osd"
+    property bool chargeOn: currentMode === "charge"
+    property bool clipOn: currentMode === "clip"
     property bool launcherOpen: false
     property bool controlOpen: false
     property bool controlExpanded: false
     property bool controlEdgeHovered: false
     property bool controlPanelEntered: false
-    readonly property int controlAutoHideMs: 350
+    readonly property int controlAutoHideMs: 300
     readonly property int controlTransitMs: 1200
     function setLauncher(open) {
         if (open && alerts.length > 0) return
         launcherOpen = Boolean(open)
+        root.updateVisibility()
     }
     function openControl() {
         controlOpen = true
         controlExpanded = true
         controlPanelEntered = hovered
-        controlHideTimer.stop()
+        root.hoverLeaveExpiry = 0
+        root.updateVisibility()
     }
     function closeControl() {
-        controlHideTimer.stop()
+        root.isPinned = false
+        root.hoverLeaveExpiry = 0
         controlOpen = false
         controlExpanded = false
         controlPanelEntered = false
+        root.updateVisibility()
     }
     function scheduleControlHide(delay) {
-        if (!controlOpen) return
-        controlHideTimer.interval = delay || controlAutoHideMs
-        controlHideTimer.restart()
+        if (!controlOpen && !root.isPinned) return
+        if (root.isPinned) return
+        root.hoverLeaveExpiry = Date.now() + (delay || root.hoverGraceMs)
+        root.updateVisibility()
     }
     function controlTriggerEntered() {
         controlEdgeHovered = true
-        controlHideTimer.stop()
+        root.hoverLeaveExpiry = 0
         controlPanelEntered = false
         controlOpen = true
         controlExpanded = true
+        root.updateVisibility()
     }
     function controlTriggerExited() {
         controlEdgeHovered = false
-        if (!controlOpen) return
+        if (!controlOpen && !root.isPinned) return
         if (hovered) {
-            controlHideTimer.stop()
+            root.hoverLeaveExpiry = 0
             return
         }
-        scheduleControlHide(controlPanelEntered ? controlAutoHideMs : controlTransitMs)
+        if (!root.isPinned) {
+            scheduleControlHide(controlPanelEntered ? root.hoverGraceMs : controlTransitMs)
+        }
     }
     function controlPanelChanged(inside) {
-        if (!controlOpen) return
         if (inside) {
             controlPanelEntered = true
-            controlHideTimer.stop()
+            root.hoverLeaveExpiry = 0
+            controlOpen = true
+            controlExpanded = true
+            root.updateVisibility()
         } else if (!controlEdgeHovered) {
-            scheduleControlHide(controlAutoHideMs)
+            if (!root.isPinned) {
+                scheduleControlHide(root.hoverGraceMs)
+            }
         }
     }
     function setControl(action) {
         if (["toggle", "open", "off", "close", "expand", "collapse"].indexOf(action) < 0) return false
         if (action === "toggle") {
-            if (controlOpen) closeControl()
+            if (controlOpen || root.isPinned) closeControl()
             else openControl()
         } else if (action === "open" || action === "expand") {
             openControl()
         } else if (action === "collapse") {
             controlExpanded = false
+            root.updateVisibility()
         } else {
             closeControl()
         }
@@ -422,31 +464,41 @@ Scope {
 
     readonly property bool musicVisible: hasMedia && (playing || warm)
     readonly property string autoMode: (alerts.length > 0 || alertResolvedOn) ? "alert" : privacyVisible ? "privacy" : launcherOpen ? "launcher" : controlOpen ? "control" : osdOn ? "osd" : notifQueue.length > 0 ? "notify" : focusOn ? "focus" : chargeOn ? "charge" : (clipHistoryOn || clipOn) ? "clip" : musicVisible ? "music" : dnd ? "dnd" : "idle"
-    readonly property string mode: debugMode !== "" && !controlOpen ? debugMode : autoMode
-    readonly property bool wantsKeyboardFocus: (mode === "clip" && (clipHistoryOn || hovered))
-        || (mode === "alert" && (alertExpanded || hovered))
-        || (mode === "control" && (controlExpanded || hovered))
+    readonly property string mode: debugMode !== "" && !controlOpen ? debugMode : (currentMode || autoMode)
+    readonly property bool wantsKeyboardFocus: root.isPinned
+        || (mode === "clip" && (clipHistoryOn || hovered))
+        || (mode === "alert" && (alertExpanded || hovered || alerts.length > 0))
+        || (mode === "control" && (controlExpanded || hovered || isPinned))
+        || (mode === "launcher")
 
     onPlayingChanged: {
-        if (playing) { warm = true; coolDown.stop() } else { coolDown.restart(); bars = [0, 0, 0, 0, 0, 0, 0, 0] }
+        if (playing) {
+            warm = true
+        } else {
+            bars = [0, 0, 0, 0, 0, 0, 0, 0]
+        }
+        root.updateVisibility()
     }
-    Timer { id: coolDown; interval: 60000; onTriggered: root.warm = false }
     Timer {
         running: true
         interval: 3000
         onTriggered: {
             root.ready = true
             root.audioInitialized = true
+            root.updateVisibility()
         }
     }
-    Timer { id: osdTimer; interval: 1600; onTriggered: root.osdOn = false }
+    Timer {
+        id: visibilityTimer
+        interval: 100
+        repeat: false
+        onTriggered: root.updateVisibility()
+    }
     Timer {
         id: osdRequestTimer
         interval: 40
         onTriggered: root.pokeOsd(root.pendingOsdKind)
     }
-    Timer { id: chargeTimer; interval: 4200; onTriggered: root.chargeOn = false }
-    Timer { id: clipTimer; interval: 3200; onTriggered: root.clipOn = false }
     Timer {
         id: focusTimer
         interval: 250
@@ -454,18 +506,70 @@ Scope {
         running: root.focusOn && !root.focusPaused
         onTriggered: root.updateFocusClock()
     }
-    Timer {
-        id: controlHideTimer
-        interval: root.controlAutoHideMs
-        repeat: false
-        onTriggered: {
-            if (!root.controlOpen) return
-            if (root.hovered || root.controlEdgeHovered) return
-            root.closeControl()
+
+    function postEvent(kind, priority, duration) {
+        if (!ready) return
+        var dur = duration || 1500
+        var prio = priority !== undefined ? priority : IslandVisibility.PRIORITY.TRANSIENT
+        root.transientQueue = IslandVisibility.postEvent(root.transientQueue, {
+            kind: kind,
+            priority: prio,
+            duration: dur
+        }, Date.now())
+        root.updateVisibility()
+    }
+
+    function gatherInputs() {
+        var wsEmpty = false
+        if (!Hyprland.focusedWorkspace) {
+            wsEmpty = true
+        } else if (Hyprland.focusedWorkspace.toplevels && Hyprland.focusedWorkspace.toplevels.values) {
+            wsEmpty = Hyprland.focusedWorkspace.toplevels.values.length === 0
+        }
+
+        return {
+            now: Date.now(),
+            windowFocused: Hyprland.activeToplevel !== null,
+            fullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen),
+            workspaceEmpty: wsEmpty,
+            hovered: root.hovered,
+            pinned: root.isPinned,
+            activeAlert: Boolean(root.alerts && root.alerts.length > 0) || root.alertResolvedOn,
+            transientQueue: root.transientQueue,
+            hoverLeaveExpiry: root.hoverLeaveExpiry,
+            settings: {
+                persistentMusicPill: root.persistentMusicPill
+            },
+            isMusicPlaying: root.playing,
+            privacyVisible: root.privacyVisible,
+            launcherOpen: root.launcherOpen
         }
     }
 
-    function holdClip() { if (!ready) return; clipOn = true; clipTimer.restart() }
+    function updateVisibility() {
+        var decision = IslandVisibility.evaluateVisibility(gatherInputs())
+        root.isResting = !decision.visible
+        root.currentMode = decision.state
+
+        var now = Date.now()
+        root.transientQueue = (root.transientQueue || []).filter(function(ev) {
+            return ev && typeof ev.expiry === "number" && ev.expiry > now
+        })
+
+        if (decision.nextExpiry !== null && decision.nextExpiry !== undefined) {
+            var remaining = Math.max(10, decision.nextExpiry - now)
+            visibilityTimer.stop()
+            visibilityTimer.interval = remaining
+            visibilityTimer.start()
+        } else {
+            visibilityTimer.stop()
+        }
+    }
+
+    function holdClip() {
+        if (!ready) return
+        root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
+    }
     property string osdKind: "vol"
     property string pendingOsdKind: "vol"
     property bool audioInitialized: false
@@ -478,8 +582,7 @@ Scope {
         if ((requested === "vol" || requested === "mute" || requested === "route") && !sinkAudio) return false
         if (requested === "mic" && !sourceAudio) return false
         osdKind = requested
-        osdOn = true
-        osdTimer.restart()
+        root.postEvent("osd", IslandVisibility.PRIORITY.TRANSIENT, 1500)
         return true
     }
     function requestOsd(kind) {
@@ -503,7 +606,11 @@ Scope {
     property bool lowShown20: false
     property bool lowShown10: false
     property bool lowShown5: false
-    function flashCharge(kind) { if (!ready) return; chargeKind = kind; chargeOn = true; chargeTimer.restart() }
+    function flashCharge(kind) {
+        if (!ready) return
+        chargeKind = kind
+        root.postEvent("charge", IslandVisibility.PRIORITY.TRANSIENT, 3000)
+    }
     Connections {
         target: root.bat
         function onStateChanged() {
@@ -595,6 +702,14 @@ Scope {
         function dnd(state: string): void { root.setDnd(state === "toggle" ? !root.dnd : state === "on") }
         function launcher(state: string): void { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
         function control(action: string): void { root.setControl(action) }
+        function pin(): void {
+            root.isPinned = true
+            root.openControl()
+            root.updateVisibility()
+        }
+        function unpin(): void {
+            root.closeControl()
+        }
         function clear(): void { root.dismissAllNotifs() }
         function debug(mode: string): void { root.debugMode = mode }
         function focusStart(workSeconds: int, breakSeconds: int, sessionCount: int, title: string): void {
@@ -849,8 +964,7 @@ Scope {
                 root.now = root.clipTs
                 root.clipChars = n
                 root.clipText = line.slice(i + 1).trim()
-                root.clipOn = true
-                clipTimer.restart()
+                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
             }
         }
         onExited: clipRestart.start()
@@ -887,14 +1001,17 @@ Scope {
                 root.now = root.clipTs
                 root.clipText = ""
                 root.clipChars = 0
-                root.clipOn = true
-                clipTimer.restart()
+                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
             }
         }
         onExited: clipImgRestart.start()
     }
     Timer { id: clipImgRestart; interval: 5000; onTriggered: { root.clipImgStart = Date.now(); clipImgFeed.running = true } }
-    Component.onCompleted: { clipStart = Date.now(); clipImgStart = Date.now() }
+    Component.onCompleted: {
+        clipStart = Date.now()
+        clipImgStart = Date.now()
+        root.updateVisibility()
+    }
 
     // CPU temperature (idle pill)
     Process {
@@ -952,6 +1069,12 @@ Scope {
             ? WlrKeyboardFocus.Exclusive
             : root.wantsKeyboardFocus ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
+        Shortcut {
+            sequence: "Escape"
+            enabled: win.visible && (root.isPinned || root.mode === "control" || root.controlOpen)
+            onActivated: root.closeControl()
+        }
+
         Rectangle {
             visible: root.glow
             anchors.fill: pill; radius: pill.radius
@@ -976,6 +1099,19 @@ Scope {
             HoverHandler {
                 id: hover
                 onHoveredChanged: root.controlPanelChanged(hovered)
+            }
+            TapHandler {
+                id: pillTap
+                acceptedButtons: Qt.LeftButton
+                gesturePolicy: TapHandler.WithinBounds
+                onTapped: {
+                    if (root.isPinned) {
+                        root.closeControl()
+                    } else {
+                        root.isPinned = true
+                        root.openControl()
+                    }
+                }
             }
 
             Repeater {
@@ -1029,7 +1165,15 @@ Scope {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            acceptedButtons: Qt.NoButton
+            acceptedButtons: Qt.LeftButton
+            onClicked: {
+                if (root.isPinned) {
+                    root.closeControl()
+                } else {
+                    root.isPinned = true
+                    root.openControl()
+                }
+            }
             onEntered: {
                 root.topHovered = true
                 root.controlTriggerEntered()
