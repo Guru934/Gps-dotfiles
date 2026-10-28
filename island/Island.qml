@@ -42,16 +42,49 @@ Scope {
     property int maxToasts: 6
     property bool lyricsEnabled: true        // fetch synced lyrics from lrclib.net (sends song title online)
     property int topMargin: 6
-    property int hoverZoneWidth: 300
-    property int hoverZoneHeight: 5
+    // ───────────── island settings integration ─────────────
+    readonly property string settingsPath: {
+        const cfg = Quickshell.env("XDG_CONFIG_HOME")
+        return (cfg ? cfg : Quickshell.env("HOME") + "/.config") + "/quickshell/rice-settings.json"
+    }
+    property var islandSettings: IslandVisibility.resolveIslandSettings(null)
+    readonly property var durations: islandSettings.durations
+    property bool persistentMusicPill: islandSettings.persistentMusicPill
+    onPersistentMusicPillChanged: root.updateVisibility()
+    property int hoverGraceMs: islandSettings.hoverDelay
+    property int hoverZoneWidth: islandSettings.hoverZoneWidth
+    property int hoverZoneHeight: islandSettings.hoverZoneHeight
+    property int workspaceFlashMs: durations.workspace
+
+    onIslandSettingsChanged: {
+        root.persistentMusicPill = islandSettings.persistentMusicPill
+        root.hoverGraceMs = islandSettings.hoverDelay
+        root.hoverZoneWidth = islandSettings.hoverZoneWidth
+        root.hoverZoneHeight = islandSettings.hoverZoneHeight
+        root.workspaceFlashMs = islandSettings.durations.workspace
+        root.updateVisibility()
+    }
+
+    FileView {
+        path: root.settingsPath
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoadFailed: {
+            root.islandSettings = IslandVisibility.resolveIslandSettings(null)
+            root.updateVisibility()
+        }
+        onLoaded: {
+            root.islandSettings = IslandVisibility.resolveIslandSettings(text())
+            root.updateVisibility()
+        }
+    }
+
     property bool isResting: false
     property bool isPinned: false
     property double hoverLeaveExpiry: 0
     property var transientQueue: []
     property string currentMode: "idle"
-    property bool persistentMusicPill: false
-    property int hoverGraceMs: 300
-    property int workspaceFlashMs: 1500
     property int expireSeconds: 900          // agent alerts expire after this long
     property string searchUrl: "https://duckduckgo.com/?q="
     property string debugMode: ""            // force a state: idle music charge clip osd alert focus launcher
@@ -90,7 +123,7 @@ Scope {
     property int wsId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0
     onWsIdChanged: {
         if (ready) {
-            root.postEvent("idle", IslandVisibility.PRIORITY.TRANSIENT, root.workspaceFlashMs)
+            root.postEvent("idle", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
         }
         root.updateVisibility()
     }
@@ -124,6 +157,14 @@ Scope {
     property real position: player ? player.position : 0
     property real length: player ? player.length : 0
     property bool warm: false                // keep showing a paused player for a while
+    property string lastTrackKey: ""
+    readonly property string trackKey: (title || "") + " - " + (artist || "")
+    onTrackKeyChanged: {
+        if (ready && trackKey !== "" && trackKey !== " - " && trackKey !== lastTrackKey) {
+            lastTrackKey = trackKey
+            root.postEvent("music", IslandVisibility.PRIORITY.TRANSIENT, root.durations.musicChange)
+        }
+    }
 
     readonly property var bat: UPower.displayDevice
     property bool hasBat: bat !== null && bat.energyCapacity > 0
@@ -314,6 +355,7 @@ Scope {
         return true
     }
     readonly property bool privacyVisible: !privacySuppressed && privacyItems.length > 0
+    onPrivacyVisibleChanged: root.updateVisibility()
     function handlePrivacy(line) {
         let payload
         try { payload = JSON.parse(line) } catch (e) { return }
@@ -329,6 +371,7 @@ Scope {
                 id: typeof i.id === "string" && i.id !== "" ? i.id : String(i.kind)
             }))
         if (privacyItems.length === 0) privacyExpanded = false
+        root.updateVisibility()
     }
     function setPrivacy(action) {
         if (action === "off") { privacySuppressed = true; privacyExpanded = false }
@@ -339,6 +382,7 @@ Scope {
             privacySuppressed = false
             privacyExpanded = privacyVisible
         }
+        root.updateVisibility()
     }
 
     function validFocusInteger(value, minimum, maximum) {
@@ -409,6 +453,8 @@ Scope {
         focusOn = true
         focusPaused = false
         focusBeginPhase(false, Date.now())
+        root.postEvent("focus", IslandVisibility.PRIORITY.TRANSIENT, 3000)
+        root.updateVisibility()
         return true
     }
 
@@ -418,6 +464,7 @@ Scope {
         if (!focusOn) return false
         focusPaused = true
         focusDeadlineMs = 0
+        root.updateVisibility()
         return true
     }
 
@@ -425,6 +472,7 @@ Scope {
         if (!focusOn || !focusPaused || focusRemaining <= 0) return false
         focusDeadlineMs = Date.now() + focusRemaining * 1000
         focusPaused = false
+        root.updateVisibility()
         return true
     }
 
@@ -438,6 +486,8 @@ Scope {
         if (focusBreak) {
             if (focusSessionIndex >= focusSessionCount) {
                 finishFocus()
+                root.clearEvent("focus")
+                root.updateVisibility()
                 return true
             }
             focusSessionIndex += 1
@@ -449,7 +499,12 @@ Scope {
             focusBeginPhase(false, atMs)
         } else {
             finishFocus()
+            root.clearEvent("focus")
+            root.updateVisibility()
+            return true
         }
+        root.postEvent("focus", IslandVisibility.PRIORITY.TRANSIENT, 3000)
+        root.updateVisibility()
         return true
     }
 
@@ -459,6 +514,8 @@ Scope {
         focusWorkSeconds = 0
         focusBreakSeconds = 0
         focusTitle = ""
+        root.clearEvent("focus")
+        root.updateVisibility()
         return true
     }
 
@@ -485,6 +542,7 @@ Scope {
         onTriggered: {
             root.ready = true
             root.audioInitialized = true
+            root.lastTrackKey = root.trackKey
             root.updateVisibility()
         }
     }
@@ -509,13 +567,20 @@ Scope {
 
     function postEvent(kind, priority, duration) {
         if (!ready) return
-        var dur = duration || 1500
+        var dur = typeof duration === "number" ? duration : 1500
         var prio = priority !== undefined ? priority : IslandVisibility.PRIORITY.TRANSIENT
         root.transientQueue = IslandVisibility.postEvent(root.transientQueue, {
             kind: kind,
             priority: prio,
             duration: dur
         }, Date.now())
+        root.updateVisibility()
+    }
+
+    function clearEvent(kind) {
+        root.transientQueue = (root.transientQueue || []).filter(function(ev) {
+            return ev && ev.kind !== kind
+        })
         root.updateVisibility()
     }
 
@@ -538,11 +603,17 @@ Scope {
             transientQueue: root.transientQueue,
             hoverLeaveExpiry: root.hoverLeaveExpiry,
             settings: {
-                persistentMusicPill: root.persistentMusicPill
+                persistentMusicPill: root.persistentMusicPill,
+                hoverDelay: root.hoverGraceMs,
+                hoverZoneWidth: root.hoverZoneWidth,
+                hoverZoneHeight: root.hoverZoneHeight,
+                durations: root.durations
             },
             isMusicPlaying: root.playing,
             privacyVisible: root.privacyVisible,
-            launcherOpen: root.launcherOpen
+            launcherOpen: root.launcherOpen,
+            dnd: root.dnd,
+            focusOn: root.focusOn
         }
     }
 
@@ -568,7 +639,7 @@ Scope {
 
     function holdClip() {
         if (!ready) return
-        root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
+        root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, root.durations.clipboard)
     }
     property string osdKind: "vol"
     property string pendingOsdKind: "vol"
@@ -582,7 +653,7 @@ Scope {
         if ((requested === "vol" || requested === "mute" || requested === "route") && !sinkAudio) return false
         if (requested === "mic" && !sourceAudio) return false
         osdKind = requested
-        root.postEvent("osd", IslandVisibility.PRIORITY.TRANSIENT, 1500)
+        root.postEvent("osd", IslandVisibility.PRIORITY.TRANSIENT, root.durations.osd)
         return true
     }
     function requestOsd(kind) {
@@ -609,7 +680,7 @@ Scope {
     function flashCharge(kind) {
         if (!ready) return
         chargeKind = kind
-        root.postEvent("charge", IslandVisibility.PRIORITY.TRANSIENT, 3000)
+        root.postEvent("charge", IslandVisibility.PRIORITY.TRANSIENT, root.durations.charge)
     }
     Connections {
         target: root.bat
@@ -642,13 +713,29 @@ Scope {
         const item = { n: n, ts: Date.now() / 1000, age: 0, timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 6) }
         if (dnd && !crit) { held = [item].concat(held).slice(0, 30); return }
         notifQueue = [item].concat(notifQueue.filter(q => q.n !== n)).slice(0, maxToasts)
+        root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
     }
     function dropNotif(n) {
         notifQueue = notifQueue.filter(q => q.n !== n)
         held = held.filter(q => q.n !== n)
+        if (notifQueue.length === 0) {
+            root.clearEvent("notify")
+        }
     }
-    function dismissNotif(item) { const n = item.n; notifQueue = notifQueue.filter(q => q !== item); n.dismiss() }
-    function dismissAllNotifs() { const l = notifQueue; notifQueue = []; l.forEach(q => q.n.dismiss()) }
+    function dismissNotif(item) {
+        const n = item.n
+        notifQueue = notifQueue.filter(q => q !== item)
+        n.dismiss()
+        if (notifQueue.length === 0) {
+            root.clearEvent("notify")
+        }
+    }
+    function dismissAllNotifs() {
+        const l = notifQueue
+        notifQueue = []
+        l.forEach(q => q.n.dismiss())
+        root.clearEvent("notify")
+    }
     function invokeAction(item, action) {
         action.invoke()
         if (!item.n.resident) notifQueue = notifQueue.filter(q => q !== item)
@@ -660,6 +747,8 @@ Scope {
             notifQueue = held.concat(notifQueue).slice(0, maxToasts)
             held = []
         }
+        root.postEvent("dnd", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
+        root.updateVisibility()
     }
     function ago(ts) { const s = Math.max(0, Math.floor(now - ts)); return s < 10 ? "now" : s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h" }
     function iconSrc(n) {
@@ -690,7 +779,10 @@ Scope {
                 if (q.timeout > 0 && q.age >= q.timeout) q.n.expire()
                 else keep.push(q)
             }
-            if (keep.length !== root.notifQueue.length) root.notifQueue = keep
+            if (keep.length !== root.notifQueue.length) {
+                root.notifQueue = keep
+                if (keep.length === 0) root.clearEvent("notify")
+            }
         }
     }
     // control from a keybind:  qs -p <path> ipc call island control toggle
@@ -964,7 +1056,7 @@ Scope {
                 root.now = root.clipTs
                 root.clipChars = n
                 root.clipText = line.slice(i + 1).trim()
-                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
+                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, root.durations.clipboard)
             }
         }
         onExited: clipRestart.start()
@@ -1001,7 +1093,7 @@ Scope {
                 root.now = root.clipTs
                 root.clipText = ""
                 root.clipChars = 0
-                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, 2500)
+                root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, root.durations.clipboard)
             }
         }
         onExited: clipImgRestart.start()

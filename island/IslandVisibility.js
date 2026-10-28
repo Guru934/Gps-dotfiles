@@ -15,6 +15,87 @@ var PRIORITY = {
 };
 
 /**
+ * Default Island settings
+ */
+var DEFAULT_SETTINGS = {
+  persistentMusicPill: false,
+  hoverDelay: 300,
+  hoverZoneWidth: 300,
+  hoverZoneHeight: 5,
+  durations: {
+    workspace: 1500,
+    clipboard: 2500,
+    notification: 4000,
+    osd: 1500,
+    musicChange: 3000,
+    charge: 3000
+  }
+};
+
+/**
+ * Safely parses and resolves island settings from JSON or object with robust defaults.
+ *
+ * @param {string|Object} raw - JSON string or settings object
+ * @returns {Object} Safe settings object
+ */
+function resolveIslandSettings(raw) {
+  var base = {
+    persistentMusicPill: DEFAULT_SETTINGS.persistentMusicPill,
+    hoverDelay: DEFAULT_SETTINGS.hoverDelay,
+    hoverZoneWidth: DEFAULT_SETTINGS.hoverZoneWidth,
+    hoverZoneHeight: DEFAULT_SETTINGS.hoverZoneHeight,
+    durations: {
+      workspace: DEFAULT_SETTINGS.durations.workspace,
+      clipboard: DEFAULT_SETTINGS.durations.clipboard,
+      notification: DEFAULT_SETTINGS.durations.notification,
+      osd: DEFAULT_SETTINGS.durations.osd,
+      musicChange: DEFAULT_SETTINGS.durations.musicChange,
+      charge: DEFAULT_SETTINGS.durations.charge
+    }
+  };
+
+  if (!raw) return base;
+
+  var parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return base;
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object") return base;
+
+  var island = (parsed.island && typeof parsed.island === "object") ? parsed.island : parsed;
+
+  if (typeof island.persistentMusicPill === "boolean") {
+    base.persistentMusicPill = island.persistentMusicPill;
+  }
+  if (typeof island.hoverDelay === "number" && !isNaN(island.hoverDelay) && island.hoverDelay >= 0) {
+    base.hoverDelay = island.hoverDelay;
+  }
+  if (typeof island.hoverZoneWidth === "number" && !isNaN(island.hoverZoneWidth) && island.hoverZoneWidth > 0) {
+    base.hoverZoneWidth = island.hoverZoneWidth;
+  }
+  if (typeof island.hoverZoneHeight === "number" && !isNaN(island.hoverZoneHeight) && island.hoverZoneHeight > 0) {
+    base.hoverZoneHeight = island.hoverZoneHeight;
+  }
+
+  if (island.durations && typeof island.durations === "object") {
+    var durKeys = ["workspace", "clipboard", "notification", "osd", "musicChange", "charge"];
+    for (var i = 0; i < durKeys.length; i++) {
+      var k = durKeys[i];
+      if (typeof island.durations[k] === "number" && !isNaN(island.durations[k]) && island.durations[k] >= 0) {
+        base.durations[k] = island.durations[k];
+      }
+    }
+  }
+
+  return base;
+}
+
+/**
  * Computes next visibility state and timer requirement.
  *
  * @param {Object} inputs
@@ -31,6 +112,8 @@ var PRIORITY = {
  *   - isMusicPlaying: boolean
  *   - privacyVisible: boolean (optional)
  *   - launcherOpen: boolean (optional)
+ *   - dnd: boolean (optional)
+ *   - focusOn: boolean (optional)
  *
  * @returns {Object}
  *   - visible: boolean
@@ -42,6 +125,7 @@ var PRIORITY = {
 function evaluateVisibility(inputs) {
   if (!inputs) inputs = {};
   var now = typeof inputs.now === "number" ? inputs.now : Date.now();
+  var settings = resolveIslandSettings(inputs.settings);
 
   // 1. Alert / Approval (Priority 1) — beats fullscreen and all other states
   if (inputs.activeAlert) {
@@ -107,16 +191,6 @@ function evaluateVisibility(inputs) {
     };
   }
 
-  if (inputs.privacyVisible) {
-    return {
-      visible: true,
-      state: "privacy",
-      nextExpiry: null,
-      wantsKeyboard: false,
-      reason: "privacy_indicator"
-    };
-  }
-
   // Filter expired transient events
   var activeTransients = (inputs.transientQueue || []).filter(function(ev) {
     return ev && typeof ev.expiry === "number" && ev.expiry > now;
@@ -143,7 +217,17 @@ function evaluateVisibility(inputs) {
   }
 
   // 4. Persistent Activity (Priority 4)
-  if (inputs.settings && inputs.settings.persistentMusicPill && inputs.isMusicPlaying) {
+  if (inputs.privacyVisible) {
+    return {
+      visible: true,
+      state: "privacy",
+      nextExpiry: null,
+      wantsKeyboard: false,
+      reason: "privacy_indicator"
+    };
+  }
+
+  if (settings.persistentMusicPill && inputs.isMusicPlaying) {
     return {
       visible: true,
       state: "music",
@@ -155,12 +239,22 @@ function evaluateVisibility(inputs) {
 
   // 5. Resting / Idle (Priority 5)
   if (inputs.workspaceEmpty || !inputs.windowFocused) {
+    var restingState = "idle";
+    var restingReason = inputs.workspaceEmpty ? "workspace_empty" : "no_window_focused";
+    if (inputs.dnd) {
+      restingState = "dnd";
+      restingReason = "dnd_active";
+    } else if (inputs.focusOn) {
+      restingState = "focus";
+      restingReason = "focus_active";
+    }
+
     return {
       visible: true,
-      state: "idle",
+      state: restingState,
       nextExpiry: null,
       wantsKeyboard: false,
-      reason: inputs.workspaceEmpty ? "workspace_empty" : "no_window_focused"
+      reason: restingReason
     };
   }
 
@@ -230,7 +324,10 @@ function postEvent(queue, newEvent, now) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     PRIORITY: PRIORITY,
+    DEFAULT_SETTINGS: DEFAULT_SETTINGS,
+    resolveIslandSettings: resolveIslandSettings,
     evaluateVisibility: evaluateVisibility,
     postEvent: postEvent
   };
 }
+
