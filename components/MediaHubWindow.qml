@@ -59,6 +59,23 @@ FloatingWindow {
         return true
     }
 
+    function openMusicSource(url) {
+        const value = String(url || "")
+        if (value.length < 9 || value.length > 2048 || /[\u0000-\u0020\u007f]/.test(value))
+            return false
+        const match = /^https:\/\/([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::([0-9]{1,5}))?(?:[/?#][^\s]*)?$/i.exec(value)
+        if (!match)
+            return false
+        if (match[2] && (Number(match[2]) < 1 || Number(match[2]) > 65535))
+            return false
+        Quickshell.execDetached(["xdg-open", value])
+        return true
+    }
+
+    function openSource(url) {
+        return root.openWallhavenSource(url) || root.openMusicSource(url)
+    }
+
     // Hyprland tiles ordinary toplevels unless a float rule exists. Rather
     // than editing the user's compositor config, ask Hyprland to float this
     // specific title after it maps. The call is a no-op without Hyprland.
@@ -177,7 +194,7 @@ FloatingWindow {
         MediaHub {
             showCloseButton: true
             onCloseRequested: root.close()
-            onSourceLinkRequested: (url) => root.openWallhavenSource(url)
+            onSourceLinkRequested: (url) => root.openSource(url)
         }
     }
 }

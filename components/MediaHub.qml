@@ -5,15 +5,20 @@
 //
 //  PRESENT  : navigation, selection, favorites, watchlist / reading-list
 //             status, progress and mood selection; Wallhaven search plus
-//             download/cache/apply and optional GPS theme sync.
-//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, persistence and
-//             local library scanning. Remaining mock boundaries are marked
-//             with "// >>> BACKEND:" comments.
+//             download/cache/apply and optional GPS theme sync; Jamendo and
+//             Radio Browser music search with a real Qt Multimedia player.
+//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, persistence for
+//             non-music pages and local library scanning. Remaining mock
+//             boundaries are marked with "// >>> BACKEND:" comments.
 // =====================================================================
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtMultimedia
+import Quickshell
+import Quickshell.Io
+import "MusicQueue.js" as MusicQueue
 
 Item {
     id: root
@@ -45,14 +50,14 @@ Item {
     property bool showCloseButton: false
     // Set false to skip loading remote artwork (gradient fallbacks are used instead).
     property bool loadRemoteArt: true
-    // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Downloads · 5 My Library
+    // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Music · 5 Downloads · 6 My Library
     property int page: 0
 
     readonly property bool compact: width < 940
     readonly property int sidebarW: compact ? 68 : 208
 
     // ================================================================
-    //  SESSION STATE (in-memory only — >>> BACKEND: persist later)
+    //  SESSION STATE (music favorites/queue persist; other pages are in-memory)
     // ================================================================
     property string moodId: "midnight"
     readonly property var mood: findIn(moods, moodId) || moods[0]
@@ -108,6 +113,8 @@ Item {
     onPageChanged: {
         if (page === 1 && !wallhavenLoaded && !wallhavenLoading)
             wallhavenSearchTimer.restart()
+        if (page === pgMusic)
+            scheduleMusicSearch()
     }
     onWpQueryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
     onWpCategoryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
@@ -141,6 +148,14 @@ Item {
         onApplyFailed: (message, code, request) => root.handleWallhavenApplyFailure(message, code, request)
         onThemeSyncFinished: (ok, message) => root.handleWallhavenThemeSync(ok, message)
     }
+
+    MediaHubMusic {
+        id: musicBackend
+        onStatusFinished: (configured, configPath, message) => root.handleMusicStatus(configured, configPath, message)
+        onSearchSucceeded: (payload, request) => root.handleMusicSearch(payload, request)
+        onSearchFailed: (message, code, request) => root.handleMusicSearchFailure(message, code, request)
+    }
+    Component.onCompleted: musicBackend.checkStatus()
 
     // ================================================================
     //  SAMPLE DATA
@@ -379,6 +394,12 @@ Item {
         var on = !f[id]
         if (on) f[id] = true; else delete f[id]
         favorites = f
+        var item = findMusicItem(id)
+        if (item) {
+            var saved = musicFavorites.filter(function (it) { return it.id !== id })
+            if (on) saved.unshift(item)
+            musicFavorites = saved
+        }
         logActivity((on ? "Favorited: " : "Unfavorited: ") + title)
     }
     function setStatus(id, s) {
@@ -738,13 +759,9 @@ Item {
                 out.push(libEntry(m, "manga", (statuses[m.id] || "Favorite") + " \u00b7 Ch " + (progress[m.id] || 0) + "/" + m.total, 20 + m.added))
         }
         for (i = 0; i < mediaList.length; i++) out.push(libEntry(mediaList[i], mediaList[i].kind, mediaList[i].meta, mediaList[i].added))
-        for (i = 0; i < tracks.length; i++) {
-            var tr = tracks[i]
-            if (favorites[tr.id]) out.push(libEntry(tr, "track", musicSub(tr), 60 + tr.added))
-        }
-        for (i = 0; i < stations.length; i++) {
-            var stn = stations[i]
-            if (favorites[stn.id]) out.push(libEntry(stn, "station", musicSub(stn), 60 + stn.added))
+        for (i = 0; i < musicFavorites.length; i++) {
+            var song = musicFavorites[i]
+            out.push(libEntry(song, song.kind, musicSub(song), 60 + i))
         }
         return out
     }
@@ -769,7 +786,12 @@ Item {
     }
     function libraryAction(it) {
         if (it.kind === "wallpaper") { previewWallpaper(it.id); return }
-        if (it.kind === "track" || it.kind === "station") { var mi = musicItem(it); playNow(mi, [mi]); return }
+        if (it.kind === "track" || it.kind === "station") {
+            var mi = findMusicItem(it.id)
+            if (mi) playNow(mi, [mi])
+            else notify("This saved song is missing its stream details.", "warn")
+            return
+        }
         continueMedia(it)
     }
     function libraryActivate(it) {
@@ -813,7 +835,9 @@ Item {
     // --- surprise me --------------------------------------------------------
     function pickRandom(list) { return list[Math.floor(Math.random() * list.length)] }
     function surprise() {
-        var k = pickRandom(["mood", "wallpaper", "anime", "manga", "track"])
+        var kinds = ["mood", "wallpaper", "anime", "manga"]
+        if (jamendoTracks.length > 0) kinds.push("track")
+        var k = pickRandom(kinds)
         if (k === "mood") {
             var others = moods.filter(function (m) { return m.id !== moodId })
             var m = pickRandom(others)
@@ -827,7 +851,7 @@ Item {
             var a = pickRandom(animeList)
             surprisePick = { kind: "anime", id: a.id, title: a.title, sub: "Anime \u00b7 " + a.genres.join(", ") }
         } else if (k === "track") {
-            var tk = pickRandom(tracks)
+            var tk = pickRandom(jamendoTracks)
             surprisePick = { kind: "track", id: tk.id, title: tk.title, sub: tk.artist + " \u00b7 " + tk.genre }
         } else {
             var g = pickRandom(mangaList)
@@ -842,7 +866,7 @@ Item {
         if (!s) return
         if (s.kind === "mood") exploreMood(s.id)
         else if (s.kind === "wallpaper") previewWallpaper(s.id)
-        else if (s.kind === "track") { var ti = findIn(tracks, s.id); playNow(ti, [ti]) }
+        else if (s.kind === "track") { var ti = findMusicItem(s.id); if (ti) playNow(ti, [ti]) }
         else openDetail(s.kind, s.id)
     }
 
@@ -863,8 +887,8 @@ Item {
         scan(animeList, "anime", function (a) { return a.season + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
         scan(mangaList, "manga", function (m) { return m.type + " \u00b7 " + m.genres.slice(0, 2).join(", ") })
         scan(mediaList, "media", function (m) { return m.meta })
-        scan(tracks, "track", function (t) { return t.artist + " \u00b7 " + t.genre })
-        scan(stations, "station", function (s) { return s.genre + " \u00b7 radio" })
+        scan(jamendoTracks, "track", function (t) { return t.artist + " \u00b7 " + t.genre })
+        scan(radioStations, "station", function (s) { return s.genre + " \u00b7 radio" })
         return out.slice(0, 7)
     }
     function openResult(r) {
@@ -874,7 +898,12 @@ Item {
         else if (r.kind === "wallpaper") previewWallpaper(r.id)
         else if (r.kind === "anime") { page = 2; openDetail("anime", r.id) }
         else if (r.kind === "manga") { page = 3; openDetail("manga", r.id) }
-        else if (r.kind === "track" || r.kind === "station") { var mi2 = musicItem(r); page = pgMusic; playNow(mi2, [mi2]) }
+        else if (r.kind === "track" || r.kind === "station") {
+            var mi2 = findMusicItem(r.id)
+            page = pgMusic
+            if (mi2) playNow(mi2, [mi2])
+            else notify("That song is no longer in the current result set.", "warn")
+        }
         else page = pgLibrary
     }
 
@@ -1296,6 +1325,8 @@ Item {
         property bool showList: false
         property bool listed: false
         property bool showPreview: false
+        property bool showSource: false
+        property string sourceTip: "Open source"
         property string previewIcon: "eye"
         property string previewTip: "Preview"
         property string primaryLabel: ""
@@ -1304,6 +1335,7 @@ Item {
         signal activated()
         signal primary()
         signal previewed()
+        signal sourceRequested()
         signal favToggled()
         signal listToggled()
         readonly property real artW: width - 12
@@ -1360,6 +1392,7 @@ Item {
             Btn { visible: mc.primaryLabel !== ""; compact: true; kind: "primary"; accent: mc.accent; label: mc.primaryLabel; icon: mc.primaryIcon; onClicked: mc.primary() }
             Item { Layout.fillWidth: true }
             IconBtn { visible: mc.showPreview; box: 30; icon: mc.previewIcon; tip: mc.previewTip; onClicked: mc.previewed() }
+            IconBtn { visible: mc.showSource; box: 30; icon: "link"; tip: mc.sourceTip; onClicked: mc.sourceRequested() }
             IconBtn { visible: mc.showList; box: 30; icon: mc.listed ? "check" : "plus"; tip: mc.listed ? "Remove from list" : "Add to list"; active: mc.listed; activeTint: "#86efac"; onClicked: mc.listToggled() }
             IconBtn { box: 30; icon: mc.fav ? "heart" : "heartO"; tip: mc.fav ? "Unfavorite" : "Favorite"; active: mc.fav; onClicked: mc.favToggled() }
         }
@@ -1406,64 +1439,50 @@ Item {
     }
 
     // ================================================================
-    //  MUSIC — sample data + mock playback state
-    //  Phase 2 targets: Jamendo API (tracks + direct streaming) and
-    //  Radio Browser (endless genre stations).
-    //  >>> BACKEND: replace `tracks` / `stations` with API results and drive
-    //      `playing` / `playPos` from a real audio engine (QtMultimedia, mpv...).
+    //  MUSIC — Jamendo + Radio Browser + Qt Multimedia playback
     // ================================================================
     readonly property int pgMusic: 4
     readonly property int pgDownloads: 5
     readonly property int pgLibrary: 6
 
     readonly property var musicSources: [
-        { id: "jamendo", name: "Jamendo", sub: "Free Creative Commons music", icon: "music", accent: "#a78bfa", note: "Phase 2 \u00b7 API + direct streaming" },
-        { id: "radio", name: "Internet Radio", sub: "Endless genre stations via Radio Browser", icon: "cloud", accent: "#7bd0ff", note: "Phase 2 \u00b7 Radio Browser" },
-        { id: "local", name: "Local files", sub: "Your own music folders", icon: "folder", accent: "#ddb8ff", note: "Later" }
+        { id: "jamendo", name: "Jamendo", sub: "Free Creative Commons music", icon: "music", accent: "#a78bfa" },
+        { id: "radio", name: "Internet Radio", sub: "Endless stations via Radio Browser", icon: "cloud", accent: "#7bd0ff" },
+        { id: "local", name: "Local files", sub: "Your own music folders", icon: "folder", accent: "#ddb8ff" }
     ]
     readonly property var musicMoods: [
-        { name: "Night Drive", vibe: "midnight", accent: "#a78bfa", g: gradients.violet, desc: "Neon synths, wet asphalt" },
-        { name: "Dreamy", vibe: "soft", accent: "#f9a8d4", g: gradients.rose, desc: "Soft pianos, warm light" },
-        { name: "Focus", vibe: "focus", accent: "#b6c4d9", g: gradients.slate, desc: "Low-clutter deep work" },
-        { name: "Cosmic", vibe: "cosmic", accent: "#7bd0ff", g: gradients.cosmic, desc: "Drones, stars, slow orbits" },
-        { name: "Energize", vibe: "", accent: "#fbbf24", g: gradients.amber, desc: "Drive and momentum" },
-        { name: "Rainy Day", vibe: "", accent: "#5eead4", g: gradients.teal, desc: "Lofi, windows and rain" }
+        { name: "Night Drive", vibe: "midnight", tag: "synthwave", accent: "#a78bfa", g: gradients.violet, desc: "Neon synths, wet asphalt" },
+        { name: "Dreamy", vibe: "soft", tag: "ambient", accent: "#f9a8d4", g: gradients.rose, desc: "Soft pianos, warm light" },
+        { name: "Focus", vibe: "focus", tag: "instrumental", accent: "#b6c4d9", g: gradients.slate, desc: "Low-clutter deep work" },
+        { name: "Cosmic", vibe: "cosmic", tag: "ambient", accent: "#7bd0ff", g: gradients.cosmic, desc: "Drones, stars, slow orbits" },
+        { name: "Energize", vibe: "", tag: "electronic", accent: "#fbbf24", g: gradients.amber, desc: "Drive and momentum" },
+        { name: "Rainy Day", vibe: "", tag: "lofi", accent: "#5eead4", g: gradients.teal, desc: "Lofi, windows and rain" }
     ]
     readonly property var radioGenres: ["All", "Lofi", "Ambient", "Synthwave", "Jazz", "Classical", "Electronic", "Rock", "Soundtrack"]
 
-    readonly property var tracks: [
-        { id: "tk1", title: "Rain on Neon Glass", artist: "Velvet Circuit", album: "Midnight Transit", dur: 214, genre: "Synthwave", moods: ["Night Drive", "Rainy Day"], license: "CC BY-SA", plays: 48210, added: 12, art: artIds.wp1, g: gradients.violet },
-        { id: "tk2", title: "Afterglow Boulevard", artist: "Velvet Circuit", album: "Midnight Transit", dur: 198, genre: "Synthwave", moods: ["Night Drive", "Energize"], license: "CC BY", plays: 39120, added: 11, art: artIds.hero, g: gradients.violet },
-        { id: "tk3", title: "Paper Moon Waltz", artist: "Hanami Quartet", album: "Quiet Petals", dur: 241, genre: "Piano", moods: ["Dreamy", "Focus"], license: "CC BY-NC", plays: 27540, added: 10, art: artIds.wp2, g: gradients.rose },
-        { id: "tk4", title: "Slow Orbit", artist: "Luma Drift", album: "Far Field", dur: 305, genre: "Ambient", moods: ["Cosmic", "Focus"], license: "CC BY-SA", plays: 33800, added: 9, art: artIds.wp3, g: gradients.cosmic },
-        { id: "tk5", title: "Nebula Lullaby", artist: "Luma Drift", album: "Far Field", dur: 276, genre: "Ambient", moods: ["Cosmic", "Dreamy"], license: "CC BY", plays: 29310, added: 8, art: artIds.wp3, g: gradients.cosmic },
-        { id: "tk6", title: "Late Night Library", artist: "Quiet Hours", album: "Window Seat", dur: 187, genre: "Lofi", moods: ["Focus", "Rainy Day"], license: "CC BY-NC-SA", plays: 51200, added: 7, art: artIds.wp4, g: gradients.amber },
-        { id: "tk7", title: "Window Seat, Rain", artist: "Quiet Hours", album: "Window Seat", dur: 172, genre: "Lofi", moods: ["Rainy Day", "Dreamy"], license: "CC BY", plays: 44870, added: 6, art: artIds.wp4, g: gradients.amber },
-        { id: "tk8", title: "Hangar 09", artist: "Forge Engine", album: "Heavy Industry", dur: 224, genre: "Electronic", moods: ["Energize", "Night Drive"], license: "CC BY-SA", plays: 21400, added: 5, art: artIds.wp6, g: gradients.red },
-        { id: "tk9", title: "Aurora Drive", artist: "Nord Echoes", album: "Fjord Lights", dur: 262, genre: "Ambient", moods: ["Cosmic", "Dreamy"], license: "CC BY", plays: 18950, added: 4, art: artIds.wp5, g: gradients.green },
-        { id: "tk10", title: "Deep Work Pulse", artist: "Monolith Field", album: "Single Task", dur: 330, genre: "Electronic", moods: ["Focus"], license: "CC BY-SA", plays: 36120, added: 3, art: "", g: gradients.slate },
-        { id: "tk11", title: "Sunrise Over Kyoto", artist: "Hanami Quartet", album: "Quiet Petals", dur: 209, genre: "Piano", moods: ["Dreamy", "Energize"], license: "CC BY", plays: 24470, added: 2, art: artIds.wp2, g: gradients.rose },
-        { id: "tk12", title: "Static Bloom", artist: "Forge Engine", album: "Heavy Industry", dur: 191, genre: "Electronic", moods: ["Energize"], license: "CC BY-NC", plays: 15330, added: 1, art: "", g: gradients.teal }
-    ].map(function (t) { return Object.assign({ kind: "track", genres: [t.genre] }, t) })
-
-    readonly property var stations: [
-        { id: "st1", title: "Neon Static FM", genre: "Synthwave", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 3420, moods: ["Night Drive", "Energize"], added: 10, g: gradients.violet },
-        { id: "st2", title: "Deep Space Ambient", genre: "Ambient", bitrate: "192 kbps", codec: "AAC", country: "Global", listeners: 2810, moods: ["Cosmic", "Focus"], added: 9, g: gradients.cosmic },
-        { id: "st3", title: "Lofi Rain Radio", genre: "Lofi", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 5120, moods: ["Rainy Day", "Focus", "Dreamy"], added: 8, g: gradients.teal },
-        { id: "st4", title: "Midnight Jazz Cellar", genre: "Jazz", bitrate: "160 kbps", codec: "MP3", country: "Global", listeners: 1760, moods: ["Night Drive", "Dreamy"], added: 7, g: gradients.amber },
-        { id: "st5", title: "Piano Dawn", genre: "Classical", bitrate: "256 kbps", codec: "AAC", country: "Global", listeners: 1320, moods: ["Dreamy", "Focus"], added: 6, g: gradients.rose },
-        { id: "st6", title: "Drift Electronica", genre: "Electronic", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 2240, moods: ["Energize", "Night Drive"], added: 5, g: gradients.violet },
-        { id: "st7", title: "Soundtrack Cafe", genre: "Soundtrack", bitrate: "128 kbps", codec: "AAC", country: "Global", listeners: 2010, moods: ["Dreamy", "Rainy Day"], added: 4, g: gradients.green },
-        { id: "st8", title: "Forge Metal Radio", genre: "Rock", bitrate: "192 kbps", codec: "MP3", country: "Global", listeners: 1490, moods: ["Energize"], added: 3, g: gradients.red },
-        { id: "st9", title: "Orbital Chillout", genre: "Ambient", bitrate: "128 kbps", codec: "Opus", country: "Global", listeners: 1180, moods: ["Cosmic", "Dreamy"], added: 2, g: gradients.cosmic },
-        { id: "st10", title: "Focus Beats 24/7", genre: "Lofi", bitrate: "128 kbps", codec: "MP3", country: "Global", listeners: 4380, moods: ["Focus"], added: 1, g: gradients.slate }
-    ].map(function (s) { return Object.assign({ kind: "station", art: "", artist: "Live radio", album: "", genres: [s.genre] }, s) })
+    // Live catalogue results. Search results are not persisted; favorites and
+    // the queue are, with full stream metadata so they survive later searches.
+    property var jamendoTracks: []
+    property var radioStations: []
+    property var musicFavorites: []
+    property bool musicStatusChecked: false
+    property bool jamendoConfigured: false
+    property string jamendoConfigPath: ""
+    property string musicStatusMessage: ""
+    property bool jamendoLoaded: false
+    property bool radioLoaded: false
+    property bool musicLoading: false
+    property string musicError: ""
+    property string musicErrorCode: ""
+    property int musicSearchSeq: 0
+    property string musicPlaybackError: ""
 
     property string musicSource: "jamendo"
     property string musicMood: ""
     property string musicView: "Discover"
     property string musicQuery: ""
     property string radioGenre: "All"
+    property string radioCountry: ""
     property bool queueOpen: true
     property var queue: []
     property int queueIndex: -1
@@ -1473,143 +1492,486 @@ Item {
     property bool muted: false
     property bool shuffleOn: false
     property bool repeatOn: false
-    property bool audioNoteShown: false
-    readonly property var nowPlaying: (queueIndex >= 0 && queueIndex < queue.length) ? musicItem(queue[queueIndex]) : null
+    property bool pendingMixPlay: false
+    property bool pendingMixShuffle: false
+    property bool musicStateReady: false
+    readonly property var nowPlaying: (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null
+    readonly property real currentDuration: audioPlayer.duration > 0
+        ? audioPlayer.duration / 1000
+        : (nowPlaying && nowPlaying.dur > 0 ? nowPlaying.dur : 0)
+    readonly property string musicStatePath: {
+        var cfg = Quickshell.env("XDG_CONFIG_HOME")
+        if (!cfg) cfg = Quickshell.env("HOME") + "/.config"
+        return cfg + "/quickshell/media-hub-music.json"
+    }
+    readonly property string musicSaveKey: JSON.stringify([
+        musicFavorites, queue, queueIndex, musicSource, musicMood,
+        volume, muted, shuffleOn, repeatOn
+    ])
+    onMusicSaveKeyChanged: if (musicStateReady) musicSaveTimer.restart()
+
+    Timer {
+        id: musicSearchTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.runMusicSearch()
+    }
+
+    Timer {
+        id: musicSaveTimer
+        interval: 500
+        repeat: false
+        onTriggered: root.saveMusicState()
+    }
+
+    MediaPlayer {
+        id: audioPlayer
+        source: ""
+        audioOutput: AudioOutput {
+            id: audioOutput
+            volume: root.muted ? 0 : root.volume
+        }
+        onPlaybackStateChanged: root.playing = playbackState === MediaPlayer.PlayingState
+        onPositionChanged: {
+            if (root.nowPlaying && root.nowPlaying.kind === "track")
+                root.playPos = Math.max(0, position / 1000)
+        }
+        onMediaStatusChanged: {
+            if (mediaStatus === MediaPlayer.EndOfMedia) {
+                root.skip(1)
+            } else if (mediaStatus === MediaPlayer.InvalidMedia && root.nowPlaying) {
+                root.notePlaybackError("This stream could not be played. Try another result.")
+            }
+        }
+        onErrorOccurred: (error, errorString) => {
+            if (error !== MediaPlayer.NoError && root.nowPlaying)
+                root.notePlaybackError(String(errorString || "Playback failed."))
+        }
+    }
+
+    FileView {
+        id: musicStateFile
+        path: root.musicStatePath
+        printErrors: false
+        onLoaded: {
+            root.applyMusicState(MusicQueue.parseState(musicStateFile.text(), root.defaultMusicState()))
+            root.musicStateReady = true
+        }
+        onLoadFailed: root.musicStateReady = true
+    }
+
+    onMusicQueryChanged: if (page === pgMusic) scheduleMusicSearch()
+    onMusicMoodChanged: if (page === pgMusic) scheduleMusicSearch()
+    onMusicViewChanged: if (page === pgMusic) scheduleMusicSearch()
+    onRadioGenreChanged: if (page === pgMusic && musicSource === "radio") scheduleMusicSearch()
+    onRadioCountryChanged: if (page === pgMusic && musicSource === "radio") scheduleMusicSearch()
 
     function fmtTime(s) {
         s = Math.max(0, Math.floor(s))
         var r = s % 60
         return Math.floor(s / 60) + ":" + (r < 10 ? "0" : "") + r
     }
-    function musicItem(ref) {
-        if (!ref) return null
-        return ref.kind === "track" ? findIn(tracks, ref.id) : findIn(stations, ref.id)
-    }
-    function musicRef(it) { return { kind: it.kind, id: it.id } }
-    function musicSub(it) {
-        if (!it) return ""
-        return it.kind === "track" ? (it.artist + " \u00b7 " + it.album) : (it.genre + " \u00b7 " + it.bitrate + " " + it.codec)
-    }
     function musicMoodFor(vibeId) {
         for (var i = 0; i < musicMoods.length; i++) if (musicMoods[i].vibe === vibeId) return musicMoods[i].name
         return ""
     }
-    function moodInfo(name) { for (var i = 0; i < musicMoods.length; i++) if (musicMoods[i].name === name) return musicMoods[i]; return null }
-    function moodCount(name, kind) {
-        var list = kind === "track" ? tracks : stations, n = 0
-        for (var i = 0; i < list.length; i++) if (list[i].moods.indexOf(name) >= 0) n++
-        return n
+    function moodInfo(name) {
+        for (var i = 0; i < musicMoods.length; i++) if (musicMoods[i].name === name) return musicMoods[i]
+        return null
+    }
+    function musicTagForMood(name) {
+        var info = moodInfo(name)
+        return info ? info.tag : ""
+    }
+    function musicSourceState(id) {
+        if (id === "jamendo") {
+            if (musicLoading && musicSource === "jamendo") return "SEARCHING"
+            if (musicError !== "" && musicSource === "jamendo") return "OFFLINE"
+            return jamendoConfigured ? "LIVE CATALOGUE" : "SETUP REQUIRED"
+        }
+        if (id === "radio") {
+            if (musicLoading && musicSource === "radio") return "SEARCHING"
+            return musicError !== "" && musicSource === "radio" ? "OFFLINE" : (radioLoaded ? "LIVE DIRECTORY" : "READY")
+        }
+        return "NOT CONNECTED"
+    }
+    function musicSourceTint(id) {
+        if (id === "jamendo") {
+            if (musicError !== "" && musicSource === "jamendo") return "#ffb4ab"
+            return jamendoConfigured ? "#86efac" : "#fde047"
+        }
+        if (id === "radio") return musicError !== "" && musicSource === "radio" ? "#ffb4ab" : "#7bd0ff"
+        return "#948e9d"
     }
     function setMusicSource(id) {
         musicSource = id
         musicView = id === "radio" ? "Popular" : "Discover"
         radioGenre = "All"
+        radioCountry = ""
         musicQuery = ""
+        musicError = ""
+        musicErrorCode = ""
+        musicLoading = false
+        pendingMixPlay = false
+        pendingMixShuffle = false
+        scheduleMusicSearch()
+    }
+    function scheduleMusicSearch() {
+        if (page !== pgMusic || musicSource === "local") return
+        if (!musicStatusChecked) return
+        if (musicSource === "jamendo" && !jamendoConfigured) return
+        if (musicView === "Favorites") return
+        musicSearchTimer.restart()
+    }
+    function runMusicSearch() {
+        if (page !== pgMusic || musicSource === "local" || !musicStatusChecked) return
+        if (musicSource === "jamendo" && !jamendoConfigured) return
+        if (musicView === "Favorites") return
+        var moodTag = musicTagForMood(musicMood)
+        var tag = musicSource === "radio" && radioGenre !== "All" ? radioGenre : moodTag
+        var order = "popularity_total"
+        if (musicSource === "radio") {
+            order = "clickcount"
+        } else if (musicView === "Trending") {
+            order = "popularity_week"
+        } else if (musicView === "New") {
+            order = "releasedate_desc"
+        }
+        musicSearchSeq++
+        musicLoading = true
+        musicError = ""
+        musicErrorCode = ""
+        var request = {
+            seq: musicSearchSeq,
+            source: musicSource,
+            query: musicQuery.trim(),
+            tag: tag,
+            country: radioCountry.trim(),
+            order: order,
+            mood: musicMood,
+            limit: 40,
+            offset: 0
+        }
+        if (!musicBackend.search(request)) {
+            musicLoading = false
+            musicError = "Could not start the music search."
+            musicErrorCode = "invalid_request"
+        }
+    }
+    function handleMusicStatus(configured, path, message) {
+        musicStatusChecked = true
+        jamendoConfigured = configured
+        jamendoConfigPath = path
+        musicStatusMessage = message
+        if (page === pgMusic) {
+            if (musicSource === "jamendo" && !configured) return
+            scheduleMusicSearch()
+        }
+    }
+    function handleMusicSearch(payload, request) {
+        if (!request || request.seq !== musicSearchSeq || request.source !== musicSource) return
+        var incoming = MusicQueue.sanitizeList(payload.results, 60)
+        if (request.mood !== "") {
+            for (var m = 0; m < incoming.length; m++) {
+                if (incoming[m].moods.indexOf(request.mood) < 0)
+                    incoming[m].moods = incoming[m].moods.concat([request.mood])
+            }
+        }
+        var firstLoad = request.source === "jamendo" ? !jamendoLoaded : !radioLoaded
+        if (request.source === "jamendo") {
+            jamendoTracks = incoming
+            jamendoLoaded = true
+        } else {
+            radioStations = incoming
+            radioLoaded = true
+        }
+        musicLoading = false
+        musicError = ""
+        musicErrorCode = ""
+        logActivity((request.source === "jamendo" ? "Jamendo: " : "Radio Browser: ") + incoming.length + " result(s)")
+        if (pendingMixPlay) {
+            pendingMixPlay = false
+            var mix = request.source === "jamendo" ? filteredTracks() : filteredStations()
+            var shuffle = pendingMixShuffle
+            pendingMixShuffle = false
+            if (mix.length === 0)
+                notify("No playable results for this mix. Try another mood or search.", "info")
+            else
+                playAll(mix, shuffle)
+        } else if (firstLoad && incoming.length > 0) {
+            notify((request.source === "jamendo" ? "Jamendo" : "Radio Browser") + " connected \u2014 " + incoming.length + " live result(s).", "ok")
+        }
+    }
+    function handleMusicSearchFailure(message, code, request) {
+        if (!request || request.seq !== musicSearchSeq || request.source !== musicSource) return
+        musicLoading = false
+        musicError = message
+        musicErrorCode = code
+        pendingMixPlay = false
+        pendingMixShuffle = false
+        if (code === "jamendo_unconfigured") {
+            jamendoConfigured = false
+            musicStatusMessage = message
+            musicError = ""
+            musicErrorCode = ""
+        } else {
+            notify("Music search failed: " + message, "warn")
+        }
+        logActivity("Music search failed: " + code)
+    }
+    function defaultMusicState() {
+        return {
+            favorites: musicFavorites,
+            queue: queue,
+            queueIndex: queueIndex,
+            source: musicSource,
+            mood: musicMood,
+            volume: volume,
+            muted: muted,
+            shuffleOn: shuffleOn,
+            repeatOn: repeatOn
+        }
+    }
+    function applyMusicState(state) {
+        if (!state) return
+        musicFavorites = MusicQueue.sanitizeList(state.favorites, 200)
+        queue = MusicQueue.sanitizeList(state.queue, 200)
+        queueIndex = MusicQueue.normalizeIndex(state.queueIndex, queue.length)
+        musicSource = state.source
+        musicView = musicSource === "radio" ? "Popular" : "Discover"
+        musicMood = moodInfo(state.mood) ? state.mood : ""
+        volume = state.volume
+        muted = state.muted
+        shuffleOn = state.shuffleOn
+        repeatOn = state.repeatOn
+        var fav = Object.assign({}, favorites)
+        for (var i = 0; i < musicFavorites.length; i++) fav[musicFavorites[i].id] = true
+        favorites = fav
+        if (page === pgMusic) scheduleMusicSearch()
+    }
+    function saveMusicState() {
+        if (!musicStateReady) return
+        musicStateFile.setText(JSON.stringify({
+            favorites: musicFavorites,
+            queue: queue,
+            queueIndex: queueIndex,
+            source: musicSource,
+            mood: musicMood,
+            volume: volume,
+            muted: muted,
+            shuffleOn: shuffleOn,
+            repeatOn: repeatOn
+        }, null, 2))
+    }
+    function musicRef(it) { return MusicQueue.sanitizeItem(it) }
+    function musicItem(ref) {
+        if (!ref) return null
+        var clean = MusicQueue.sanitizeItem(ref)
+        if (clean) return clean
+        var lists = [jamendoTracks, radioStations, musicFavorites]
+        for (var i = 0; i < lists.length; i++) {
+            var found = findIn(lists[i], ref.id)
+            if (found) return MusicQueue.sanitizeItem(found)
+        }
+        return null
+    }
+    function findMusicItem(id) {
+        var lists = [jamendoTracks, radioStations, musicFavorites, queue]
+        for (var i = 0; i < lists.length; i++) {
+            var found = findIn(lists[i], id)
+            if (found) return MusicQueue.sanitizeItem(found)
+        }
+        return null
     }
     function filteredTracks() {
         var q = musicQuery.trim().toLowerCase(), out = []
-        for (var i = 0; i < tracks.length; i++) {
-            var t = tracks[i]
+        var list = musicView === "Favorites"
+            ? musicFavorites.filter(function (it) { return it.kind === "track" })
+            : jamendoTracks
+        for (var i = 0; i < list.length; i++) {
+            var t = list[i]
             if (musicMood !== "" && t.moods.indexOf(musicMood) < 0) continue
             if (q && (t.title + " " + t.artist + " " + t.album + " " + t.genre).toLowerCase().indexOf(q) < 0) continue
-            if (musicView === "Favorites" && !favorites[t.id]) continue
             out.push(t)
         }
-        if (musicView === "Trending") out.sort(function (a, b) { return b.plays - a.plays })
-        else if (musicView === "New") out.sort(function (a, b) { return b.added - a.added })
         return out
     }
     function filteredStations() {
         var q = musicQuery.trim().toLowerCase(), out = []
-        for (var i = 0; i < stations.length; i++) {
-            var s = stations[i]
+        var list = musicView === "Favorites"
+            ? musicFavorites.filter(function (it) { return it.kind === "station" })
+            : radioStations
+        for (var i = 0; i < list.length; i++) {
+            var s = list[i]
             if (musicMood !== "" && s.moods.indexOf(musicMood) < 0) continue
-            if (radioGenre !== "All" && s.genre !== radioGenre) continue
-            if (q && (s.title + " " + s.genre).toLowerCase().indexOf(q) < 0) continue
-            if (musicView === "Favorites" && !favorites[s.id]) continue
+            if (radioGenre !== "All" && s.genre.toLowerCase().indexOf(radioGenre.toLowerCase()) < 0) continue
+            if (q && (s.title + " " + s.genre + " " + s.country).toLowerCase().indexOf(q) < 0) continue
             out.push(s)
         }
-        if (musicView === "New") out.sort(function (a, b) { return b.added - a.added })
-        else out.sort(function (a, b) { return b.listeners - a.listeners })
         return out
     }
-    function audioNote() {
-        if (audioNoteShown) return
-        audioNoteShown = true
-        notify("Playback is a UI preview: no audio engine is connected yet, so nothing will be heard.", "warn")
+    function musicSub(it) {
+        if (!it) return ""
+        if (it.kind === "station") {
+            var quality = it.bitrate > 0 ? (it.bitrate + " kbps") : "live stream"
+            return (it.genre || "Radio") + " \u00b7 " + (it.codec || "audio") + " \u00b7 " + quality
+        }
+        return it.artist + (it.album ? (" \u00b7 " + it.album) : "")
+    }
+    function startCurrent() {
+        if (!nowPlaying) return
+        musicPlaybackError = ""
+        playPos = 0
+        audioPlayer.source = nowPlaying.streamUrl
+        audioPlayer.play()
     }
     function playNow(item, context) {
-        // >>> BACKEND: start streaming item.streamUrl (Jamendo) or the resolved station URL (Radio Browser).
-        var list = (context && context.length > 0) ? context : [item]
-        var idx = 0
-        for (var i = 0; i < list.length; i++) if (list[i].id === item.id) idx = i
-        queue = list.map(musicRef)
+        var chosen = musicRef(item)
+        if (!chosen) {
+            notify("This item has no playable stream.", "warn")
+            return
+        }
+        var list = MusicQueue.sanitizeList((context && context.length > 0) ? context : [chosen], 200)
+        var idx = -1
+        for (var i = 0; i < list.length; i++) if (list[i].id === chosen.id) idx = i
+        if (idx < 0) {
+            list.unshift(chosen)
+            idx = 0
+        }
+        queue = list
         queueIndex = idx
-        playPos = 0
-        playing = true
-        markOpened(item.id)
-        logActivity("Playing (UI preview): " + item.title)
-        audioNote()
+        startCurrent()
+        markOpened(chosen.id)
+        logActivity("Playing: " + chosen.title)
     }
     function playAll(list, shuffled) {
         if (!list || list.length === 0) { notify("Nothing to play with the current filters.", "info"); return }
-        var l = list.slice()
-        if (shuffled) l.sort(function () { return Math.random() - 0.5 })
+        var l = shuffled ? MusicQueue.shuffle(list, Math.random) : MusicQueue.sanitizeList(list, 200)
+        if (l.length === 0) { notify("Nothing playable in this list.", "info"); return }
         playNow(l[0], l)
     }
-    function queueAdd(item, next) {
-        var ref = musicRef(item)
-        if (queueIndex < 0) {
-            queue = [ref]; queueIndex = 0; playPos = 0; playing = false
-        } else {
-            var q = queue.slice()
-            if (next) q.splice(queueIndex + 1, 0, ref); else q.push(ref)
-            queue = q
+    function playCurrentMusicList(shuffled) {
+        var list = musicSource === "jamendo" ? filteredTracks() : filteredStations()
+        if (list.length > 0) {
+            playAll(list, shuffled)
+            return
         }
+        if (musicSource === "local") {
+            notify("Local music is not connected yet.", "warn")
+            return
+        }
+        if (musicSource === "jamendo" && !jamendoConfigured) {
+            notify("Add a Jamendo client ID to load a live mix.", "warn")
+            return
+        }
+        if (musicView === "Favorites") {
+            notify("No favorite " + (musicSource === "jamendo" ? "tracks" : "stations") + " yet.", "info")
+            return
+        }
+        pendingMixPlay = true
+        pendingMixShuffle = shuffled
+        runMusicSearch()
+        if (musicLoading) notify("Loading a live mix\u2026", "info")
+    }
+    function queueAdd(item, next) {
+        var result = MusicQueue.queueAdd(queue, queueIndex, item, next)
+        queue = result.queue
+        queueIndex = result.index
         notify((next ? "Playing next: " : "Added to queue: ") + item.title, "ok")
     }
     function removeFromQueue(i) {
-        var q = queue.slice()
-        q.splice(i, 1)
-        var qi = queueIndex
-        if (i < qi) qi--
-        else if (i === qi) { qi = q.length === 0 ? -1 : Math.min(i, q.length - 1); playPos = 0; if (q.length === 0) playing = false }
-        queue = q
-        queueIndex = qi
+        var wasPlaying = playing
+        var result = MusicQueue.removeAt(queue, i, queueIndex)
+        queue = result.queue
+        queueIndex = result.index
+        if (!result.removedCurrent) return
+        if (result.index < 0) {
+            stopPlayer()
+        } else if (wasPlaying) {
+            startCurrent()
+        } else {
+            audioPlayer.stop()
+            audioPlayer.source = ""
+            playing = false
+            playPos = 0
+        }
     }
     function clearQueue() {
-        if (queueIndex >= 0) { queue = [queue[queueIndex]]; queueIndex = 0 } else queue = []
+        if (queueIndex >= 0) {
+            queue = [queue[queueIndex]]
+            queueIndex = 0
+        } else {
+            queue = []
+        }
     }
     function moveQueue(i, d) {
-        var j = i + d
-        if (j < 0 || j >= queue.length) return
-        var q = queue.slice()
-        var t = q[i]; q[i] = q[j]; q[j] = t
-        var qi = queueIndex
-        if (qi === i) qi = j; else if (qi === j) qi = i
-        queue = q
-        queueIndex = qi
+        var current = MusicQueue.movedIndex(queueIndex, i, d)
+        queue = MusicQueue.move(queue, i, d)
+        queueIndex = current
     }
-    function jumpQueue(i) { queueIndex = i; playPos = 0; playing = true; audioNote() }
+    function jumpQueue(i) {
+        if (i < 0 || i >= queue.length) return
+        queueIndex = i
+        startCurrent()
+    }
     function skip(dir) {
         var n = queue.length
         if (n === 0) return
         var idx
-        if (shuffleOn && n > 1) { do { idx = Math.floor(Math.random() * n) } while (idx === queueIndex) }
-        else idx = queueIndex + dir
+        if (shuffleOn && n > 1) {
+            do { idx = Math.floor(Math.random() * n) } while (idx === queueIndex)
+        } else {
+            idx = queueIndex + dir
+        }
         if (idx < 0) idx = repeatOn ? n - 1 : 0
-        if (idx >= n) { if (repeatOn) idx = 0; else { playing = false; playPos = 0; return } }
+        if (idx >= n) {
+            if (repeatOn) {
+                idx = 0
+            } else {
+                audioPlayer.stop()
+                audioPlayer.source = ""
+                playing = false
+                playPos = 0
+                return
+            }
+        }
         queueIndex = idx
-        playPos = 0
-        playing = true
+        startCurrent()
     }
     function togglePlay() {
+        if (!nowPlaying && queue.length > 0) queueIndex = 0
         if (!nowPlaying) return
-        playing = !playing
-        if (playing) audioNote()
+        if (audioPlayer.playbackState === MediaPlayer.PlayingState) {
+            audioPlayer.pause()
+        } else if (audioPlayer.playbackState === MediaPlayer.PausedState
+                   && audioPlayer.source === nowPlaying.streamUrl) {
+            audioPlayer.play()
+        } else {
+            startCurrent()
+        }
     }
-    function seekFrac(f) { if (nowPlaying && nowPlaying.kind === "track") playPos = Math.max(0, Math.min(1, f)) * nowPlaying.dur }
-    function stopPlayer() { playing = false; queueIndex = -1; playPos = 0 }
+    function seekFrac(f) {
+        if (!nowPlaying || nowPlaying.kind !== "track") return
+        var value = Math.max(0, Math.min(1, f))
+        var total = currentDuration > 0 ? currentDuration : nowPlaying.dur
+        playPos = value * total
+        audioPlayer.position = Math.round(playPos * 1000)
+    }
+    function stopPlayer() {
+        audioPlayer.stop()
+        audioPlayer.source = ""
+        playing = false
+        queueIndex = -1
+        playPos = 0
+        musicPlaybackError = ""
+    }
+    function notePlaybackError(message) {
+        if (musicPlaybackError !== "") return
+        musicPlaybackError = String(message || "Playback failed.")
+        playing = false
+        notify("Playback failed: " + musicPlaybackError, "warn")
+        logActivity("Playback failed: " + musicPlaybackError)
+    }
     function exploreMusicMood(name) {
         musicMood = name
         if (musicSource === "local") setMusicSource("jamendo")
@@ -1621,9 +1983,11 @@ Item {
         if (name === "") name = "Focus"
         musicMood = name
         if (musicSource === "local") setMusicSource("jamendo")
-        var list = tracks.filter(function (t) { return t.moods.indexOf(name) >= 0 })
-        playAll(list, false)
-        notify("Playing the \u201c" + name + "\u201d mix \u2014 UI preview only.", "ok")
+        playCurrentMusicList(false)
+    }
+    function openMusicSource(url) {
+        var safe = MusicQueue.safeWebUrl(url)
+        if (safe !== "") sourceLinkRequested(safe)
     }
 
     // ================================================================
@@ -2154,7 +2518,7 @@ Item {
                 { name: "Manga & Manhwa", icon: "manga", go: 3, sub: root.countListed("manga") + " on reading list" },
                 { name: "Downloads", icon: "download", go: 5, sub: root.dlCount("downloading") + " active \u00b7 " + root.dlCount("queued") + " queued" },
                 { name: "My Library", icon: "library", go: 6, sub: root.libraryItems().length + " items" },
-                { name: "Music", icon: "music", go: 4, sub: root.tracks.length + " tracks \u00b7 " + root.stations.length + " stations" }
+                { name: "Music", icon: "music", go: 4, sub: "Online player \u00b7 " + root.musicFavorites.length + " saved" }
             ]
             readonly property var recent: root.libraryList("All", "Recently Opened", "").filter(function (it) { return it.opened > 0 }).slice(0, 4)
 
@@ -3115,15 +3479,15 @@ Item {
             readonly property var srcInfo: root.findIn(root.musicSources, src)
             readonly property real cw: mf.width - 48
             readonly property string vibeMood: root.musicMoodFor(root.moodId)
-            readonly property string activeMood: root.musicMood !== "" ? root.musicMood : vibeMood
+            readonly property string activeMood: root.musicMood
             readonly property var trackList: root.filteredTracks()
             readonly property var stationList: root.filteredStations()
-            readonly property var views: src === "radio" ? ["Popular", "New", "Favorites"] : ["Discover", "Trending", "New", "Favorites"]
+            readonly property var views: src === "radio" ? ["Popular", "Favorites"] : ["Discover", "Trending", "New", "Favorites"]
             readonly property int moodCols: cw >= 900 ? 6 : (cw >= 600 ? 3 : 2)
             readonly property real moodW: (cw - 12 * (moodCols - 1)) / moodCols
             readonly property int cols: Math.max(1, Math.floor((cw + 16) / 266))
             readonly property real cardW: (cw - 16 * (cols - 1)) / cols
-            readonly property var mixList: root.tracks.filter(function (t) { return mp.activeMood === "" || t.moods.indexOf(mp.activeMood) >= 0 })
+            readonly property var mixList: src === "jamendo" ? trackList : (src === "radio" ? stationList : [])
 
             Flickable {
                 id: mf
@@ -3179,7 +3543,7 @@ Item {
                                     spacing: 3
                                     Lbl { width: parent.width; text: modelData.name; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
                                     Lbl { width: parent.width; text: modelData.sub; dim: true; font.pixelSize: 11; elide: Text.ElideRight }
-                                    Tag { text: modelData.note.toUpperCase(); tint: root.backendConnected ? "#86efac" : "#fde047"; px: 9 }
+                                    Tag { text: root.musicSourceState(modelData.id); tint: root.musicSourceTint(modelData.id); px: 9 }
                                 }
                                 MouseArea { id: sh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMusicSource(modelData.id) }
                             }
@@ -3188,16 +3552,36 @@ Item {
 
                     Card {
                         width: parent.width
-                        visible: !root.backendConnected
-                        tint: "#fde047"
+                        visible: mp.src === "local" || (mp.src === "jamendo" && !root.jamendoConfigured) || root.musicError !== ""
+                        tint: (root.musicError !== "" || mp.src === "local") ? "#ffb4ab" : "#fde047"
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
-                            Ico { name: "warn"; size: 18; tint: "#fde047" }
+                            Ico { name: "warn"; size: 18; tint: root.musicError !== "" ? "#ffb4ab" : "#fde047" }
                             Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
-                                  text: mp.src === "jamendo" ? "Jamendo isn't connected. These are sample tracks. Phase 2 connects the Jamendo API for real Creative Commons tracks with direct streaming; the licence shown on each row is what the API will report."
-                                      : (mp.src === "radio" ? "Radio Browser isn't connected. These are sample stations. Phase 2 queries Radio Browser for endless genre-based listening and resolves each station's stream URL."
-                                                            : "Local music is planned for later. Nothing on disk is scanned in this prototype.") }
+                                  text: mp.src === "local"
+                                      ? "Local music is not connected yet. GPS Media Hub currently streams Jamendo and Radio Browser; local folder scanning is a later milestone."
+                                      : (root.musicError !== ""
+                                          ? ("Search failed: " + root.musicError + (root.musicErrorCode !== "" ? " (" + root.musicErrorCode + ")" : ""))
+                                          : ("Jamendo needs a client ID. Set JAMENDO_CLIENT_ID or add music.jamendoClientId to "
+                                             + (root.jamendoConfigPath !== "" ? root.jamendoConfigPath : "~/.config/quickshell/rice-settings.json")
+                                             + ". Radio Browser remains available without an account."
+                                             + (root.musicStatusMessage !== "" ? " " + root.musicStatusMessage : ""))) }
+                            Btn { visible: mp.src !== "local" && root.musicError !== ""; compact: true; icon: "refresh"; label: "Retry"
+                                  onClicked: root.runMusicSearch() }
+                        }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: root.musicLoading
+                        tint: root.accent
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Ico { name: "search"; size: 18; tint: root.accent }
+                            Lbl { Layout.fillWidth: true; dim: true; font.pixelSize: 13
+                                  text: "Searching " + (mp.src === "radio" ? "Radio Browser" : "Jamendo") + " for live results\u2026" }
                         }
                     }
 
@@ -3239,7 +3623,7 @@ Item {
                                         width: parent.width - 24
                                         spacing: 2
                                         Lbl { width: parent.width; text: modelData.name; font.pixelSize: 14; font.weight: Font.Bold; elide: Text.ElideRight }
-                                        Lbl { text: root.moodCount(modelData.name, "track") + " tracks \u00b7 " + root.moodCount(modelData.name, "station") + " stations"; mono: true; font.pixelSize: 10; color: "#cfd6e6" }
+                                        Lbl { width: parent.width; text: modelData.desc; elide: Text.ElideRight; mono: true; font.pixelSize: 10; color: "#cfd6e6" }
                                     }
                                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.musicMood = mood.sel ? "" : modelData.name }
                                 }
@@ -3263,14 +3647,15 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 4
-                                Tag { text: root.musicMood !== "" ? "MOOD MIX" : "MATCHES YOUR GPS VIBE"; tint: root.accent }
+                                Tag { text: mp.activeMood !== "" ? "MOOD MIX" : "LIVE CATALOGUE"; tint: root.accent }
                                 Lbl { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 19; font.weight: Font.Bold
                                       text: mp.activeMood !== "" ? (mp.activeMood + " mix") : "Everything mix" }
                                 Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
-                                      text: mp.mixList.length + " sample tracks. Play them as a queue, or shuffle." }
+                                      text: (root.musicLoading ? "Loading" : mp.mixList.length + " live " + (mp.src === "radio" ? "station" : "track") + (mp.mixList.length === 1 ? "" : "s"))
+                                            + (mp.vibeMood !== "" ? " \u00b7 GPS vibe suggests " + mp.vibeMood : "") }
                             }
-                            Btn { kind: "primary"; accent: root.accent; icon: "play"; label: "Play mix"; onClicked: root.playAll(mp.mixList, false) }
-                            Btn { icon: "sync"; label: mp.wide ? "Shuffle" : ""; onClicked: root.playAll(mp.mixList, true) }
+                            Btn { kind: "primary"; accent: root.accent; icon: "play"; label: "Play mix"; muted: root.musicLoading; onClicked: root.playCurrentMusicList(false) }
+                            Btn { icon: "sync"; label: mp.wide ? "Shuffle" : ""; muted: root.musicLoading; onClicked: root.playCurrentMusicList(true) }
                         }
                     }
 
@@ -3284,6 +3669,17 @@ Item {
                             placeholder: mp.src === "radio" ? "Search stations or genres" : "Search tracks, artists or albums"
                             text: root.musicQuery
                             onEdited: root.musicQuery = text
+                            onSubmitted: root.runMusicSearch()
+                        }
+                        SearchField {
+                            visible: mp.src === "radio"
+                            Layout.fillWidth: true
+                            icon: "cloud"
+                            accent: "#7bd0ff"
+                            placeholder: "Filter by country (optional)"
+                            text: root.radioCountry
+                            onEdited: root.radioCountry = text
+                            onSubmitted: root.runMusicSearch()
                         }
                         Wrap {
                             Layout.fillWidth: true
@@ -3302,6 +3698,15 @@ Item {
                                 delegate: Chip { label: modelData; accent: "#7bd0ff"; active: root.radioGenre === modelData; onClicked: root.radioGenre = modelData }
                             }
                         }
+                        Lbl {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            faint: true
+                            font.pixelSize: 11
+                            text: mp.src === "radio"
+                                ? "Live directory data from Radio Browser. Stream quality and availability depend on each station."
+                                : "Creative Commons tracks streamed from Jamendo. Artist and licence details come from the catalogue."
+                        }
                     }
 
                     // ---- Jamendo tracks
@@ -3309,7 +3714,9 @@ Item {
                         width: parent.width
                         spacing: 6
                         visible: mp.src === "jamendo"
-                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: mp.trackList.length + " sample tracks" + (root.musicMood !== "" ? " \u00b7 " + root.musicMood : "") }
+                        Lbl { mono: true; faint: true; font.pixelSize: 11
+                              text: (root.musicLoading ? "Searching Jamendo\u2026" : (mp.trackList.length + " live track" + (mp.trackList.length === 1 ? "" : "s")))
+                                    + (root.musicMood !== "" ? " \u00b7 " + root.musicMood : "") }
                         Repeater {
                             model: mp.trackList
                             delegate: Rectangle {
@@ -3333,11 +3740,13 @@ Item {
                                         Layout.fillWidth: true
                                         spacing: 1
                                         Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: row.cur ? root.accent : "#dde2f2" }
-                                        Lbl { Layout.fillWidth: true; text: modelData.artist + " \u00b7 " + modelData.album; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                                        Lbl { Layout.fillWidth: true; text: root.musicSub(modelData); elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
                                     }
-                                    Tag { visible: mp.cw > 760; text: modelData.genre.toUpperCase(); px: 9 }
+                                    Tag { visible: mp.cw > 760 && modelData.genre !== ""; text: modelData.genre.toUpperCase(); px: 9 }
                                     Tag { visible: mp.cw > 640; text: modelData.license; tint: "#86efac"; px: 9 }
                                     Lbl { text: root.fmtTime(modelData.dur); mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 38; horizontalAlignment: Text.AlignRight }
+                                    IconBtn { visible: modelData.sourceUrl !== ""; box: 30; icon: "link"; tip: "Open on Jamendo"
+                                              onClicked: root.openMusicSource(modelData.sourceUrl) }
                                     IconBtn { box: 30; icon: root.favorites[modelData.id] ? "heart" : "heartO"; active: !!root.favorites[modelData.id]; tip: "Favorite"
                                               onClicked: root.toggleFavorite(modelData.id, modelData.title) }
                                     IconBtn { box: 30; icon: "plus"; tip: "Add to queue"; onClicked: root.queueAdd(modelData, false) }
@@ -3348,9 +3757,11 @@ Item {
                         }
                         Card {
                             width: parent.width
-                            visible: mp.trackList.length === 0
+                            visible: mp.trackList.length === 0 && !root.musicLoading && root.musicError === "" && root.jamendoConfigured
                             Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: root.musicView === "Favorites" ? "No favorite tracks yet" : "No tracks match" }
-                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Clear the mood or search, or heart a few tracks to build your favorites." }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                                  text: root.musicView === "Favorites" ? "Heart a few live tracks to keep them in My Library and this view."
+                                                                        : "Try a shorter search, clear the mood, or press Enter to retry the catalogue." }
                             Btn { label: "Clear mood & search"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.musicView = "Discover" } }
                         }
                     }
@@ -3360,7 +3771,10 @@ Item {
                         width: parent.width
                         spacing: 10
                         visible: mp.src === "radio"
-                        Lbl { mono: true; faint: true; font.pixelSize: 11; text: mp.stationList.length + " sample stations \u00b7 pick one and Next/Previous move through this list" }
+                        Lbl { mono: true; faint: true; font.pixelSize: 11
+                              text: root.musicLoading ? "Searching Radio Browser\u2026"
+                                                      : (mp.stationList.length + " live station" + (mp.stationList.length === 1 ? "" : "s")
+                                                         + " \u00b7 pick one and Next/Previous move through this list") }
                         Wrap {
                             width: parent.width
                             spacing: 16
@@ -3369,8 +3783,10 @@ Item {
                                 delegate: MediaCard {
                                     width: mp.cardW
                                     title: modelData.title
-                                    meta: modelData.genre + " \u00b7 " + modelData.bitrate
-                                    extra: modelData.listeners.toLocaleString(Qt.locale("en_US"), "f", 0) + " listeners (sample)"
+                                    meta: modelData.genre + " \u00b7 " + modelData.codec
+                                          + (modelData.bitrate > 0 ? " \u00b7 " + modelData.bitrate + " kbps" : "")
+                                    extra: modelData.votes.toLocaleString(Qt.locale("en_US"), "f", 0)
+                                           + " community vote" + (modelData.votes === 1 ? "" : "s") + " \u00b7 " + modelData.country
                                     badge: "LIVE"
                                     corner: modelData.codec
                                     grad: modelData.g
@@ -3382,21 +3798,25 @@ Item {
                                     showPreview: true
                                     previewIcon: "plus"
                                     previewTip: "Add to queue"
+                                    showSource: modelData.sourceUrl !== ""
                                     primaryLabel: "Listen"
                                     primaryIcon: "play"
                                     onActivated: root.playNow(modelData, mp.stationList)
                                     onPrimary: root.playNow(modelData, mp.stationList)
                                     onPreviewed: root.queueAdd(modelData, false)
                                     onFavToggled: root.toggleFavorite(modelData.id, modelData.title)
+                                    onSourceRequested: root.openMusicSource(modelData.sourceUrl)
                                 }
                             }
                         }
                         Card {
                             width: parent.width
-                            visible: mp.stationList.length === 0
+                            visible: mp.stationList.length === 0 && !root.musicLoading && root.musicError === ""
                             Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: root.musicView === "Favorites" ? "No favorite stations yet" : "No stations match" }
-                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Try another genre or clear the mood filter." }
-                            Btn { label: "Reset"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.radioGenre = "All"; root.musicView = "Popular" } }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                                  text: root.musicView === "Favorites" ? "Heart a live station to keep it here and in My Library."
+                                                                        : "Try another genre or country, clear the mood, or adjust the search." }
+                            Btn { label: "Reset"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.radioGenre = "All"; root.radioCountry = ""; root.musicView = "Popular" } }
                         }
                     }
 
@@ -3530,21 +3950,36 @@ Item {
         color: "#f5080e19"
         readonly property var np: root.nowPlaying
         readonly property bool live: np !== null && np.kind === "station"
-        readonly property real frac: (np !== null && np.kind === "track" && np.dur > 0) ? root.playPos / np.dur : 0
+        readonly property bool compactPlayer: (root.width - root.sidebarW) < 760
+        readonly property real frac: (np !== null && np.kind === "track" && root.currentDuration > 0)
+            ? Math.max(0, Math.min(1, root.playPos / root.currentDuration)) : 0
+        readonly property string statusText: {
+            if (root.musicPlaybackError !== "") return "Error: " + root.musicPlaybackError
+            if (np === null) return ""
+            if (live) return "LIVE \u00b7 " + (np.bitrate > 0 ? np.bitrate + " kbps \u00b7 " : "") + (np.codec || "audio")
+            return (root.playing ? "Playing" : "Paused") + " \u00b7 " + root.fmtTime(root.playPos)
+                   + " / " + root.fmtTime(root.currentDuration)
+        }
         Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: 1; color: "#232a37" }
         RowLayout {
-            anchors { fill: parent; leftMargin: 20; rightMargin: 20; topMargin: 6; bottomMargin: 6 }
-            spacing: 14
-            Art { Layout.preferredWidth: 54; Layout.preferredHeight: 54; radiusPx: 9; frameColor: "#080e19"
+            anchors { fill: parent; leftMargin: miniPlayer.compactPlayer ? 12 : 20; rightMargin: miniPlayer.compactPlayer ? 12 : 20; topMargin: 6; bottomMargin: 6 }
+            spacing: miniPlayer.compactPlayer ? 10 : 14
+            Art { Layout.preferredWidth: miniPlayer.compactPlayer ? 46 : 54; Layout.preferredHeight: miniPlayer.compactPlayer ? 46 : 54; radiusPx: 9; frameColor: "#080e19"
                   src: miniPlayer.np ? root.artUrl(miniPlayer.np.art) : ""; grad: miniPlayer.np ? miniPlayer.np.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
             ColumnLayout {
+                Layout.fillWidth: true
                 Layout.preferredWidth: root.width < 1150 ? 150 : 230
                 spacing: 2
                 Lbl { Layout.fillWidth: true; text: miniPlayer.np ? miniPlayer.np.title : ""; elide: Text.ElideRight; font.pixelSize: 14; font.weight: Font.DemiBold }
                 Lbl { Layout.fillWidth: true; text: miniPlayer.np ? root.musicSub(miniPlayer.np) : ""; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
+                Lbl { visible: miniPlayer.compactPlayer; Layout.fillWidth: true; elide: Text.ElideRight; mono: true; font.pixelSize: 10
+                      color: root.musicPlaybackError !== "" ? "#ffb4ab" : "#948e9d"
+                      text: miniPlayer.statusText }
             }
-            IconBtn { box: 30; icon: (miniPlayer.np && root.favorites[miniPlayer.np.id]) ? "heart" : "heartO"; active: miniPlayer.np ? !!root.favorites[miniPlayer.np.id] : false; tip: "Favorite"
-                      onClicked: root.toggleFavorite(miniPlayer.np.id, miniPlayer.np.title) }
+            IconBtn { visible: !miniPlayer.compactPlayer && miniPlayer.np && miniPlayer.np.sourceUrl !== ""; box: 30; icon: "link"; tip: "Open source"
+                      onClicked: { if (miniPlayer.np) root.openMusicSource(miniPlayer.np.sourceUrl) } }
+            IconBtn { visible: !miniPlayer.compactPlayer; box: 30; icon: (miniPlayer.np && root.favorites[miniPlayer.np.id]) ? "heart" : "heartO"; active: miniPlayer.np ? !!root.favorites[miniPlayer.np.id] : false; tip: "Favorite"
+                      onClicked: { if (miniPlayer.np) root.toggleFavorite(miniPlayer.np.id, miniPlayer.np.title) } }
             Row {
                 spacing: 8
                 Layout.alignment: Qt.AlignVCenter
@@ -3564,24 +3999,35 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 0
-                visible: !miniPlayer.live
+                visible: !miniPlayer.compactPlayer && !miniPlayer.live
                 RowLayout {
                     Layout.fillWidth: true
                     Lbl { text: miniPlayer.np ? root.fmtTime(root.playPos) : "0:00"; mono: true; faint: true; font.pixelSize: 11 }
                     Seek { Layout.fillWidth: true; value: miniPlayer.frac; tint: root.accent; onMoved: function (v) { root.seekFrac(v) } }
-                    Lbl { text: (miniPlayer.np && miniPlayer.np.dur) ? root.fmtTime(miniPlayer.np.dur) : "0:00"; mono: true; faint: true; font.pixelSize: 11 }
+                    Lbl { text: root.currentDuration > 0 ? root.fmtTime(root.currentDuration) : "0:00"; mono: true; faint: true; font.pixelSize: 11 }
                 }
-                Lbl { visible: !root.backendConnected; text: "UI preview \u00b7 audio engine not connected"; mono: true; faint: true; font.pixelSize: 10 }
+                Lbl { Layout.fillWidth: true; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 10
+                      color: root.musicPlaybackError !== "" ? "#ffb4ab" : "#948e9d"
+                      text: root.musicPlaybackError !== "" ? ("Playback error: " + root.musicPlaybackError)
+                                                           : ("Streaming \u00b7 " + (miniPlayer.np ? miniPlayer.np.license : "")) }
             }
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 3
-                visible: miniPlayer.live
+                visible: !miniPlayer.compactPlayer && miniPlayer.live
                 Row { spacing: 8
                     Tag { text: "LIVE"; tint: "#ff7a8a" }
-                    Lbl { anchors.verticalCenter: parent.verticalCenter; text: miniPlayer.np ? (miniPlayer.np.bitrate + " \u00b7 " + miniPlayer.np.codec + " \u00b7 endless stream") : ""; mono: true; faint: true; font.pixelSize: 11 }
+                    Lbl { anchors.verticalCenter: parent.verticalCenter
+                          text: miniPlayer.np
+                              ? ((miniPlayer.np.bitrate > 0 ? miniPlayer.np.bitrate + " kbps \u00b7 " : "")
+                                 + (miniPlayer.np.codec || "audio") + " \u00b7 endless stream")
+                              : ""
+                          mono: true; faint: true; font.pixelSize: 11 }
                 }
-                Lbl { visible: !root.backendConnected; text: "UI preview \u00b7 audio engine not connected"; mono: true; faint: true; font.pixelSize: 10 }
+                Lbl { Layout.fillWidth: true; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 10
+                      color: root.musicPlaybackError !== "" ? "#ffb4ab" : "#948e9d"
+                      text: root.musicPlaybackError !== "" ? ("Playback error: " + root.musicPlaybackError)
+                                                           : "Live radio \u00b7 no seeking or fixed duration" }
             }
             Row {
                 visible: root.width > 1050
@@ -3590,7 +4036,7 @@ Item {
                 IconBtn { box: 28; icon: root.muted ? "close" : "music"; tip: root.muted ? "Unmute" : "Mute"; active: root.muted; activeTint: "#fde047"; onClicked: root.muted = !root.muted }
                 Seek { width: 84; anchors.verticalCenter: parent.verticalCenter; value: root.muted ? 0 : root.volume; tint: "#cac4d4"; onMoved: function (v) { root.volume = v; root.muted = false } }
             }
-            Btn { compact: true; icon: "list"; label: root.width > 1100 ? ("Queue (" + root.queue.length + ")") : ""; onClicked: { root.queueOpen = true; root.go(root.pgMusic) } }
+            Btn { visible: !miniPlayer.compactPlayer; compact: true; icon: "list"; label: root.width > 1100 ? ("Queue (" + root.queue.length + ")") : ""; onClicked: { root.queueOpen = true; root.go(root.pgMusic) } }
             IconBtn { box: 28; icon: "close"; tip: "Stop and hide player"; onClicked: root.stopPlayer() }
         }
     }
