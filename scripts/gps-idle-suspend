@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-idle-suspend — safe battery-aware suspend helper for hypridle
+# ============================================================================
+set -euo pipefail
+
+SYS_POWER="${GPS_POWER_SUPPLY_DIR:-/sys/class/power_supply}"
+SUSPEND_CMD="${GPS_IDLE_SUSPEND_BIN:-systemctl suspend}"
+
+# Checks power telemetry.
+# Returns:
+#   0 = confirmed on battery (safe to suspend)
+#   1 = confirmed on AC power (do not suspend)
+#   2 = unknown / ambiguous telemetry (do not suspend)
+check_power_state() {
+    if [ ! -d "$SYS_POWER" ]; then
+        echo "power_state=unknown reason='power_supply directory not found'"
+        return 2
+    fi
+
+    local ac_found=0
+    local ac_online=0
+    local bat_found=0
+    local bat_discharging=0
+    local bat_other_status=0
+
+    for dev in "$SYS_POWER"/*; do
+        [ -e "$dev" ] || continue
+        local dev_name
+        dev_name="$(basename "$dev")"
+
+        # Check type
+        local type=""
+        if [ -r "$dev/type" ]; then
+            type="$(cat "$dev/type" 2>/dev/null || true)"
+        fi
+
+        # Check AC / Mains supplies
+        if [ "$type" = "Mains" ] || [[ "$dev_name" =~ ^(AC|ACAD|ADP|ADP1) ]]; then
+            ac_found=$(( ac_found + 1 ))
+            if [ -r "$dev/online" ]; then
+                local on
+                on="$(cat "$dev/online" 2>/dev/null || echo 0)"
+                if [ "$on" = "1" ]; then
+                    ac_online=$(( ac_online + 1 ))
+                fi
+            fi
+        fi
+
+        # Check Battery supplies
+        if [ "$type" = "Battery" ] || [[ "$dev_name" =~ ^BAT ]]; then
+            bat_found=$(( bat_found + 1 ))
+            if [ -r "$dev/status" ]; then
+                local st
+                st="$(cat "$dev/status" 2>/dev/null || echo "Unknown")"
+                case "$st" in
+                    Discharging)
+                        bat_discharging=$(( bat_discharging + 1 ))
+                        ;;
+                    Charging|Full|"Not charging")
+                        bat_other_status=$(( bat_other_status + 1 ))
+                        ;;
+                    *)
+                        # Ambiguous or unknown battery status
+                        echo "power_state=unknown reason='battery status ambiguous: $st'"
+                        return 2
+                        ;;
+                esac
+            fi
+        fi
+    done
+
+    # If any AC supply is online -> definitely on AC
+    if [ "$ac_online" -gt 0 ]; then
+        echo "power_state=ac reason='AC adapter online'"
+        return 1
+    fi
+
+    # If battery is charging/full while AC is unlisted or ambiguous -> do not suspend
+    if [ "$bat_other_status" -gt 0 ]; then
+        echo "power_state=ac reason='battery charging or full'"
+        return 1
+    fi
+
+    # If no batteries found -> likely desktop -> do not suspend
+    if [ "$bat_found" -eq 0 ]; then
+        echo "power_state=unknown reason='no battery devices found'"
+        return 2
+    fi
+
+    # Battery found and discharging, and no AC online -> reliably confirmed on battery!
+    if [ "$bat_discharging" -gt 0 ]; then
+        echo "power_state=battery reason='discharging on battery'"
+        return 0
+    fi
+
+    echo "power_state=unknown reason='unrecognized power state'"
+    return 2
+}
+
+case "${1:-suspend}" in
+    --check-only|check)
+        check_power_state
+        exit $?
+        ;;
+    suspend|"")
+        out="$(check_power_state)" || rc=$?
+        rc="${rc:-0}"
+        if [ "$rc" -eq 0 ]; then
+            # Reliably confirmed on battery: issue suspend
+            $SUSPEND_CMD
+        else
+            # On AC or unknown: safe no-op
+            exit 0
+        fi
+        ;;
+    *)
+        printf 'Usage: %s {suspend|check}\n' "$0" >&2
+        exit 1
+        ;;
+esac

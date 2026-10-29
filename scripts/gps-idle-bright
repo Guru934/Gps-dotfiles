@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-idle-bright — safe display-backlight dim and restore helper for hypridle
+# ============================================================================
+set -euo pipefail
+
+STATE_FILE="${GPS_IDLE_STATE_FILE:-${XDG_RUNTIME_DIR:-/tmp}/gps-idle-bright-${UID}.saved}"
+BRIGHTNESS_CMD="${GPS_IDLE_BRIGHTNESS_BIN:-brightnessctl}"
+
+# Detect primary display backlight device
+find_backlight_device() {
+    if ! command -v "$BRIGHTNESS_CMD" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local pref="${GPS_BRIGHTNESS_DEVICE:-}"
+    local raw
+    raw="$("$BRIGHTNESS_CMD" -m 2>/dev/null || true)"
+    if [ -z "$raw" ]; then
+        return 1
+    fi
+
+    local dev="" cls="" cur=0 max=0
+    local non_acpi="" any_backlight=""
+
+    while IFS=',' read -r d c cu pct m; do
+        d="$(printf '%s' "$d" | tr -d ' ')"
+        c="$(printf '%s' "$c" | tr -d ' ')"
+        [ "$c" = "backlight" ] || continue
+
+        if [ -n "$pref" ] && [ "$d" = "$pref" ]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+
+        case "$d" in
+            acpi_video*) ;;
+            *) [ -z "$non_acpi" ] && non_acpi="$d" ;;
+        esac
+        [ -z "$any_backlight" ] && any_backlight="$d"
+    done <<< "$raw"
+
+    if [ -n "$non_acpi" ]; then
+        printf '%s\n' "$non_acpi"
+        return 0
+    elif [ -n "$any_backlight" ]; then
+        printf '%s\n' "$any_backlight"
+        return 0
+    fi
+
+    return 1
+}
+
+cmd_dim() {
+    local dev
+    if ! dev="$(find_backlight_device)"; then
+        # No supported display backlight device found — safe no-op
+        exit 0
+    fi
+
+    # Overlapping cycle check: never overwrite an existing saved state
+    if [ -s "$STATE_FILE" ]; then
+        exit 0
+    fi
+
+    # Read current brightness and max brightness
+    local cur max
+    cur="$("$BRIGHTNESS_CMD" -d "$dev" g 2>/dev/null || echo 0)"
+    max="$("$BRIGHTNESS_CMD" -d "$dev" m 2>/dev/null || echo 0)"
+
+    if [ "${max:-0}" -le 0 ]; then
+        exit 0
+    fi
+
+    # Calculate safe nonzero dim level (10% of max, never 0)
+    local dim_level
+    dim_level=$(( max * 10 / 100 ))
+    [ "$dim_level" -lt 1 ] && dim_level=1
+
+    # Save original state atomically
+    local tmp="${STATE_FILE}.tmp.$$"
+    printf '%s %s\n' "$dev" "$cur" > "$tmp"
+    mv -f "$tmp" "$STATE_FILE"
+
+    # Only dim if current is brighter than dim level
+    if [ "${cur:-0}" -gt "$dim_level" ]; then
+        "$BRIGHTNESS_CMD" -d "$dev" -q set "$dim_level" || true
+    fi
+}
+
+cmd_restore() {
+    if [ ! -f "$STATE_FILE" ]; then
+        exit 0
+    fi
+
+    local saved_dev="" saved_val=""
+    read -r saved_dev saved_val < "$STATE_FILE" || true
+    rm -f "$STATE_FILE"
+
+    if [ -z "$saved_dev" ] || [ -z "$saved_val" ]; then
+        exit 0
+    fi
+
+    # Verify device exists and restore exact saved brightness
+    if command -v "$BRIGHTNESS_CMD" >/dev/null 2>&1; then
+        "$BRIGHTNESS_CMD" -d "$saved_dev" -q set "$saved_val" 2>/dev/null || true
+    fi
+}
+
+cmd_status() {
+    local dev="none"
+    if d="$(find_backlight_device)"; then
+        dev="$d"
+    fi
+    if [ -f "$STATE_FILE" ]; then
+        printf 'dimmed device=%s saved=%s\n' "$dev" "$(cat "$STATE_FILE")"
+    else
+        printf 'normal device=%s\n' "$dev"
+    fi
+}
+
+case "${1:-status}" in
+    dim) cmd_dim ;;
+    restore) cmd_restore ;;
+    status) cmd_status ;;
+    *)
+        printf 'Usage: %s {dim|restore|status}\n' "$0" >&2
+        exit 1
+        ;;
+esac
