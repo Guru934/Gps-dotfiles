@@ -333,8 +333,10 @@ class WallhavenApplyTests(unittest.TestCase):
                  patch.object(wallhaven.subprocess, "run", run), \
                  patch.object(wallhaven, "last_wall_path", return_value=Path(tmp) / "gps-last-wall.txt"):
                 result = wallhaven.apply_wallpaper(args)
-            command = run.call_args.args[0]
-            self.assertEqual(command[:2], ["awww", "img"])
+            commands = [call.args[0] for call in run.call_args_list]
+            command = next((candidate for candidate in commands
+                            if candidate[:2] == ["awww", "img"]), None)
+            self.assertIsNotNone(command)
             self.assertIn("--transition-type", command)
             expected_target = str(lib_dir / "wallhaven-3q7mry.jpg")
             self.assertEqual(result["path"], expected_target)
