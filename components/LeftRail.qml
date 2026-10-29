@@ -20,6 +20,12 @@ PanelWindow {
     property int railMarginBottom: 6
     property int railRadius: 18
 
+    // Rail Layout Mode: "split" (default: 3 floating capsules) | "full" (legacy full-slab)
+    property string railLayout: "split"
+    readonly property bool isSplit: root.railLayout === "split"
+    readonly property color glassColor: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.48)
+    readonly property color glassBorderColor: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.45)
+
     // Built-in Power Menu State
     property bool powerPopupOpen: false
     property string pendingPowerLabel: ""
@@ -30,6 +36,22 @@ PanelWindow {
         function togglePower() { root.powerPopupOpen = !root.powerPopupOpen }
         function openPower() { root.powerPopupOpen = true }
         function closePower() { root.powerPopupOpen = false }
+        function setLayout(layout: string) {
+            if (layout === "split" || layout === "full") {
+                root.railLayout = layout
+            }
+        }
+        function getLayout(): string { return root.railLayout }
+        function getCapsuleGeometry(): string {
+            return JSON.stringify({
+                isSplit: root.isSplit,
+                top: { x: topCapsule.x, y: topCapsule.y, w: topCapsule.width, h: topCapsule.height },
+                mid: { x: midCapsule.x, y: midCapsule.y, w: midCapsule.width, h: midCapsule.height },
+                btm: { x: btmCapsule.x, y: btmCapsule.y, w: btmCapsule.width, h: btmCapsule.height },
+                gap1: { top: topCapsule.y + topCapsule.height, bottom: midCapsule.y, height: midCapsule.y - (topCapsule.y + topCapsule.height) },
+                gap2: { top: midCapsule.y + midCapsule.height, bottom: btmCapsule.y, height: btmCapsule.y - (midCapsule.y + midCapsule.height) }
+            })
+        }
     }
 
     // Live Clock State
@@ -130,6 +152,20 @@ PanelWindow {
     implicitWidth: root.railWidth
     exclusiveZone: root.railWidth
     color: "transparent"
+
+    Region {
+        id: splitMask
+        Region { item: topCapsule }
+        Region { item: midCapsule }
+        Region { item: btmCapsule }
+    }
+
+    Region {
+        id: fullMask
+        item: railBg
+    }
+
+    mask: root.isSplit ? splitMask : fullMask
 
     // ========================================================================
     // BACKGROUND POLLING: Wi-Fi, Bluetooth, Volume, Brightness, Media Status
@@ -265,54 +301,90 @@ PanelWindow {
     }
 
     // ========================================================================
-    // FLOATING GLASS CAPSULE SURFACE
+    // FLOATING GLASS CAPSULE SURFACE / THREE SPLIT CAPSULES
     // ========================================================================
     Rectangle {
         id: railBg
         anchors.fill: parent
         radius: root.railRadius
-        color: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.48)
-        border.width: 1
-        border.color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.45)
+        color: root.isSplit ? "transparent" : root.glassColor
+        border.width: root.isSplit ? 0 : 1
+        border.color: root.isSplit ? "transparent" : root.glassBorderColor
 
         Behavior on color { ColorAnimation { duration: Theme.animDuration } }
         Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
         // ====================================================================
-        // 1. TOP SECTION: Brand Launcher + Workspaces
+        // 1. TOP CAPSULE: Brand Launcher + Workspaces
         // ====================================================================
-        Column {
-            id: topSection
+        Rectangle {
+            id: topCapsule
+            width: root.railWidth
+            height: topSection.implicitHeight + 16
             anchors {
                 top: parent.top
-                topMargin: 8
                 horizontalCenter: parent.horizontalCenter
             }
-            spacing: 6
+            radius: root.railRadius
+            color: root.isSplit ? root.glassColor : "transparent"
+            border.width: root.isSplit ? 1 : 0
+            border.color: root.isSplit ? root.glassBorderColor : "transparent"
 
-            BrandMark {
-                hub: root.hub
-                anchors.horizontalCenter: parent.horizontalCenter
-            }
+            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
-            WorkspaceIndicator {
-                hub: root.hub
-                workspaceCount: 5
-                anchors.horizontalCenter: parent.horizontalCenter
+            Column {
+                id: topSection
+                anchors {
+                    top: parent.top
+                    topMargin: 8
+                    horizontalCenter: parent.horizontalCenter
+                }
+                spacing: 6
+
+                BrandMark {
+                    hub: root.hub
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+
+                WorkspaceIndicator {
+                    hub: root.hub
+                    workspaceCount: 5
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
             }
         }
 
         // ====================================================================
-        // 2. MIDDLE SECTION: Auto-Centered Media Equalizer & Capture Pod
+        // 2. CENTER CAPSULE: Vertically Centered Media Equalizer & Capture Pod
         // ====================================================================
-        Item {
-            id: middleZone
-            anchors {
-                top: topSection.bottom
-                bottom: lowerSection.top
-                left: parent.left
-                right: parent.right
+        Rectangle {
+            id: midCapsule
+            width: root.railWidth
+            height: midPodCol.implicitHeight + 16
+            anchors.horizontalCenter: parent.horizontalCenter
+            radius: root.railRadius
+            color: root.isSplit
+                ? (midHover.hovered ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55) : root.glassColor)
+                : "transparent"
+            border.width: root.isSplit ? 1 : 0
+            border.color: root.isSplit
+                ? (root.mediaPlaying ? Theme.brandAccent : (midHover.hovered ? Theme.accentSecondary : root.glassBorderColor))
+                : "transparent"
+
+            readonly property int minGap: 8
+            y: {
+                const topEnd = topCapsule.y + topCapsule.height
+                const btmStart = btmCapsule.y
+                const available = btmStart - topEnd
+                if (available <= height) return topEnd
+                return topEnd + Math.round((available - height) / 2)
             }
+
+            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
+
+            HoverHandler { id: midHover }
 
             Rectangle {
                 id: middlePod
@@ -320,6 +392,7 @@ PanelWindow {
                 height: midPodCol.implicitHeight + 10
                 anchors.centerIn: parent
                 radius: 10
+                visible: !root.isSplit
                 color: midPodHover.hovered
                     ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55)
                     : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.40)
@@ -332,6 +405,7 @@ PanelWindow {
                 Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 HoverHandler { id: midPodHover }
+            }
 
                 Column {
                     id: midPodCol
@@ -445,33 +519,48 @@ PanelWindow {
                         onClicked: Quickshell.execDetached(["sh", "-c", "grim -g \"$(slurp)\" - | swappy -f -"])
                     }
                 }
-            }
         }
 
         // ====================================================================
-        // 3. LOWER SECTION: System Dock + Audio/Bri + Clock + Battery + Power
+        // 3. BOTTOM CAPSULE: System Dock + Audio/Bri + Clock + Battery + Power
         // ====================================================================
-        Column {
-            id: lowerSection
+        Rectangle {
+            id: btmCapsule
+            width: root.railWidth
+            height: lowerSection.implicitHeight + 16
             anchors {
                 bottom: parent.bottom
-                bottomMargin: 8
                 horizontalCenter: parent.horizontalCenter
             }
-            spacing: 5
+            radius: root.railRadius
+            color: root.isSplit ? root.glassColor : "transparent"
+            border.width: root.isSplit ? 1 : 0
+            border.color: root.isSplit ? root.glassBorderColor : "transparent"
 
-            // Unified Lower Control Island
-            Rectangle {
-                width: 32
-                height: sysCol.implicitHeight + 8
-                radius: 10
-                color: Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
-                border.width: 1
-                border.color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
-                anchors.horizontalCenter: parent.horizontalCenter
+            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
-                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
-                Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
+            Column {
+                id: lowerSection
+                anchors {
+                    bottom: parent.bottom
+                    bottomMargin: 8
+                    horizontalCenter: parent.horizontalCenter
+                }
+                spacing: 5
+
+                // Unified Lower Control Island
+                Rectangle {
+                    width: 32
+                    height: sysCol.implicitHeight + 8
+                    radius: 10
+                    color: root.isSplit ? "transparent" : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
+                    border.width: root.isSplit ? 0 : 1
+                    border.color: root.isSplit ? "transparent" : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 Column {
                     id: sysCol
@@ -782,6 +871,7 @@ PanelWindow {
                     }
                 }
             }
+        }
         }
     }
 
