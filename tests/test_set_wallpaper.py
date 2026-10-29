@@ -245,5 +245,71 @@ class LeftStripLuminanceTests(unittest.TestCase):
         self.assertEqual(len(tmp_files), 0)
 
 
+class LockColorsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+        self.test_img = self.tmp_path / "test_wall.png"
+        img = Image.new("RGB", (100, 100), color=(45, 212, 191))
+        img.save(self.test_img)
+        self.theme_json = self.tmp_path / "gps-theme.json"
+        self.rofi_rasi = self.tmp_path / "rofi" / "colors.rasi"
+        self.rofi_rasi.parent.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_generate_lock_colors_tokens_and_syntax(self):
+        theme = set_wallpaper.generate_theme(self.test_img)
+        lock_conf = set_wallpaper.generate_lock_colors(theme)
+
+        self.assertIn(f"$wallpaper = {self.test_img.resolve()}", lock_conf)
+        self.assertIn("$colorAccent = rgba(", lock_conf)
+        self.assertIn("$colorBackdrop = rgba(", lock_conf)
+        self.assertIn("$colorSurface = rgba(", lock_conf)
+        self.assertIn("$colorCard = rgba(", lock_conf)
+        self.assertIn("$colorFail = rgba(", lock_conf)
+        self.assertIn("$colorCaps = rgba(", lock_conf)
+        self.assertIn("$colorText = rgba(", lock_conf)
+        self.assertIn("$colorTextMuted = rgba(", lock_conf)
+
+        # Check line syntax conforms to hyprlang: $var = value
+        for line in lock_conf.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            self.assertTrue(line.startswith("$"), f"Invalid hyprlang variable line: {line}")
+            self.assertIn(" = ", line)
+
+    def test_write_theme_files_creates_lock_colors_atomically(self):
+        theme = set_wallpaper.generate_theme(self.test_img)
+        lock_file = self.tmp_path / "hypr" / "lock-colors.conf"
+
+        set_wallpaper.write_theme_files(
+            theme,
+            json_path=self.theme_json,
+            rofi_path=self.rofi_rasi,
+            lock_colors_path=lock_file,
+        )
+
+        self.assertTrue(lock_file.exists())
+        content = lock_file.read_text(encoding="utf-8")
+        self.assertIn("$colorAccent = rgba(", content)
+        self.assertIn("$colorCard = rgba(", content)
+        # Ensure no temp files remain
+        tmp_files = list(self.tmp_path.glob(".*lock-colors.conf.tmp-*"))
+        self.assertEqual(len(tmp_files), 0)
+
+    def test_generate_lock_colors_fallback_on_missing_image(self):
+        theme = {"wallpaper": "screenshot", "textMuted": "#BACAC5"}
+        lock_conf = set_wallpaper.generate_lock_colors(theme)
+        self.assertIn("$wallpaper = screenshot", lock_conf)
+        self.assertIn("$colorAccent = rgba(", lock_conf)
+        self.assertIn("$colorFail = rgba(255, 92, 119, 0.95)", lock_conf)
+        self.assertIn("$wallpaper = screenshot", lock_conf)
+        self.assertIn("$colorAccent = rgba(", lock_conf)
+        self.assertIn("$colorFail = rgba(255, 92, 119, 0.95)", lock_conf)
+
+
 if __name__ == "__main__":
     unittest.main()
