@@ -176,6 +176,20 @@ Scope {
         function setPowerProfile(id: string) { batteryPopup.setProfile(id) }
     }
 
+    IpcHandler {
+        target: "mediahub"
+        function toggle() { root.toggleMediaHub() }
+        function open() { root.openMediaHub() }
+        function close() { root.closeMediaHub() }
+    }
+
+    IpcHandler {
+        target: "toolbox"
+        function toggle() { root.toggleToolbox() }
+        function open() { root.openToolbox() }
+        function close() { root.closeToolbox() }
+    }
+
     PwObjectTracker {
         objects: Pipewire.defaultAudioSink ? [Pipewire.defaultAudioSink] : []
     }
@@ -695,6 +709,18 @@ Scope {
         mediaHubWindow.toggle()
     }
 
+    function openToolbox() {
+        toolboxWindow.open()
+    }
+
+    function closeToolbox() {
+        toolboxWindow.close()
+    }
+
+    function toggleToolbox() {
+        toolboxWindow.toggle()
+    }
+
     function closeWallpaperCarousel() {
         wallpaperCarousel.isOpen = false
     }
@@ -1199,6 +1225,7 @@ Scope {
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
     AIChat             { id: aiChat; hub: root }
     MediaHubWindow     { id: mediaHubWindow; hub: root }
+    ToolboxWindow      { id: toolboxWindow; hub: root }
     WifiPopup          { hub: root }
     BluetoothPopup     { hub: root }
     BatteryPopup       { id: batteryPopup; hub: root }

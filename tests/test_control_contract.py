@@ -51,6 +51,30 @@ class ControlIntegrationContractTests(unittest.TestCase):
         self.assertIn("if (!hasSystemctl) return", CONTROL)
         self.assertIn("confirmPower", CONTROL)
 
+    def test_control_view_launcher_buttons(self):
+        self.assertIn('tooltipText: "Media Hub"', CONTROL)
+        self.assertIn('tooltipText: "Toolbox"', CONTROL)
+        self.assertIn('tooltipText: "Settings"', CONTROL)
+        self.assertIn('function openMediaHub()', CONTROL)
+        self.assertIn('function openToolbox()', CONTROL)
+        self.assertIn('function openSettings(', CONTROL)
+
+    def test_shell_and_ipc_contracts(self):
+        shell = (ROOT / "shell.qml").read_text()
+        gps_ipc = (ROOT / "scripts/gps-ipc").read_text()
+        toolbox_win = (ROOT / "components/ToolboxWindow.qml").read_text()
+        toolbox_qml = (ROOT / "components/Toolbox.qml").read_text()
+
+        self.assertIn('target: "mediahub"', shell)
+        self.assertIn('target: "toolbox"', shell)
+        self.assertIn('ToolboxWindow', shell)
+        self.assertIn('mediahub)', gps_ipc)
+        self.assertIn('toolbox)', gps_ipc)
+        self.assertIn('title: "GPS Toolbox"', toolbox_win)
+        self.assertIn('FloatingWindow', toolbox_win)
+        self.assertIn('property bool showCloseButton:', toolbox_qml)
+        self.assertIn('signal closeRequested()', toolbox_qml)
+
 
 if __name__ == "__main__":
     unittest.main()

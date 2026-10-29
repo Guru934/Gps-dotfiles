@@ -360,6 +360,13 @@ Scope {
         }
         return true
     }
+    readonly property string repoRoot: Qt.resolvedUrl("..").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+    function openMediaHub() {
+        Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "mediahub", "toggle"])
+    }
+    function openToolbox() {
+        Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "toolbox", "toggle"])
+    }
     readonly property bool privacyVisible: !privacySuppressed && privacyItems.length > 0
     onPrivacyVisibleChanged: root.updateVisibility()
     function handlePrivacy(line) {
@@ -842,6 +849,8 @@ Scope {
         }
         function clear(): void { root.dismissAllNotifs() }
         function debug(mode: string): void { root.debugMode = mode }
+        function mediaHub(action: string): void { root.openMediaHub() }
+        function toolbox(action: string): void { root.openToolbox() }
         function focusStart(workSeconds: int, breakSeconds: int, sessionCount: int, title: string): void {
             root.startFocus(workSeconds, breakSeconds, sessionCount, title)
         }

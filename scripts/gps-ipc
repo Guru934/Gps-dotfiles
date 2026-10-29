@@ -58,12 +58,24 @@ case "$cmd" in
             exec quickshell ipc -p "$REPO_DIR/island/IslandProduction.qml" call island clipboard "$action" "$@"
         fi
         ;;
+    mediahub)
+        action="${1:-toggle}"
+        shift || true
+        exec quickshell ipc -p "$REPO_DIR/shell.qml" call mediahub "$action" "$@"
+        ;;
+    toolbox)
+        action="${1:-toggle}"
+        shift || true
+        exec quickshell ipc -p "$REPO_DIR/shell.qml" call toolbox "$action" "$@"
+        ;;
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  settings [action] [args...]" >&2
         echo "  island <show|hide|pin|unpin|status|action> [args...]" >&2
         echo "  clipboard [action]" >&2
+        echo "  mediahub [action]" >&2
+        echo "  toolbox [action]" >&2
         exit 1
         ;;
 esac

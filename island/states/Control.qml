@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -317,6 +318,28 @@ Item {
         if (typeof core.setControl === "function") core.setControl("close")
     }
 
+    function openMediaHub() {
+        if (core && typeof core.openMediaHub === "function") {
+            core.openMediaHub()
+        } else {
+            const script = Qt.resolvedUrl("../../scripts/gps-ipc").toString().replace(/^file:\/\//, "")
+            Quickshell.execDetached([script, "mediahub", "toggle"])
+        }
+        localExpanded = false
+        if (typeof core.setControl === "function") core.setControl("close")
+    }
+
+    function openToolbox() {
+        if (core && typeof core.openToolbox === "function") {
+            core.openToolbox()
+        } else {
+            const script = Qt.resolvedUrl("../../scripts/gps-ipc").toString().replace(/^file:\/\//, "")
+            Quickshell.execDetached([script, "toolbox", "toggle"])
+        }
+        localExpanded = false
+        if (typeof core.setControl === "function") core.setControl("close")
+    }
+
     function applyVolume(ratio) {
         if (!core.sinkAudio) return
         const clamped = Math.max(0, Math.min(1.5, ratio))
@@ -374,6 +397,47 @@ Item {
         color: st.core.text
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+    }
+
+    component HeaderButton: Rectangle {
+        id: hb
+        property string iconName: ""
+        property string iconAlt: ""
+        property string tooltipText: ""
+        signal triggered()
+
+        Layout.preferredWidth: 28
+        Layout.preferredHeight: 28
+        radius: 14
+        activeFocusOnTab: true
+        color: (hbMa.containsMouse || hb.activeFocus) ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
+        border.width: 1
+        border.color: hb.activeFocus ? st.core.teal : Qt.rgba(1, 1, 1, 0.06)
+        scale: hbMa.pressed ? 0.94 : 1.0
+        Behavior on scale { NumberAnimation { duration: 90 } }
+
+        ToolTip.visible: hbMa.containsMouse && tooltipText !== ""
+        ToolTip.text: tooltipText
+        ToolTip.delay: 400
+
+        Keys.onReturnPressed: hb.triggered()
+        Keys.onSpacePressed: hb.triggered()
+
+        Ico {
+            anchors.centerIn: parent
+            name: hb.iconName
+            alt: hb.iconAlt
+            font.pixelSize: 15
+            color: (hbMa.containsMouse || hb.activeFocus) ? st.core.text : st.core.dim
+        }
+
+        MouseArea {
+            id: hbMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: hb.triggered()
+        }
     }
 
     component ToggleTile: Rectangle {
@@ -786,31 +850,25 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                Rectangle {
-                    Layout.preferredWidth: 28
-                    Layout.preferredHeight: 28
-                    radius: 14
-                    color: settingsMa.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
-                    border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.06)
-                    scale: settingsMa.pressed ? 0.94 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 90 } }
+                HeaderButton {
+                    iconName: "hub"
+                    iconAlt: "M"
+                    tooltipText: "Media Hub"
+                    onTriggered: st.openMediaHub()
+                }
 
-                    Ico {
-                        anchors.centerIn: parent
-                        name: "settings"
-                        alt: "S"
-                        font.pixelSize: 15
-                        color: settingsMa.containsMouse ? st.core.text : st.core.dim
-                    }
+                HeaderButton {
+                    iconName: "construction"
+                    iconAlt: "T"
+                    tooltipText: "Toolbox"
+                    onTriggered: st.openToolbox()
+                }
 
-                    MouseArea {
-                        id: settingsMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: st.openSettings("")
-                    }
+                HeaderButton {
+                    iconName: "settings"
+                    iconAlt: "S"
+                    tooltipText: "Settings"
+                    onTriggered: st.openSettings("")
                 }
             }
 
