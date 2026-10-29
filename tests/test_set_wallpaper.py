@@ -102,6 +102,20 @@ class SetWallpaperPipelineTests(unittest.TestCase):
         self.assertEqual(call_cmd[:2], ["awww", "img"])
         self.assertIn("none", call_cmd)
 
+    def test_update_hyprland_borders_dispatches_eval(self):
+        run_mock = MagicMock(return_value=SimpleNamespace(returncode=0, stdout="", stderr=""))
+        theme = set_wallpaper.generate_theme(self.test_img)
+        with patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "test_sig"}), \
+             patch.object(set_wallpaper.subprocess, "run", run_mock):
+            set_wallpaper.update_hyprland_borders(theme)
+
+        self.assertTrue(run_mock.called)
+        call_args = run_mock.call_args[0][0]
+        self.assertEqual(call_args[:2], ["hyprctl", "eval"])
+        self.assertIn("hl.config", call_args[2])
+        self.assertIn("active_border", call_args[2])
+        self.assertIn("inactive_border", call_args[2])
+
 
 if __name__ == "__main__":
     unittest.main()
