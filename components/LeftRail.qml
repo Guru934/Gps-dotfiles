@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import Quickshell.Services.UPower
 import QtQuick
@@ -12,10 +13,24 @@ PanelWindow {
     property var notifications: null
     property var wallpaperCarousel: null
 
+    // Dimensional & Placement Properties (Top-level configurable contract)
+    property int railWidth: 40
+    property int railMarginLeft: 6
+    property int railMarginTop: 6
+    property int railMarginBottom: 6
+    property int railRadius: 18
+
     // Built-in Power Menu State
     property bool powerPopupOpen: false
     property string pendingPowerLabel: ""
     property var pendingPowerCmd: []
+
+    IpcHandler {
+        target: "rail"
+        function togglePower() { root.powerPopupOpen = !root.powerPopupOpen }
+        function openPower() { root.powerPopupOpen = true }
+        function closePower() { root.powerPopupOpen = false }
+    }
 
     // Live Clock State
     property string hoursText: Qt.formatTime(new Date(), "HH")
@@ -64,8 +79,6 @@ PanelWindow {
 
     function batteryGlyph() {
         if (!root.batPresent) return ""
-        // Bolt glyph only while the battery is actually charging — being
-        // plugged in with "Not charging" (threshold) keeps the level glyph.
         if (batDevice.state === UPowerDeviceState.Charging) return "󰂄"
         if (root.battFull || root.battPct >= 90) return "󰁹"
         if (root.battPct >= 70) return "󰂀"
@@ -77,10 +90,10 @@ PanelWindow {
 
     function batteryColor() {
         if (!root.batPresent) return Theme.textMuted
-        if (root.battCharging || root.battFull) return "#4DF0D0"
-        if (root.battPct <= 15) return "#FF5C77"
-        if (root.battPct <= 30) return "#F5C17A"
-        return "#6EE7A8"
+        if (root.battCharging || root.battFull) return Theme.brandAccent
+        if (root.battPct <= 15) return Theme.statusDanger
+        if (root.battPct <= 30) return Theme.statusWarn
+        return Theme.statusGood
     }
 
     // Live Media State (Equalizer only animates when mediaPlaying === true)
@@ -101,15 +114,21 @@ PanelWindow {
 
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
-    // Full-height left edge anchor
+    // Layer-Shell Floating Capsule Setup
+    WlrLayershell.namespace: "gps-rail"
+    WlrLayershell.layer: WlrLayer.Top
     anchors {
         top: true
         bottom: true
         left: true
     }
-
-    // Flush 52px width (positive fixed width prevents layer-shell full-screen stretch)
-    implicitWidth: 52
+    margins {
+        left: root.railMarginLeft
+        top: root.railMarginTop
+        bottom: root.railMarginBottom
+    }
+    implicitWidth: root.railWidth
+    exclusiveZone: root.railWidth + root.railMarginLeft
     color: "transparent"
 
     // ========================================================================
@@ -195,7 +214,6 @@ PanelWindow {
                 if (m) {
                     root.fallbackVolPct = Math.round(parseFloat(m[1]) * 100)
                 }
-
             } else if (line.startsWith("MED:")) {
                 const mPayload = line.slice(4).trim()
                 if (!mPayload) {
@@ -237,10 +255,6 @@ PanelWindow {
         fastRefreshTimer.restart()
     }
 
-    function changeBrightness(deltaPct) {
-        Brightness.step(deltaPct)
-    }
-
     function cycleBrightnessPreset() {
         let nextBri = 100
         if (Brightness.percent >= 90) nextBri = 25
@@ -251,47 +265,18 @@ PanelWindow {
     }
 
     // ========================================================================
-    // MAIN FLUSH FULL-HEIGHT RAIL SURFACE (Zero floating gaps)
+    // FLOATING GLASS CAPSULE SURFACE
     // ========================================================================
     Rectangle {
         id: railBg
         anchors.fill: parent
-        radius: 0
+        radius: root.railRadius
+        color: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.48)
+        border.width: 1
+        border.color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.45)
 
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#FA121622" }
-            GradientStop { position: 0.5; color: Theme.surface }
-            GradientStop { position: 1.0; color: "#FA16111D" }
-        }
-
-        // Right-edge full-height separator line
-        Rectangle {
-            width: 1
-            anchors {
-                top: parent.top
-                bottom: parent.bottom
-                right: parent.right
-            }
-            color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.35)
-        }
-
-        // Center-right neon accent glow strip
-        Rectangle {
-            width: 2
-            height: parent.height * 0.38
-            anchors {
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-            }
-            opacity: root.mediaPlaying ? 0.85 : 0.40
-            Behavior on opacity { NumberAnimation { duration: 300 } }
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 0.35; color: Theme.brandAccent }
-                GradientStop { position: 0.65; color: "#FF4D6D" }
-                GradientStop { position: 1.0; color: "transparent" }
-            }
-        }
+        Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+        Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
         // ====================================================================
         // 1. TOP SECTION: Brand Launcher + Workspaces
@@ -300,24 +285,25 @@ PanelWindow {
             id: topSection
             anchors {
                 top: parent.top
-                topMargin: 10
+                topMargin: 8
                 horizontalCenter: parent.horizontalCenter
             }
-            spacing: 8
+            spacing: 6
 
             BrandMark {
+                hub: root.hub
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
             WorkspaceIndicator {
                 hub: root.hub
+                workspaceCount: 5
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
 
         // ====================================================================
         // 2. MIDDLE SECTION: Auto-Centered Media Equalizer & Capture Pod
-        //    (Animates ONLY when audio/media is actively playing!)
         // ====================================================================
         Item {
             id: middleZone
@@ -330,66 +316,68 @@ PanelWindow {
 
             Rectangle {
                 id: middlePod
-                width: 40
-                height: midPodCol.implicitHeight + 14
+                width: 32
+                height: midPodCol.implicitHeight + 10
                 anchors.centerIn: parent
-                radius: 12
-                color: midPodHover.hovered ? Theme.cardHover : Theme.card
+                radius: 10
+                color: midPodHover.hovered
+                    ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55)
+                    : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.40)
                 border.width: 1
                 border.color: root.mediaPlaying
-                    ? "#4DF0D0"
-                    : (midPodHover.hovered ? Theme.brandAccent : Theme.border)
+                    ? Theme.brandAccent
+                    : (midPodHover.hovered ? Theme.accentSecondary : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50))
 
-                Behavior on color { ColorAnimation { duration: 180 } }
-                Behavior on border.color { ColorAnimation { duration: 200 } }
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 HoverHandler { id: midPodHover }
 
                 Column {
                     id: midPodCol
                     anchors.centerIn: parent
-                    spacing: 6
+                    spacing: 4
 
-                    // 5-Bar Media Equalizer (Stops automatically when paused/idle)
+                    // 5-Bar Media Equalizer (Animates when mediaPlaying === true)
                     Item {
-                        width: 28
-                        height: 22
+                        width: 24
+                        height: 18
                         anchors.horizontalCenter: parent.horizontalCenter
 
                         Row {
                             anchors.centerIn: parent
-                            spacing: 3
+                            spacing: 2
 
                             Repeater {
                                 model: [
-                                    { idleH: 4, pauseH: 6,  maxH: 17, dur: 420, col: "#4DF0D0" },
-                                    { idleH: 4, pauseH: 10, maxH: 21, dur: 320, col: "#38BDF8" },
-                                    { idleH: 4, pauseH: 13, maxH: 19, dur: 490, col: "#FF4D6D" },
-                                    { idleH: 4, pauseH: 9,  maxH: 22, dur: 360, col: "#F5C17A" },
-                                    { idleH: 4, pauseH: 5,  maxH: 16, dur: 440, col: "#4DF0D0" }
+                                    { idleH: 3, pauseH: 5,  maxH: 14, dur: 420 },
+                                    { idleH: 3, pauseH: 8,  maxH: 17, dur: 320 },
+                                    { idleH: 3, pauseH: 10, maxH: 15, dur: 490 },
+                                    { idleH: 3, pauseH: 7,  maxH: 18, dur: 360 },
+                                    { idleH: 3, pauseH: 4,  maxH: 13, dur: 440 }
                                 ]
 
                                 Rectangle {
                                     id: eqBar
                                     required property var modelData
-                                    width: 3
-                                    radius: 1.5
+                                    width: 2.5
+                                    radius: 1.25
                                     anchors.verticalCenter: parent.verticalCenter
                                     color: root.mediaPlaying
-                                        ? eqBar.modelData.col
-                                        : (root.mediaPaused ? Theme.brandAccent : Theme.textMuted)
+                                        ? Theme.brandAccent
+                                        : (root.mediaPaused ? Theme.accentSecondary : Theme.textMuted)
                                     opacity: root.mediaPlaying ? 1.0 : (root.mediaPaused ? 0.75 : 0.40)
 
                                     height: root.mediaPaused ? eqBar.modelData.pauseH : eqBar.modelData.idleH
 
                                     Behavior on height {
-                                        enabled: !root.mediaPlaying
-                                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+                                        enabled: !root.mediaPlaying && Theme.animationsEnabled && !Theme.reducedMotion
+                                        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
                                     }
-                                    Behavior on color { ColorAnimation { duration: 200 } }
+                                    Behavior on color { ColorAnimation { duration: Theme.animDuration } }
 
                                     SequentialAnimation on height {
-                                        running: root.mediaPlaying
+                                        running: root.mediaPlaying && Theme.animationsEnabled && !Theme.reducedMotion
                                         loops: Animation.Infinite
                                         NumberAnimation {
                                             to: eqBar.modelData.maxH
@@ -397,8 +385,8 @@ PanelWindow {
                                             easing.type: Easing.InOutSine
                                         }
                                         NumberAnimation {
-                                            to: 5
-                                            duration: eqBar.modelData.dur + 70
+                                            to: 4
+                                            duration: eqBar.modelData.dur + 60
                                             easing.type: Easing.InOutSine
                                         }
                                     }
@@ -432,27 +420,27 @@ PanelWindow {
                         }
                     }
 
-                    // Status Label under Equalizer ("PLAY" / "PAUSE" / "IDLE")
+                    // Status Label ("PLAY" / "PAUSE" / "IDLE")
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: root.mediaPlaying ? "PLAY" : (root.mediaPaused ? "PAUSE" : "IDLE")
                         color: root.mediaPlaying ? Theme.brandAccent : Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: 7
                         font.bold: true
                     }
 
                     Rectangle {
-                        width: 24
+                        width: 18
                         height: 1
                         anchors.horizontalCenter: parent.horizontalCenter
-                        color: Theme.border
+                        color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                     }
 
                     // Area Screenshot Action
                     RailButton {
                         glyph: "󰄀"
-                        accentColor: "#F5C17A"
+                        accentColor: Theme.accentTertiary
                         tooltip: "Area Screenshot"
                         onClicked: Quickshell.execDetached(["sh", "-c", "grim -g \"$(slurp)\" - | swappy -f -"])
                     }
@@ -461,110 +449,110 @@ PanelWindow {
         }
 
         // ====================================================================
-        // 3. LOWER SECTION: System Dock + Audio/Brightness % + Clock + Power
+        // 3. LOWER SECTION: System Dock + Audio/Bri + Clock + Battery + Power
         // ====================================================================
         Column {
             id: lowerSection
             anchors {
                 bottom: parent.bottom
-                bottomMargin: 10
+                bottomMargin: 8
                 horizontalCenter: parent.horizontalCenter
             }
-            spacing: 6
+            spacing: 5
 
             // Unified Lower Control Island
             Rectangle {
-                width: 40
-                height: sysCol.implicitHeight + 10
-                radius: 12
-                color: Theme.card
+                width: 32
+                height: sysCol.implicitHeight + 8
+                radius: 10
+                color: Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
                 border.width: 1
-                border.color: Theme.border
+                border.color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                 anchors.horizontalCenter: parent.horizontalCenter
+
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 Column {
                     id: sysCol
                     anchors.centerIn: parent
-                    spacing: 4
+                    spacing: 3
 
-                    // Wi-Fi Button (Shows 󰖪 in coral-red when disconnected/off, 󰖩 in cyan when connected)
+                    // Wi-Fi Button
                     RailButton {
                         id: wifiBtn
                         glyph: root.wifiConnected ? "󰖩" : "󰖪"
-                        iconColor: root.wifiConnected ? "#4DF0D0" : "#FF5C77"
-                        accentColor: root.wifiConnected ? "#4DF0D0" : "#FF5C77"
+                        iconColor: root.wifiConnected ? Theme.brandAccent : Theme.statusDanger
+                        accentColor: root.wifiConnected ? Theme.brandAccent : Theme.statusDanger
                         tooltip: "Wi-Fi: " + root.wifiSsid
                         onClicked: {
-                            if (root.hub) root.hub.openPopup("wifi", wifiBtn.mapToItem(railBg, 18, 16).y)
+                            if (root.hub) root.hub.openPopup("wifi", wifiBtn.mapToItem(railBg, 16, 12).y)
                             fastRefreshTimer.restart()
                         }
                     }
 
-                    // Bluetooth Button (Shows 󰂱 when connected, 󰂯 when on, 󰂲 when off)
+                    // Bluetooth Button
                     RailButton {
                         id: btBtn
                         glyph: !root.btEnabled ? "󰂲" : (root.btConnected ? "󰂱" : "󰂯")
-                        iconColor: !root.btEnabled ? Theme.textMuted : (root.btConnected ? "#4DF0D0" : "#60A5FA")
-                        accentColor: "#60A5FA"
+                        iconColor: !root.btEnabled ? Theme.textMuted : (root.btConnected ? Theme.brandAccent : Theme.accentSecondary)
+                        accentColor: Theme.accentSecondary
                         tooltip: !root.btEnabled
                             ? "Bluetooth: Off"
                             : (root.btConnected ? "Bluetooth: Connected" : "Bluetooth: On (Not Connected)")
                         onClicked: {
-                            if (root.hub) root.hub.openPopup("bt", btBtn.mapToItem(railBg, 18, 16).y)
+                            if (root.hub) root.hub.openPopup("bt", btBtn.mapToItem(railBg, 16, 12).y)
                             fastRefreshTimer.restart()
                         }
                     }
 
                     Rectangle {
-                        width: 24
+                        width: 18
                         height: 1
-                        color: Theme.border
+                        color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
-                    // Audio Pill with Dynamic Mute Icon + Live Volume Percentage
-                    MetricPill {
-                        id: volPill
+                    // Audio Button (compact, percentage in tooltip)
+                    RailButton {
                         glyph: root.isMuted
                             ? "󰝟"
                             : (root.volumePct < 35 ? "󰕿" : (root.volumePct < 75 ? "󰖀" : "󰕾"))
-                        label: root.isMuted ? "MUTE" : (root.volumePct + "%")
-                        accentColor: root.isMuted ? "#FF5C77" : "#A78BFA"
-                        alertMode: root.isMuted
+                        iconColor: root.isMuted ? Theme.statusDanger : Theme.accentSecondary
+                        accentColor: root.isMuted ? Theme.statusDanger : Theme.accentSecondary
                         tooltip: (root.isMuted ? "Audio Muted" : ("Volume: " + root.volumePct + "%"))
-                            + " (Click: Mute · Scroll: ±5%)"
+                            + " · Click: Mute · Scroll: ±5%"
                         onClicked: root.toggleAudioMute()
                         onScrolledUp: root.changeVolume(5)
                         onScrolledDown: root.changeVolume(-5)
                     }
 
-                    // Brightness Pill with Sun Icon + Live Brightness Percentage
-                    MetricPill {
-                        id: briPill
+                    // Brightness Button (compact, percentage in tooltip)
+                    RailButton {
                         visible: Brightness.available
                         glyph: Brightness.percent < 35
                             ? "󰃞"
                             : (Brightness.percent < 75 ? "󰃟" : "󰖨")
-                        label: Brightness.percent + "%"
-                        accentColor: "#F5C17A"
-                        alertMode: false
-                        tooltip: "Brightness: " + Brightness.percent + "% (Click: Cycle Preset · Scroll: ±5%)"
+                        iconColor: Theme.accentTertiary
+                        accentColor: Theme.accentTertiary
+                        tooltip: "Brightness: " + Brightness.percent + "% · Click: Cycle · Scroll: ±5%"
                         onClicked: root.cycleBrightnessPreset()
                         onScrolledUp: Brightness.step(5)
                         onScrolledDown: Brightness.step(-5)
                     }
 
                     Rectangle {
-                        width: 24
+                        width: 18
                         height: 1
-                        color: Theme.border
+                        color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
                     // Notifications
                     RailButton {
                         glyph: "󰂚"
-                        accentColor: "#F5C17A"
+                        accentColor: Theme.accentTertiary
+                        iconColor: Theme.accentTertiary
                         tooltip: "Notifications (Super+N)"
                         onClicked: {
                             if (root.notifications) {
@@ -579,10 +567,11 @@ PanelWindow {
                         }
                     }
 
-                    // Wallpaper Carousel
+                    // Wallpaper Carousel / Tools
                     RailButton {
                         glyph: "󰸉"
-                        accentColor: "#F472B6"
+                        accentColor: Theme.brandAccent
+                        iconColor: Theme.brandAccent
                         tooltip: "Wallpaper Carousel (Super+W)"
                         onClicked: {
                             if (root.hub) {
@@ -598,8 +587,9 @@ PanelWindow {
                     // Local AI Chat (Ollama, 127.0.0.1 only)
                     RailButton {
                         glyph: "󰧑"
-                        accentColor: "#DDB8FF"
-                        tooltip: "Local AI Chat \u00b7 Ollama"
+                        accentColor: Theme.accentSecondary
+                        iconColor: Theme.accentSecondary
+                        tooltip: "Local AI Chat · Ollama"
                         onClicked: {
                             if (root.hub) root.hub.toggleAIChat()
                         }
@@ -608,7 +598,8 @@ PanelWindow {
                     // Settings
                     RailButton {
                         glyph: "󰒓"
-                        accentColor: "#38BDF8"
+                        accentColor: Theme.brandAccent
+                        iconColor: Theme.textMain
                         tooltip: "Settings (Super+,)"
                         onClicked: Quickshell.execDetached([
                             "quickshell",
@@ -620,19 +611,23 @@ PanelWindow {
                 }
             }
 
-            // Live Digital Clock Pill
+            // Live Digital Clock Pill (compact stacked)
             Rectangle {
                 id: clockPill
-                width: 40
-                height: clockInner.implicitHeight + 8
-                radius: 10
-                color: clockMouse.containsMouse ? Theme.cardHover : Theme.card
+                width: 32
+                height: clockInner.implicitHeight + 6
+                radius: 8
+                color: clockMouse.containsMouse
+                    ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55)
+                    : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
                 border.width: 1
-                border.color: clockMouse.containsMouse ? Theme.brandAccent : Theme.border
+                border.color: clockMouse.containsMouse
+                    ? Theme.brandAccent
+                    : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                 anchors.horizontalCenter: parent.horizontalCenter
 
-                Behavior on color { ColorAnimation { duration: 150 } }
-                Behavior on border.color { ColorAnimation { duration: 150 } }
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 Column {
                     id: clockInner
@@ -644,14 +639,14 @@ PanelWindow {
                         text: root.hoursText
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 11
+                        font.pixelSize: 9
                         font.bold: true
                     }
 
                     Rectangle {
-                        width: 4
-                        height: 4
-                        radius: 2
+                        width: 3
+                        height: 3
+                        radius: 1.5
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.brandAccent
                         opacity: root.colonVisible ? 1.0 : 0.25
@@ -663,7 +658,7 @@ PanelWindow {
                         text: root.minutesText
                         color: Theme.brandAccent
                         font.family: Theme.fontMono
-                        font.pixelSize: 11
+                        font.pixelSize: 9
                         font.bold: true
                     }
                 }
@@ -677,26 +672,30 @@ PanelWindow {
                     onExited: if (root.hub) root.hub.clearTooltip()
                     onClicked: {
                         if (root.hub && root.hub.openPopup) {
-                            root.hub.openPopup("clock", clockPill.mapToItem(railBg, 18, 16).y)
+                            root.hub.openPopup("clock", clockPill.mapToItem(railBg, 16, 12).y)
                         }
                     }
                 }
             }
 
-            // Live Battery Pill (real UPower telemetry; click -> Power & Battery popup)
+            // Live Battery Pill (battery % stays visible)
             Rectangle {
                 id: battPill
                 visible: root.batPresent
-                width: 40
-                height: 34
-                radius: 10
+                width: 32
+                height: 28
+                radius: 8
                 anchors.horizontalCenter: parent.horizontalCenter
-                color: battMouse.containsMouse ? Theme.cardHover : Theme.card
+                color: battMouse.containsMouse
+                    ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55)
+                    : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
                 border.width: 1
-                border.color: battMouse.containsMouse ? root.batteryColor() : Theme.border
+                border.color: battMouse.containsMouse
+                    ? root.batteryColor()
+                    : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
 
-                Behavior on color { ColorAnimation { duration: 150 } }
-                Behavior on border.color { ColorAnimation { duration: 150 } }
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                 Column {
                     anchors.centerIn: parent
@@ -707,7 +706,7 @@ PanelWindow {
                         text: root.batteryGlyph()
                         color: root.batteryColor()
                         font.family: Theme.fontMono
-                        font.pixelSize: 12
+                        font.pixelSize: 10
                     }
 
                     Text {
@@ -715,7 +714,7 @@ PanelWindow {
                         text: root.battPct + "%"
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: 7
                         font.bold: true
                     }
                 }
@@ -729,18 +728,18 @@ PanelWindow {
                     onExited: if (root.hub) root.hub.clearTooltip()
                     onClicked: {
                         if (root.hub && root.hub.openPopup) {
-                            root.hub.openPopup("battery", battPill.mapToItem(railBg, 18, 16).y)
+                            root.hub.openPopup("battery", battPill.mapToItem(railBg, 16, 12).y)
                         }
                     }
                 }
             }
 
-            // Glowing Crimson Power Button
+            // Crimson Power Button
             Rectangle {
                 id: powerBtn
-                width: 40
-                height: 34
-                radius: 10
+                width: 32
+                height: 28
+                radius: 8
                 anchors.horizontalCenter: parent.horizontalCenter
                 color: root.powerPopupOpen
                     ? "#FF4D6D"
@@ -749,7 +748,10 @@ PanelWindow {
                 border.color: (root.powerPopupOpen || pwrBtnMouse.containsMouse) ? "#FF4D6D" : "#6E2B3E"
 
                 scale: pwrBtnMouse.pressed ? 0.90 : (pwrBtnMouse.containsMouse ? 1.06 : 1.0)
-                Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
+                Behavior on scale {
+                    enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                    NumberAnimation { duration: 140; easing.type: Easing.OutBack }
+                }
                 Behavior on color { ColorAnimation { duration: 160 } }
                 Behavior on border.color { ColorAnimation { duration: 160 } }
 
@@ -758,7 +760,7 @@ PanelWindow {
                     text: "󰐥"
                     color: root.powerPopupOpen ? "#140A0E" : "#FF5C77"
                     font.family: Theme.fontMono
-                    font.pixelSize: 15
+                    font.pixelSize: 13
                     font.bold: true
                 }
 
@@ -770,7 +772,6 @@ PanelWindow {
                     onEntered: if (root.hub) root.hub.setTooltip("Power Menu")
                     onExited: if (root.hub) root.hub.clearTooltip()
                     onClicked: {
-                        // Never stack the dangerous power menu on top of a radio popup.
                         if (root.hub && root.hub.closePopup) root.hub.closePopup()
                         root.pendingPowerLabel = ""
                         root.powerPopupOpen = !root.powerPopupOpen
@@ -795,12 +796,12 @@ PanelWindow {
 
         exclusionMode: ExclusionMode.Ignore
         margins {
-            bottom: 10
-            left: 58
+            bottom: root.railMarginBottom
+            left: root.railWidth + root.railMarginLeft + 6
         }
 
-        implicitWidth: 248
-        implicitHeight: pwrCol.implicitHeight + 28
+        implicitWidth: 240
+        implicitHeight: pwrCol.implicitHeight + 24
         color: "transparent"
 
         property bool hasEnteredPopup: false
@@ -827,7 +828,7 @@ PanelWindow {
         Rectangle {
             id: pwrCard
             anchors.fill: parent
-            radius: 16
+            radius: 14
             color: Theme.surface
             border.width: 1
             border.color: "#FF4D6D"
@@ -850,9 +851,9 @@ PanelWindow {
                     left: parent.left
                     right: parent.right
                     top: parent.top
-                    margins: 14
+                    margins: 12
                 }
-                spacing: 7
+                spacing: 6
 
                 Row {
                     width: parent.width
@@ -886,46 +887,49 @@ PanelWindow {
                 Column {
                     visible: root.pendingPowerLabel === ""
                     width: parent.width
-                    spacing: 5
+                    spacing: 4
 
                     Repeater {
                         model: [
-                            { icon: "󰌾", label: "Lock Screen", color: "#4DF0D0", confirm: false, cmd: ["sh", "-c", "pidof hyprlock || hyprlock || loginctl lock-session"] },
-                            { icon: "󰤄", label: "Suspend",     color: "#60A5FA", confirm: false, cmd: ["systemctl", "suspend"] },
-                            { icon: "󰍃", label: "Log Out",     color: "#F5C17A", confirm: true,  cmd: ["hyprctl", "dispatch", "exit"] },
-                            { icon: "󰜉", label: "Reboot",      color: "#FB923C", confirm: true,  cmd: ["systemctl", "reboot"] },
-                            { icon: "󰐥", label: "Shut Down",   color: "#FF4D6D", confirm: true,  cmd: ["systemctl", "poweroff"] }
+                            { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "pidof hyprlock || hyprlock || loginctl lock-session"] },
+                            { icon: "󰤄", label: "Suspend",     color: Theme.accentSecondary,confirm: false, cmd: ["systemctl", "suspend"] },
+                            { icon: "󰍃", label: "Log Out",     color: Theme.statusWarn,      confirm: true,  cmd: ["hyprctl", "dispatch", "hl.dsp.exit()"] },
+                            { icon: "󰜉", label: "Reboot",      color: "#FB923C",            confirm: true,  cmd: ["systemctl", "reboot"] },
+                            { icon: "󰐥", label: "Shut Down",   color: "#FF4D6D",            confirm: true,  cmd: ["systemctl", "poweroff"] }
                         ]
 
                         Rectangle {
                             id: pwrOption
                             required property var modelData
                             width: pwrCol.width
-                            height: 34
-                            radius: 9
+                            height: 32
+                            radius: 8
                             color: pwrOptMouse.containsMouse ? Theme.cardHover : Theme.card
                             border.width: 1
                             border.color: pwrOptMouse.containsMouse ? pwrOption.modelData.color : Theme.border
 
                             scale: pwrOptMouse.pressed ? 0.97 : (pwrOptMouse.containsMouse ? 1.02 : 1.0)
-                            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 140 } }
-                            Behavior on border.color { ColorAnimation { duration: 140 } }
+                            Behavior on scale {
+                                enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                                NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                            Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
                             Row {
                                 anchors {
                                     fill: parent
-                                    leftMargin: 12
-                                    rightMargin: 12
+                                    leftMargin: 10
+                                    rightMargin: 10
                                 }
-                                spacing: 10
+                                spacing: 8
 
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: pwrOption.modelData.icon
                                     color: pwrOption.modelData.color
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 15
+                                    font.pixelSize: 14
                                 }
 
                                 Text {
@@ -933,7 +937,7 @@ PanelWindow {
                                     text: pwrOption.modelData.label
                                     color: Theme.textMain
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 12
+                                    font.pixelSize: 11
                                     font.bold: pwrOptMouse.containsMouse
                                 }
                             }
@@ -960,12 +964,12 @@ PanelWindow {
                 Row {
                     visible: root.pendingPowerLabel !== ""
                     width: parent.width
-                    spacing: 8
+                    spacing: 6
 
                     Rectangle {
-                        width: (parent.width - 8) / 2
-                        height: 36
-                        radius: 9
+                        width: (parent.width - 6) / 2
+                        height: 34
+                        radius: 8
                         color: "#FF4D6D"
 
                         Text {
@@ -990,9 +994,9 @@ PanelWindow {
                     }
 
                     Rectangle {
-                        width: (parent.width - 8) / 2
-                        height: 36
-                        radius: 9
+                        width: (parent.width - 6) / 2
+                        height: 34
+                        radius: 8
                         color: Theme.card
                         border.width: 1
                         border.color: Theme.border
@@ -1018,72 +1022,7 @@ PanelWindow {
     }
 
     // ========================================================================
-    // 5. METRIC PILL COMPONENT (Icon + Live Percentage for Audio & Brightness)
-    // ========================================================================
-    component MetricPill: Rectangle {
-        id: mPill
-        property string glyph: "󰕾"
-        property string label: "100%"
-        property string tooltip: ""
-        property color accentColor: Theme.brandAccent
-        property bool alertMode: false
-        signal clicked()
-        signal scrolledUp()
-        signal scrolledDown()
-
-        width: 34
-        height: 36
-        radius: 8
-        anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
-        color: mMouse.containsMouse
-            ? Qt.rgba(mPill.accentColor.r, mPill.accentColor.g, mPill.accentColor.b, 0.20)
-            : (mPill.alertMode ? Qt.rgba(1.0, 0.30, 0.42, 0.16) : Qt.rgba(0, 0, 0, 0.18))
-        border.width: (mMouse.containsMouse || mPill.alertMode) ? 1 : 0
-        border.color: mPill.accentColor
-
-        scale: mMouse.pressed ? 0.90 : (mMouse.containsMouse ? 1.08 : 1.0)
-        Behavior on color { ColorAnimation { duration: 140 } }
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 1
-
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: mPill.glyph
-                color: mPill.accentColor
-                font.family: Theme.fontMono
-                font.pixelSize: 13
-            }
-
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: mPill.label
-                color: mPill.alertMode ? mPill.accentColor : Theme.textMain
-                font.family: Theme.fontMono
-                font.pixelSize: 8
-                font.bold: true
-            }
-        }
-
-        MouseArea {
-            id: mMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onEntered: if (root.hub) root.hub.setTooltip(mPill.tooltip)
-            onExited: if (root.hub) root.hub.clearTooltip()
-            onClicked: mPill.clicked()
-            onWheel: event => {
-                if (event.angleDelta.y > 0) mPill.scrolledUp()
-                else if (event.angleDelta.y < 0) mPill.scrolledDown()
-            }
-        }
-    }
-
-    // ========================================================================
-    // 6. ICON RAIL BUTTON COMPONENT
+    // 5. ICON RAIL BUTTON COMPONENT (Compact)
     // ========================================================================
     component RailButton: Rectangle {
         id: button
@@ -1095,9 +1034,9 @@ PanelWindow {
         signal scrolledUp()
         signal scrolledDown()
 
-        width: 32
-        height: 26
-        radius: 7
+        width: 28
+        height: 24
+        radius: 6
         anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
         color: mouse.containsMouse
             ? Qt.rgba(button.accentColor.r, button.accentColor.g, button.accentColor.b, 0.18)
@@ -1105,22 +1044,12 @@ PanelWindow {
         border.width: mouse.containsMouse ? 1 : 0
         border.color: button.accentColor
 
-        scale: mouse.pressed ? 0.88 : (mouse.containsMouse ? 1.10 : 1.0)
+        scale: mouse.pressed ? 0.90 : (mouse.containsMouse ? 1.08 : 1.0)
 
-        Behavior on color { ColorAnimation { duration: 140 } }
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
-
-        Rectangle {
-            width: 2.5
-            height: mouse.containsMouse ? 12 : 0
-            radius: 1.5
-            color: button.accentColor
-            anchors {
-                left: parent.left
-                leftMargin: 1
-                verticalCenter: parent.verticalCenter
-            }
-            Behavior on height { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+        Behavior on scale {
+            enabled: Theme.animationsEnabled && !Theme.reducedMotion
+            NumberAnimation { duration: 140; easing.type: Easing.OutBack }
         }
 
         Text {
@@ -1129,8 +1058,8 @@ PanelWindow {
             color: mouse.containsMouse ? button.accentColor : button.iconColor
             opacity: mouse.containsMouse ? 1.0 : 0.92
             font.family: Theme.fontMono
-            font.pixelSize: 14
-            Behavior on color { ColorAnimation { duration: 140 } }
+            font.pixelSize: 13
+            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
         }
 
         MouseArea {

@@ -7,121 +7,120 @@ Rectangle {
     id: root
 
     property var hub: null
-    readonly property bool horiz: root.hub !== null && root.hub.isHorizontal === true
+    property int workspaceCount: 5
 
-    width: horiz ? (wsRow.implicitWidth + 12) : Theme.sideButtonSize
-    height: horiz ? Theme.sideButtonSize : (wsCol.implicitHeight + 12)
-    radius: Theme.radiusPill
-    color: Theme.card
+    width: 28
+    height: wsCol.implicitHeight + 10
+    radius: 14
+    color: Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.40)
     border.width: 1
-    border.color: Theme.border
+    border.color: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
 
-    Behavior on color { ColorAnimation { duration: 250 } }
-    Behavior on border.color { ColorAnimation { duration: 250 } }
+    Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+    Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
 
     readonly property int currentWs: Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.id
         ? Hyprland.focusedWorkspace.id
         : 1
 
     function isWorkspaceOccupied(wsId) {
-        const list = Hyprland.workspaces.values
+        const list = Hyprland.workspaces ? Hyprland.workspaces.values : []
         if (!list) return false
         for (let i = 0; i < list.length; i++) {
-            if (list[i].id === wsId) return true
+            if (list[i].id === wsId) {
+                return list[i].windows !== undefined ? list[i].windows > 0 : true
+            }
         }
         return false
     }
 
+    function workspaceName(wsId) {
+        const list = Hyprland.workspaces ? Hyprland.workspaces.values : []
+        if (list) {
+            for (let i = 0; i < list.length; i++) {
+                if (list[i].id === wsId && list[i].name) return list[i].name
+            }
+        }
+        return "" + wsId
+    }
+
     function switchTo(targetId) {
-        const clamped = Math.max(1, Math.min(5, targetId))
+        const clamped = Math.max(1, Math.min(root.workspaceCount, targetId))
         if (clamped !== root.currentWs) {
-            Hyprland.dispatch("workspace " + clamped)
+            Hyprland.dispatch("hl.dsp.focus({ workspace = " + clamped + " })")
+        }
+    }
+
+    property real lastWheelTime: 0
+    function handleWheel(deltaY) {
+        const now = Date.now()
+        if (now - lastWheelTime < 120) return
+        lastWheelTime = now
+        if (deltaY > 0) {
+            if (root.currentWs > 1) {
+                root.switchTo(root.currentWs - 1)
+            }
+        } else if (deltaY < 0) {
+            if (root.currentWs < root.workspaceCount) {
+                root.switchTo(root.currentWs + 1)
+            }
         }
     }
 
     Column {
         id: wsCol
-        visible: !root.horiz
         anchors.centerIn: parent
-        spacing: 4
+        spacing: 5
 
         Repeater {
-            model: [1, 2, 3, 4, 5]
+            model: root.workspaceCount
 
-            Rectangle {
-                id: wsVItem
-                required property int modelData
-                readonly property bool isFocused: root.currentWs === wsVItem.modelData
-                readonly property bool isOccupied: root.isWorkspaceOccupied(wsVItem.modelData)
+            Item {
+                id: dotItem
+                required property int index
+                readonly property int wsId: dotItem.index + 1
+                readonly property bool isActive: root.currentWs === dotItem.wsId
+                readonly property bool isOccupied: root.isWorkspaceOccupied(dotItem.wsId)
 
-                width: 28
-                height: isFocused ? 28 : 22
-                radius: 7
-                color: isFocused ? Theme.brandAccent : (wsVHover.hovered ? Theme.cardHover : "transparent")
-
-                Behavior on height { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-                Behavior on color { ColorAnimation { duration: 150 } }
-
-                HoverHandler { id: wsVHover }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: wsVItem.modelData
-                    color: wsVItem.isFocused
-                        ? Theme.brandAccentFg
-                        : (wsVItem.isOccupied ? Theme.textMain : Theme.textMuted)
-                    font.family: Theme.fontMono
-                    font.pixelSize: 12
-                    font.bold: true
-                }
+                width: 20
+                height: dotPill.height
 
                 Rectangle {
-                    visible: wsVItem.isOccupied && !wsVItem.isFocused
-                    width: 3
-                    height: 8
-                    radius: 1.5
-                    color: Theme.brandAccent
-                    anchors {
-                        left: parent.left
-                        leftMargin: 2
-                        verticalCenter: parent.verticalCenter
-                    }
-                }
-            }
-        }
-    }
-
-    Row {
-        id: wsRow
-        visible: root.horiz
-        anchors.centerIn: parent
-        spacing: 4
-
-        Repeater {
-            model: [1, 2, 3, 4, 5]
-
-            Rectangle {
-                id: wsHItem
-                required property int modelData
-                readonly property bool isFocused: root.currentWs === wsHItem.modelData
-                readonly property bool isOccupied: root.isWorkspaceOccupied(wsHItem.modelData)
-
-                width: isFocused ? 28 : 22
-                height: 26
-                radius: 7
-                color: isFocused ? Theme.brandAccent : (wsHHover.hovered ? Theme.cardHover : "transparent")
-
-                HoverHandler { id: wsHHover }
-
-                Text {
+                    id: dotPill
                     anchors.centerIn: parent
-                    text: wsHItem.modelData
-                    color: wsHItem.isFocused
-                        ? Theme.brandAccentFg
-                        : (wsHItem.isOccupied ? Theme.textMain : Theme.textMuted)
-                    font.family: Theme.fontMono
-                    font.pixelSize: 12
-                    font.bold: true
+                    width: dotItem.isActive ? 6 : 5
+                    height: dotItem.isActive ? 16 : 5
+                    radius: 3
+                    color: dotItem.isActive
+                        ? Theme.brandAccent
+                        : (dotItem.isOccupied
+                            ? Theme.textMain
+                            : Qt.rgba(Theme.textMuted.r, Theme.textMuted.g, Theme.textMuted.b, 0.35))
+
+                    Behavior on height {
+                        enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on width {
+                        enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: {
+                        if (root.hub) {
+                            const name = root.workspaceName(dotItem.wsId)
+                            root.hub.setTooltip("Workspace " + dotItem.wsId + (name !== ("" + dotItem.wsId) ? (" · " + name) : ""))
+                        }
+                    }
+                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onClicked: root.switchTo(dotItem.wsId)
+                    onWheel: event => root.handleWheel(event.angleDelta.y)
                 }
             }
         }
@@ -129,25 +128,9 @@ Rectangle {
 
     MouseArea {
         anchors.fill: parent
+        z: -1
+        hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-
-        function selectFromPos(xPos, yPos) {
-            const ratio = root.horiz
-                ? Math.max(0.0, Math.min(0.999, (xPos - 6) / Math.max(1, root.width - 12)))
-                : Math.max(0.0, Math.min(0.999, (yPos - 6) / Math.max(1, root.height - 12)))
-            const ws = Math.floor(ratio * 5) + 1
-            root.switchTo(ws)
-        }
-
-        onPressed: mouse => selectFromPos(mouse.x, mouse.y)
-        onPositionChanged: mouse => {
-            if (pressed) selectFromPos(mouse.x, mouse.y)
-        }
-        onWheel: event => {
-            if (event.angleDelta.y > 0)
-                root.switchTo(root.currentWs - 1)
-            else if (event.angleDelta.y < 0)
-                root.switchTo(root.currentWs + 1)
-        }
+        onWheel: event => root.handleWheel(event.angleDelta.y)
     }
 }

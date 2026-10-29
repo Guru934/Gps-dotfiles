@@ -355,6 +355,12 @@ hl.window_rule({
 })
 
 -- Layer rules also return a handle.
+hl.layer_rule({
+    name         = "gps-rail-blur",
+    match        = { namespace = "^gps-rail$" },
+    blur         = true,
+    ignore_alpha = 0.25,
+})
 -- local overlayLayerRule = hl.layer_rule({
 --     name  = "no-anim-overlay",
 --     match = { namespace = "^my-overlay$" },
