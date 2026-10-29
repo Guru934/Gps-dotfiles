@@ -1693,6 +1693,35 @@ Item {
     property string musicErrorCode: ""
     property int musicSearchSeq: 0
     property string musicPlaybackError: ""
+    readonly property var mprisPlayer: MediaNowPlaying.player
+    property real mprisPositionBase: 0
+    property real mprisPositionStamp: 0
+    property real mprisTick: 0
+    readonly property real mprisPosition: mprisPlayer
+        ? Math.max(0, mprisPositionBase + (mprisPlayer.isPlaying ? (mprisTick - mprisPositionStamp) / 1000 : 0))
+        : 0
+
+    function syncMprisPosition() {
+        if (!mprisPlayer) return
+        mprisPositionBase = mprisPlayer.position
+        mprisPositionStamp = Date.now()
+        mprisTick = mprisPositionStamp
+    }
+
+    onMprisPlayerChanged: root.syncMprisPosition()
+
+    Connections {
+        target: root.mprisPlayer
+        function onPositionChanged() { root.syncMprisPosition() }
+        function onTrackTitleChanged() { root.syncMprisPosition() }
+    }
+
+    Timer {
+        interval: 250
+        repeat: true
+        running: root.page === root.pgMusic && root.mprisPlayer !== null && root.mprisPlayer.isPlaying
+        onTriggered: root.mprisTick = Date.now()
+    }
 
     property string musicSource: "jamendo"
     property string musicMood: ""
@@ -3873,6 +3902,156 @@ Item {
                         Btn { compact: true; icon: "list"; kind: root.queueOpen ? "primary" : "secondary"; accent: root.accent
                               label: (mp.wide ? (root.queueOpen ? "Hide queue" : "Show queue") : "Queue") + " (" + root.queue.length + ")"
                               onClicked: root.queueOpen = !root.queueOpen }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: root.mprisPlayer !== null && root.mprisPlayer.trackTitle !== ""
+                        tint: root.accent
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 14
+                            Art {
+                                Layout.preferredWidth: 58
+                                Layout.preferredHeight: 58
+                                radiusPx: 10
+                                frameColor: pal.cont
+                                src: root.mprisPlayer ? root.mprisPlayer.trackArtUrl : ""
+                                grad: [pal.low, "#2a1b5e", "#0e4a6b"]
+                                glyph: "music"
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Lbl { text: "NOW PLAYING"; mono: true; faint: true; font.pixelSize: 10 }
+                                    Item { Layout.fillWidth: true }
+                                    Lbl {
+                                        text: root.mprisPlayer
+                                            ? (root.mprisPlayer.isPlaying ? "PLAYING" : "PAUSED")
+                                            : ""
+                                        mono: true
+                                        color: root.mprisPlayer && root.mprisPlayer.isPlaying ? "#86efac" : pal.dim
+                                    }
+                                }
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Repeater {
+                                        model: MediaNowPlaying.players
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            readonly property bool selected: root.mprisPlayer === modelData
+                                            implicitWidth: playerName.implicitWidth + 18
+                                            implicitHeight: 22
+                                            radius: 11
+                                            color: selected ? Qt.alpha(root.accent, 0.18) : pal.low
+                                            border.width: selected ? 1 : 0
+                                            border.color: Qt.alpha(root.accent, 0.5)
+                                            Text {
+                                                id: playerName
+                                                anchors.centerIn: parent
+                                                text: modelData.identity || modelData.desktopEntry || "Media player"
+                                                color: parent.selected ? root.accent : pal.dim
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 10
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: MediaNowPlaying.choosePlayer(modelData)
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        visible: MediaNowPlaying.preferredPlayerId !== ""
+                                        implicitWidth: automaticLabel.implicitWidth + 18
+                                        implicitHeight: 22
+                                        radius: 11
+                                        color: pal.low
+                                        Text {
+                                            id: automaticLabel
+                                            anchors.centerIn: parent
+                                            text: "Automatic"
+                                            color: pal.dim
+                                            font.family: Theme.fontMono
+                                            font.pixelSize: 10
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: MediaNowPlaying.automaticPlayerSelection()
+                                        }
+                                    }
+                                }
+                                Lbl {
+                                    Layout.fillWidth: true
+                                    text: root.mprisPlayer ? root.mprisPlayer.trackTitle : ""
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                Lbl {
+                                    Layout.fillWidth: true
+                                    text: root.mprisPlayer
+                                        ? [root.mprisPlayer.trackArtist, root.mprisPlayer.trackAlbum].filter(function (value) { return value !== "" }).join(" \u00b7 ")
+                                        : ""
+                                    dim: true
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 5
+                                    radius: 3
+                                    color: pal.low
+                                    visible: root.mprisPlayer && root.mprisPlayer.length > 0
+                                    Rectangle {
+                                        width: parent.width * Math.max(0, Math.min(1, root.mprisPlayer && root.mprisPlayer.length > 0
+                                            ? root.mprisPosition / root.mprisPlayer.length : 0))
+                                        height: parent.height
+                                        radius: parent.radius
+                                        color: root.accent
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: root.mprisPlayer && root.mprisPlayer.canSeek && root.mprisPlayer.length > 0
+                                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: (mouse) => {
+                                            if (enabled)
+                                                root.mprisPlayer.position = Math.max(0, Math.min(1, mouse.x / width)) * root.mprisPlayer.length
+                                        }
+                                    }
+                                }
+                            }
+                            IconBtn {
+                                box: 34
+                                icon: "back"
+                                tip: "Previous"
+                                active: root.mprisPlayer && root.mprisPlayer.canGoPrevious
+                                onClicked: if (active) root.mprisPlayer.previous()
+                            }
+                            IconBtn {
+                                box: 38
+                                icon: root.mprisPlayer && root.mprisPlayer.isPlaying ? "pause" : "play"
+                                tip: root.mprisPlayer && root.mprisPlayer.isPlaying ? "Pause" : "Play"
+                                active: root.mprisPlayer && (root.mprisPlayer.canTogglePlaying || root.mprisPlayer.canPlay || root.mprisPlayer.canPause)
+                                onClicked: {
+                                    if (!root.mprisPlayer) return
+                                    if (root.mprisPlayer.canTogglePlaying) root.mprisPlayer.togglePlaying()
+                                    else if (root.mprisPlayer.isPlaying && root.mprisPlayer.canPause) root.mprisPlayer.pause()
+                                    else if (!root.mprisPlayer.isPlaying && root.mprisPlayer.canPlay) root.mprisPlayer.play()
+                                }
+                            }
+                            IconBtn {
+                                box: 34
+                                icon: "chev"
+                                tip: "Next"
+                                active: root.mprisPlayer && root.mprisPlayer.canGoNext
+                                onClicked: if (active) root.mprisPlayer.next()
+                            }
+                        }
                     }
 
                     // ---- source selection

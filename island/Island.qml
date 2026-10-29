@@ -233,15 +233,7 @@ Scope {
     readonly property bool isFullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen)
     property int temp: 0
 
-    readonly property var player: pickPlayer()
-    function pickPlayer() {
-        let best = null
-        for (const p of Mpris.players.values) {
-            if (p.isPlaying) return p
-            if (!best && p.trackTitle) best = p
-        }
-        return best
-    }
+    readonly property var player: MediaNowPlaying.player
     property bool hasMedia: player !== null && player.trackTitle !== ""
     property bool playing: player !== null && player.isPlaying
     property string title: player ? player.trackTitle : ""

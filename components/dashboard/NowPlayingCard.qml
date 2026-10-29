@@ -13,15 +13,7 @@ DashSurface {
     id: root
     property bool isOpen: false
 
-    readonly property var players: Mpris.players ? Mpris.players.values : []
-    readonly property var player: {
-        const ps = root.players
-        if (!ps || ps.length === 0) return null
-        for (const p of ps) {
-            if (p.isPlaying) return p
-        }
-        return ps[0]
-    }
+    readonly property var player: MediaNowPlaying.player
     readonly property bool hasPlayer: root.player !== null
     readonly property bool hasProgress: root.hasPlayer
         && root.player.positionSupported && root.player.lengthSupported

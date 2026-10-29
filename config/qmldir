@@ -2,3 +2,4 @@ module qs.config
 singleton Theme 1.0 Theme.qml
 singleton Brightness 1.0 Brightness.qml
 singleton HubProvider 1.0 HubProvider.qml
+singleton MediaNowPlaying 1.0 MediaNowPlaying.qml
