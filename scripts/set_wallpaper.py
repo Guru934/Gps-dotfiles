@@ -46,7 +46,7 @@ def get_lock_colors_path() -> Path:
 
 def atomic_write(target_path: Path | str, content: str) -> None:
     """Atomically write text content to target_path using a temporary file and atomic replace."""
-    target = Path(target_path).expanduser().resolve()
+    target = Path(target_path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_file = tempfile.mkstemp(
         dir=str(target.parent),

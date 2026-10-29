@@ -298,8 +298,8 @@ Item {
     }
 
     function lockScreen() {
-        root.say("locking session :: hyprlock", "info")
-        Quickshell.execDetached(["sh", "-c", "pidof hyprlock >/dev/null || hyprlock || loginctl lock-session"])
+        root.say("locking session :: gps-lock", "info")
+        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null && exec gps-lock || exec $HOME/Projects/my-rice/scripts/gps-lock"])
     }
 
     Process {

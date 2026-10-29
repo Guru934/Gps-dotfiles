@@ -390,10 +390,8 @@ hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell wallp
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell dashboard toggle"))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell notifcenter toggle"))
 hl.bind(mainMod .. " + comma", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc settings toggle"))
--- Lock the session: prefer the packaged hyprlock, fall back to the staged
--- user-local build until setup-lockscreen.sh is run. The pidof guard keeps a
--- second lock from stacking when one is already up.
-hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("pidof hyprlock >/dev/null 2>&1 && exit 0; if command -v hyprlock >/dev/null 2>&1; then exec hyprlock; elif [ -x " .. home .. "/.local/opt/hyprlock/bin/hyprlock ]; then exec " .. home .. "/.local/opt/hyprlock/bin/hyprlock; fi"))
+-- Lock the session: unified lock wrapper (gps-lock)
+hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(repo .. "/scripts/gps-lock"))
 -- Clipboard history: toggles the active island clipboard panel via unified router.
 hl.bind(mainMod .. " + V", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc clipboard toggle"))
 -- Control Center: Super+Alt+C (Super+C remains the focused-window close bind).

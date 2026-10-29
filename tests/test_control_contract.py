@@ -51,6 +51,13 @@ class ControlIntegrationContractTests(unittest.TestCase):
         self.assertIn("if (!hasSystemctl) return", CONTROL)
         self.assertIn("confirmPower", CONTROL)
 
+    def test_lock_and_idle_wrapper_contract(self):
+        """Control Center uses unified gps-lock and gps-idle wrappers."""
+        self.assertIn("gps-lock", CONTROL)
+        self.assertIn("gps-idle", CONTROL)
+        self.assertIn("function toggleIdleLock()", CONTROL)
+        self.assertIn("function lockScreen()", CONTROL)
+
     def test_control_view_launcher_buttons(self):
         self.assertIn('tooltipText: "Media Hub"', CONTROL)
         self.assertIn('tooltipText: "Toolbox"', CONTROL)

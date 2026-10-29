@@ -309,7 +309,7 @@ echo "gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total
 command -v envycontrol >/dev/null && echo "gpumode=$(envycontrol --query 2>/dev/null)"
 command -v supergfxctl >/dev/null && echo "gpumode=$(supergfxctl -g 2>/dev/null)"
 for t in hyprctl nvidia-smi brightnessctl nmcli powerprofilesctl curl ollama hypridle hyprsunset sensors wl-copy notify-send jq; do command -v $t >/dev/null && echo "has_$t=1"; done
-pgrep -x hypridle >/dev/null && echo "run_hypridle=1"; pgrep -x hyprsunset >/dev/null && echo "run_hyprsunset=1"
+{ [ -x "$HOME/Projects/my-rice/scripts/gps-idle" ] && "$HOME/Projects/my-rice/scripts/gps-idle" is-running || pgrep -x hypridle >/dev/null; } && echo "run_hypridle=1"; pgrep -x hyprsunset >/dev/null && echo "run_hyprsunset=1"
 [ -f "$HOME/.config/hypr/hyprland.lua" ] && echo "lua=1"
 [ -n "$ANTHROPIC_API_KEY" ] && echo "key_anthropic=1"; [ -n "$OPENAI_API_KEY" ] && echo "key_openai=1"; [ -n "$OPENROUTER_API_KEY" ] && echo "key_openrouter=1"
 `
@@ -1169,7 +1169,12 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
     }
     function daemon(name, on) {
         const s = Object.assign({}, sys); s["run_" + name] = on ? "1" : "0"; sys = s
-        sh(on ? 'setsid "$1" >/dev/null 2>&1 &' : 'pkill -x "$1"', [name]); after(800, cmdSys.go)
+        if (name === "hypridle") {
+            sh(on ? 'command -v gps-idle >/dev/null && gps-idle start || "$HOME/Projects/my-rice/scripts/gps-idle" start' : 'command -v gps-idle >/dev/null && gps-idle stop || "$HOME/Projects/my-rice/scripts/gps-idle" stop')
+        } else {
+            sh(on ? 'setsid "$1" >/dev/null 2>&1 &' : 'pkill -x "$1"', [name])
+        }
+        after(800, cmdSys.go)
     }
     function nightLight(on, kelvin) {
         const s = Object.assign({}, sys); s.run_hyprsunset = on ? "1" : "0"; sys = s

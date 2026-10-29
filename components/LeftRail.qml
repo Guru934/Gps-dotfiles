@@ -1002,7 +1002,7 @@ PanelWindow {
 
                     Repeater {
                         model: [
-                            { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "pidof hyprlock || hyprlock || loginctl lock-session"] },
+                            { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "command -v gps-lock >/dev/null && exec gps-lock || exec $HOME/Projects/my-rice/scripts/gps-lock"] },
                             { icon: "󰤄", label: "Suspend",     color: Theme.accentSecondary,confirm: false, cmd: ["systemctl", "suspend"] },
                             { icon: "󰍃", label: "Log Out",     color: Theme.statusWarn,      confirm: true,  cmd: ["hyprctl", "dispatch", "hl.dsp.exit()"] },
                             { icon: "󰜉", label: "Reboot",      color: "#FB923C",            confirm: true,  cmd: ["systemctl", "reboot"] },

@@ -152,9 +152,7 @@ Item {
             "command -v hyprsunset >/dev/null 2>&1 && echo 'has_sunset=1' || echo 'has_sunset=0'; " +
             "pgrep -x hyprsunset >/dev/null 2>&1 && echo 'sunset_run=1' || echo 'sunset_run=0'; " +
             "echo \"sunset_k=$(ps -C hyprsunset -o args= 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"-t\" && $(i+1)~ /^[0-9]+$/){print $(i+1); exit}}')\"; " +
-            "command -v hypridle >/dev/null 2>&1 && echo 'has_idle=1' || echo 'has_idle=0'; " +
-            "pgrep -x hypridle >/dev/null 2>&1 && echo 'idle_run=1' || echo 'idle_run=0'; " +
-            "echo \"idle_t=$(awk -F= '/^[[:space:]]*timeout[[:space:]]*=/{gsub(/[^0-9]/,\"\",$2); if($2>0){print $2; exit}}' \"$HOME/.config/hypr/hypridle.conf\" 2>/dev/null)\"; " +
+            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-idle\" ]; then \"$HOME/Projects/my-rice/scripts/gps-idle\" env-status; elif command -v gps-idle >/dev/null 2>&1; then gps-idle env-status; else command -v hypridle >/dev/null 2>&1 && echo 'has_idle=1' || echo 'has_idle=0'; pgrep -x hypridle >/dev/null 2>&1 && echo 'idle_run=1' || echo 'idle_run=0'; echo 'idle_t=300'; fi; " +
             "prof=''; ppd_ok=0; if command -v powerprofilesctl >/dev/null 2>&1; then prof=$(powerprofilesctl get 2>/dev/null); [ -n \"$prof\" ] && ppd_ok=1; fi; echo \"has_ppd=$ppd_ok\"; " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null); " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null); " +
@@ -164,7 +162,7 @@ Item {
             "echo \"kernel=$(uname -r 2>/dev/null)\"; " +
             "command -v wlogout >/dev/null 2>&1 && echo 'has_wlogout=1' || echo 'has_wlogout=0'; " +
             "command -v systemctl >/dev/null 2>&1 && echo 'has_systemctl=1' || echo 'has_systemctl=0'; " +
-            "if command -v loginctl >/dev/null 2>&1 || command -v hyprlock >/dev/null 2>&1 || command -v swaylock >/dev/null 2>&1; then echo 'has_locker=1'; else echo 'has_locker=0'; fi"
+            "if command -v gps-lock >/dev/null 2>&1 || [ -x \"$HOME/Projects/my-rice/scripts/gps-lock\" ] || command -v hyprlock >/dev/null 2>&1 || command -v loginctl >/dev/null 2>&1; then echo 'has_locker=1'; else echo 'has_locker=0'; fi"
         ]
         stdout: StdioCollector {
             onStreamFinished: {
@@ -279,9 +277,9 @@ Item {
         const next = !idleDaemonOn
         idleDaemonOn = next
         if (next)
-            runCmd('pgrep -x hypridle >/dev/null 2>&1 || setsid hypridle >/dev/null 2>&1 &', [], 400)
+            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle start || "$HOME/Projects/my-rice/scripts/gps-idle" start', [], 400)
         else
-            runCmd('pkill -x hypridle >/dev/null 2>&1', [], 350)
+            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle stop || "$HOME/Projects/my-rice/scripts/gps-idle" stop', [], 350)
     }
 
     function toggleFlightMode() {
@@ -359,7 +357,7 @@ Item {
         if (!hasLocker) return
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")
-        Quickshell.execDetached(["sh", "-c", "loginctl lock-session >/dev/null 2>&1 || hyprlock >/dev/null 2>&1 || swaylock >/dev/null 2>&1"])
+        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null 2>&1 && exec gps-lock || exec \"$HOME/Projects/my-rice/scripts/gps-lock\""])
     }
 
     function suspendSystem() {

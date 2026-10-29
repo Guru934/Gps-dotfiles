@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-lock — Unified lock wrapper for Aetheric Shell / GPS
+# Single entry point for Super+L, Power Menu, and Control Center
+# ============================================================================
+set -euo pipefail
+
+# 1. Prevent duplicate lock instances safely
+if pidof hyprlock >/dev/null 2>&1; then
+    exit 0
+fi
+
+# 2. Resolve hyprlock executable
+resolve_hyprlock() {
+    if command -v hyprlock >/dev/null 2>&1; then
+        command -v hyprlock
+        return 0
+    fi
+    local candidates=(
+        "${HOME}/.local/bin/hyprlock"
+        "${HOME}/.local/opt/hyprlock/bin/hyprlock"
+        "/usr/local/bin/hyprlock"
+        "/usr/bin/hyprlock"
+    )
+    for cand in "${candidates[@]}"; do
+        if [ -x "$cand" ]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+LOCK_BIN=""
+if ! LOCK_BIN="$(resolve_hyprlock)"; then
+    echo "ERROR: hyprlock executable not found in PATH or standard user directories." >&2
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -u critical "Lock Failed" "hyprlock executable was not found."
+    fi
+    exit 127
+fi
+
+# 3. Resolve verified lock configuration
+resolve_config() {
+    local candidates=(
+        "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprlock.conf"
+        "$(dirname "$(realpath "$0")")/../dots/hypr/hyprlock.conf"
+    )
+    for cfg in "${candidates[@]}"; do
+        if [ -r "$cfg" ]; then
+            printf '%s\n' "$cfg"
+            return 0
+        fi
+    done
+    return 1
+}
+
+CONFIG_FILE=""
+if ! CONFIG_FILE="$(resolve_config)"; then
+    echo "ERROR: hyprlock configuration not found." >&2
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -u critical "Lock Failed" "hyprlock.conf configuration file was not found."
+    fi
+    exit 1
+fi
+
+# 4. Ensure lock colors exist or deploy fallback from repository
+LOCK_COLORS="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-colors.conf"
+if [ ! -f "$LOCK_COLORS" ]; then
+    FALLBACK_COLORS="$(dirname "$(realpath "$0")")/../dots/hypr/lock-colors.conf"
+    if [ -f "$FALLBACK_COLORS" ]; then
+        mkdir -p "$(dirname "$LOCK_COLORS")"
+        cp -n "$FALLBACK_COLORS" "$LOCK_COLORS" 2>/dev/null || true
+    fi
+fi
+
+# 5. Execute lock without shell concatenation
+exec "$LOCK_BIN" --config "$CONFIG_FILE" "$@"

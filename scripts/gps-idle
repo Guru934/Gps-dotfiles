@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-idle — Managed hypridle lifecycle controller for Aetheric Shell / GPS
+# ============================================================================
+set -euo pipefail
+
+PID_FILE="${GPS_IDLE_PID_FILE:-${XDG_RUNTIME_DIR:-/tmp}/gps-hypridle-${UID}.pid}"
+
+resolve_hypridle() {
+    if command -v hypridle >/dev/null 2>&1; then
+        command -v hypridle
+        return 0
+    fi
+    local candidates=(
+        "/usr/bin/hypridle"
+        "/usr/local/bin/hypridle"
+        "${HOME}/.local/bin/hypridle"
+    )
+    for cand in "${candidates[@]}"; do
+        if [ -x "$cand" ]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_config() {
+    local candidates=(
+        "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"
+        "$(dirname "$(realpath "$0")")/../dots/hypr/hypridle.conf"
+    )
+    for cfg in "${candidates[@]}"; do
+        if [ -r "$cfg" ]; then
+            printf '%s\n' "$cfg"
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_managed_pid() {
+    if [ -f "$PID_FILE" ]; then
+        local p
+        p="$(cat "$PID_FILE" 2>/dev/null || true)"
+        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+            if [ -r "/proc/$p/cmdline" ]; then
+                if grep -a -q "hypridle" "/proc/$p/cmdline" 2>/dev/null; then
+                    printf '%s\n' "$p"
+                    return 0
+                fi
+            else
+                printf '%s\n' "$p"
+                return 0
+            fi
+        fi
+    fi
+    # Check if a hypridle instance was launched with gps hypridle.conf
+    local matched
+    matched="$(pgrep -f "hypridle.*hypridle\.conf" | head -1 || true)"
+    if [ -n "$matched" ]; then
+        printf '%s\n' "$matched"
+        return 0
+    fi
+    return 1
+}
+
+cmd_status() {
+    local idle_bin="" cfg="" pid=""
+    if ! idle_bin="$(resolve_hypridle)"; then
+        printf 'state=unavailable reason="hypridle not installed"\n'
+        return 0
+    fi
+    if ! cfg="$(resolve_config)"; then
+        printf 'state=unconfigured reason="hypridle.conf missing"\n'
+        return 0
+    fi
+    if pid="$(get_managed_pid)"; then
+        printf 'state=running pid=%s config=%s\n' "$pid" "$cfg"
+    else
+        printf 'state=stopped config=%s\n' "$cfg"
+    fi
+}
+
+cmd_is_running() {
+    get_managed_pid >/dev/null 2>&1
+}
+
+cmd_start() {
+    local idle_bin="" cfg=""
+    if ! idle_bin="$(resolve_hypridle)"; then
+        echo "ERROR: hypridle not installed" >&2
+        exit 1
+    fi
+    if ! cfg="$(resolve_config)"; then
+        echo "ERROR: hypridle.conf not found" >&2
+        exit 1
+    fi
+
+    local pid
+    if pid="$(get_managed_pid)"; then
+        echo "hypridle is already running (PID $pid)"
+        exit 0
+    fi
+
+    # Start detached in background
+    nohup "$idle_bin" --config "$cfg" >/dev/null 2>&1 &
+    local new_pid=$!
+    mkdir -p "$(dirname "$PID_FILE")"
+    printf '%s\n' "$new_pid" > "$PID_FILE"
+    echo "Started hypridle (PID $new_pid)"
+}
+
+cmd_stop() {
+    local pid=""
+    if pid="$(get_managed_pid)"; then
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE"
+        echo "Stopped hypridle (PID $pid)"
+    else
+        rm -f "$PID_FILE"
+        echo "hypridle is not running"
+    fi
+}
+
+cmd_toggle() {
+    if cmd_is_running; then
+        cmd_stop
+    else
+        cmd_start
+    fi
+}
+
+cmd_env_status() {
+    # Formatted for direct key=val parsing by Control.qml
+    local has_tool=0 is_run=0 timeout=300
+    if resolve_hypridle >/dev/null 2>&1; then
+        has_tool=1
+    fi
+    if cmd_is_running; then
+        is_run=1
+    fi
+    local cfg
+    if cfg="$(resolve_config)"; then
+        local t
+        t="$(awk '/listener/{in_l=1} in_l && /timeout/{t=$3} in_l && /lock-session/{print t; exit}' "$cfg" 2>/dev/null || true)"
+        if [ -n "$t" ] && [ "$t" -gt 0 ] 2>/dev/null; then
+            timeout="$t"
+        fi
+    fi
+    printf 'has_idle=%d\nidle_run=%d\nidle_t=%d\n' "$has_tool" "$is_run" "$timeout"
+}
+
+case "${1:-status}" in
+    status) cmd_status ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    toggle) cmd_toggle ;;
+    is-running)
+        if cmd_is_running; then exit 0; else exit 1; fi
+        ;;
+    env-status) cmd_env_status ;;
+    *)
+        printf 'Usage: %s {status|start|stop|toggle|is-running|env-status}\n' "$0" >&2
+        exit 1
+        ;;
+esac
