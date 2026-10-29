@@ -8,9 +8,12 @@
 //             download/cache/apply and optional GPS theme sync; live AniList
 //             anime/manga catalogue; Radio Browser search and local music
 //             with a real Qt Multimedia player.
-//  FUTURE   : media launching, yt-dlp / FFmpeg downloads, optional anime
-//             hand-off and local library scanning. Remaining mock boundaries
-//             are marked with "// >>> BACKEND:" comments.
+//  PRESENT  : real yt-dlp / FFmpeg downloads with URL inspection, explicit
+//             format and playlist choices, one-job queueing, cancellation,
+//             retry and persisted history.
+//  FUTURE   : media launching, optional anime hand-off and local library
+//             scanning. Remaining mock boundaries are marked with
+//             "// >>> BACKEND:" comments.
 // =====================================================================
 import QtQuick
 import QtQuick.Controls
@@ -24,6 +27,7 @@ import Quickshell.Services.Mpris
 import qs.config
 import "MusicQueue.js" as MusicQueue
 import "MediaCatalogue.js" as MediaCatalogue
+import "DownloadsQueue.js" as DownloadsQueue
 
 Item {
     id: root
@@ -37,7 +41,6 @@ Item {
     // >>> BACKEND: connect these from the host (e.g. in shell.qml).
     signal wallpaperApplyRequested(var wallpaper, bool syncTheme)
     signal themeSyncRequested(string moodId)
-    signal downloadRequested(var request)
     signal openMediaRequested(var item)
     signal openLocationRequested(string path)
     signal sourceLinkRequested(string url)
@@ -46,10 +49,11 @@ Item {
 
     property bool wallhavenConnected: false
     property bool wallhavenUsingRemote: false
-    // Wallhaven, AniList and Radio Browser are live public catalogues. Local
-    // files and download execution remain future backend work.
+    // Wallhaven, AniList, Radio Browser and the yt-dlp download bridge are
+    // live. Local file scanning remains future backend work.
     readonly property bool backendConnected: true
-    readonly property bool downloadBackendConnected: false
+    readonly property bool downloadBackendConnected: downloadsBackend.statusReady
+        && downloadsBackend.toolStatus.ytDlpReady === true
     // Hosted mode: show the close button wired to closeRequested().
     property bool showCloseButton: false
     // Set false to skip loading remote artwork (gradient fallbacks are used instead).
@@ -132,6 +136,7 @@ Item {
                 scheduleMusicSearch()
             }
         }
+        if (page === 5 && !downloadsBackend.checkingStatus) downloadsBackend.checkStatus()
     }
     onWpQueryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
     onWpCategoryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
@@ -182,8 +187,18 @@ Item {
         onCommandFailed: (message, code, action) => root.handleToolFailure(message, code, action)
     }
 
+    MediaHubDownloads {
+        id: downloadsBackend
+        onNotify: (text, kind) => root.notify(text, kind)
+        onLogActivity: (message) => root.logActivity(message)
+        onOpenLocationRequested: (path) => root.openLocationRequested(path)
+        onDownloadStateFolderFailed: () => root.notify("Could not create the download state folder. History will not persist.", "warn")
+        onDownloadHistoryUnreadable: () => root.notify("Download history was unreadable. A backup was kept and the queue was reset.", "warn")
+    }
+
     Component.onCompleted: {
         toolsBackend.checkStatus()
+        downloadsBackend.checkStatus()
         MediaNowPlaying.localPlayer = hubPlayerAdapter
     }
 
@@ -400,16 +415,56 @@ Item {
         { id: "au4", kind: "audio", title: "Soft Escape Piano.m4a", meta: "4:21 \u00b7 11 MB \u00b7 M4A", art: "", g: gradients.rose, added: 23 }
     ]
 
-    // Download queue — SAMPLE RECORDS. Progress never advances on its own.
-    property int dlSeq: 100
-    property var downloads: [
-        { id: "d1", name: "Aether Chronicles S01E14 [1080p].mp4", type: "video", format: "MP4", quality: "1080p", dest: "~/Videos/GPS", status: "downloading", progress: 0.62, size: "412 / 664 MB", error: "" },
-        { id: "d2", name: "Neon Requiem OST - Full Album.flac", type: "audio", format: "FLAC", quality: "Best", dest: "~/Music/GPS", status: "downloading", progress: 0.18, size: "96 / 530 MB", error: "" },
-        { id: "d3", name: "Starlit Cartography PV [720p].webm", type: "video", format: "WebM", quality: "720p", dest: "~/Videos/GPS", status: "queued", progress: 0, size: "~48 MB est.", error: "" },
-        { id: "d4", name: "Rainy Cafe Lofi Mix.mp3", type: "audio", format: "MP3", quality: "320k", dest: "~/Music/GPS", status: "completed", progress: 1, size: "112 MB", error: "" },
-        { id: "d5", name: "Kinetic Garden Ep 02 [1080p].mkv", type: "video", format: "MKV", quality: "1080p", dest: "~/Videos/GPS", status: "completed", progress: 1, size: "1.1 GB", error: "" },
-        { id: "d6", name: "Hollow Meridian Ep 07 [1080p].mp4", type: "video", format: "MP4", quality: "1080p", dest: "~/Videos/GPS", status: "failed", progress: 0.34, size: "\u2014", error: "HTTP 403 \u2014 the source refused the request (sample error)" }
-    ]
+    // ================================================================
+    //  DOWNLOADS STATE + PERSISTENCE
+    // ================================================================
+    property bool downloadsStateReady: false
+    property bool downloadsDirty: false
+    property bool downloadsQueuePaused: false
+    // ================================================================
+    //  DOWNLOADS STATE (delegated to MediaHubDownloads controller)
+    // ================================================================
+    property alias downloads: downloadsBackend.downloads
+    property alias downloadsDirty: downloadsBackend.downloadsDirty
+    property alias downloadsQueuePaused: downloadsBackend.downloadsQueuePaused
+    property alias downloadsStateReady: downloadsBackend.downloadsStateReady
+
+    property alias dlInspection: downloadsBackend.dlInspection
+    property alias dlInspectedUrl: downloadsBackend.dlInspectedUrl
+    property alias dlInspectRequestId: downloadsBackend.dlInspectRequestId
+    property alias dlInspectSeq: downloadsBackend.dlInspectSeq
+    property alias dlError: downloadsBackend.dlError
+    property alias dlErrorCode: downloadsBackend.dlErrorCode
+
+    property alias dlUrlText: downloadsBackend.dlUrlText
+    property alias dlMode: downloadsBackend.dlMode
+    property alias dlFormatId: downloadsBackend.dlFormatId
+    property alias dlFormatHasAudio: downloadsBackend.dlFormatHasAudio
+    property alias dlQuality: downloadsBackend.dlQuality
+    property alias dlContainer: downloadsBackend.dlContainer
+    property alias dlAudioFormat: downloadsBackend.dlAudioFormat
+    property alias dlAudioQuality: downloadsBackend.dlAudioQuality
+    property alias dlScope: downloadsBackend.dlScope
+    property alias dlPlaylistItems: downloadsBackend.dlPlaylistItems
+    property alias dlFullConfirmed: downloadsBackend.dlFullConfirmed
+    property alias dlDirectory: downloadsBackend.dlDirectory
+
+    property alias dlDestInfo: downloadsBackend.dlDestInfo
+    property alias dlPendingEnqueue: downloadsBackend.dlPendingEnqueue
+    property alias dlDestError: downloadsBackend.dlDestError
+    property alias dlOpenVerifyPending: downloadsBackend.dlOpenVerifyPending
+    property alias dlOpenPath: downloadsBackend.dlOpenPath
+    property alias dlRestoreVerifyPending: downloadsBackend.dlRestoreVerifyPending
+    property alias dlStatusError: downloadsBackend.dlStatusError
+
+    readonly property alias dlInspecting: downloadsBackend.dlInspecting
+    readonly property alias dlBusy: downloadsBackend.dlBusy
+    readonly property alias dlCanMerge: downloadsBackend.dlCanMerge
+
+    readonly property alias downloadStateDir: downloadsBackend.downloadStateDir
+    readonly property alias downloadStatePath: downloadsBackend.downloadStatePath
+    readonly property alias downloadVideoDir: downloadsBackend.downloadVideoDir
+    readonly property alias downloadAudioDir: downloadsBackend.downloadAudioDir
 
     // ================================================================
     //  HELPERS & ACTIONS
@@ -1035,34 +1090,72 @@ Item {
         return ({ wallpaper: "Wallpaper", anime: "Anime", manga: "Manga", video: "Video", audio: "Audio", track: "Track", station: "Radio" })[kind] || kind
     }
 
-    // --- downloads ----------------------------------------------------------
-    function updateDownload(id, patch) {
-        downloads = downloads.map(function (d) { return d.id === id ? Object.assign({}, d, patch) : d })
-    }
-    function removeDownload(id) { downloads = downloads.filter(function (d) { return d.id !== id }) }
-    function dlCount(status) {
-        var n = 0
-        for (var i = 0; i < downloads.length; i++) if (status === "all" || downloads[i].status === status) n++
-        return n
-    }
-    function enqueue(url, mode, format, quality, dir) {
-        // >>> BACKEND: hand the request to yt-dlp (+ FFmpeg for audio extraction / muxing).
-        var host = url.replace(/^https?:\/\//i, "").split("/")[0]
-        dlSeq++
-        var rec = { id: "d" + dlSeq, name: host + " \u2014 title resolved by yt-dlp later", type: mode, format: format, quality: quality,
-                    dest: dir, status: "queued", progress: 0, size: "waiting for backend", error: "" }
-        downloads = [rec].concat(downloads)
-        downloadRequested({ url: url, mode: mode, format: format, quality: quality, directory: dir })
-        notify("Added to the queue as \u201cqueued\u201d. Nothing downloads until a backend handles downloadRequested.", "warn")
-        logActivity("Queued URL (not started): " + host)
-    }
-    function dlAction(d, action) {
-        if (action === "pause") { updateDownload(d.id, { status: "paused" }); notify("Paused in the UI only \u2014 no real transfer exists to pause.", "info") }
-        else if (action === "resume") { updateDownload(d.id, { status: "downloading" }); notify("Resumed in the UI only \u2014 progress will not advance without a backend.", "info") }
-        else if (action === "cancel") { removeDownload(d.id); notify("Removed from the sample queue.", "info") }
-        else if (action === "remove") { removeDownload(d.id) }
-        else if (action === "retry") { notify("Retry needs the download backend (yt-dlp), which isn't connected yet.", "warn"); downloadRequested({ retry: d.id, name: d.name }) }
-        else if (action === "open") { openLocationRequested(d.dest); notify("Open-location request emitted for " + d.dest + ".", "info") }
+    // --- downloads (delegated to MediaHubDownloads controller) -------------------------
+    function updateDownload(id, patch) { return downloadsBackend.updateDownload(id, patch) }
+    function removeDownload(id) { return downloadsBackend.removeDownload(id) }
+    function dlCount(status) { return downloadsBackend.dlCount(status) }
+    function dlActiveCount() { return downloadsBackend.dlActiveCount() }
+    function downloadJob(id) { return downloadsBackend.downloadJob(id) }
+    function expandHomePath(value) { return downloadsBackend.expandHomePath(value) }
+    function downloadDirForMode(mode) { return downloadsBackend.downloadDirForMode(mode) }
+    function setDownloadMode(mode) { return downloadsBackend.setDownloadMode(mode) }
+    function setDownloadDirectory(value) { return downloadsBackend.setDownloadDirectory(value) }
+    function setDownloadScope(scope) { return downloadsBackend.setDownloadScope(scope) }
+    function setDownloadQuality(value) { return downloadsBackend.setDownloadQuality(value) }
+    function selectDownloadFormat(format) { return downloadsBackend.selectDownloadFormat(format) }
+    function selectAudioSource(format) { return downloadsBackend.selectAudioSource(format) }
+    function downloadQualityChoices() { return downloadsBackend.downloadQualityChoices() }
+    function downloadVideoFormats() { return downloadsBackend.downloadVideoFormats() }
+    function downloadAudioSources() { return downloadsBackend.downloadAudioSources() }
+    function downloadPlaylist() { return downloadsBackend.downloadPlaylist() }
+    function downloadPlaylistSelectedCount() { return downloadsBackend.downloadPlaylistSelectedCount() }
+    function downloadPlaylistValid() { return downloadsBackend.downloadPlaylistValid() }
+    function clearDownloadPreview() { return downloadsBackend.clearDownloadPreview() }
+    function inspectDownloadUrl() { return downloadsBackend.inspectDownloadUrl() }
+    function cancelDownloadInspection() { return downloadsBackend.cancelDownloadInspection() }
+    function handleDownloadInspection(payload, requestId) { return downloadsBackend.handleDownloadInspection(payload, requestId) }
+    function handleDownloadInspectFailure(message, code, requestId) { return downloadsBackend.handleDownloadInspectFailure(message, code, requestId) }
+    function handleDownloadStatus(payload) { return downloadsBackend.handleDownloadStatus(payload) }
+    function downloadDestinationReady() { return downloadsBackend.downloadDestinationReady() }
+    function downloadDestinationLabel() { return downloadsBackend.downloadDestinationLabel() }
+    function checkDownloadDestination() { return downloadsBackend.checkDownloadDestination() }
+    function createDownloadDestination() { return downloadsBackend.createDownloadDestination() }
+    function buildDownloadRequest() { return downloadsBackend.buildDownloadRequest() }
+    function enqueueInspectedDownload() { return downloadsBackend.enqueueInspectedDownload() }
+    function commitDownloadEnqueue(request) { return downloadsBackend.commitDownloadEnqueue(request) }
+    function handleDownloadUtilitySuccess(payload, action) { return downloadsBackend.handleDownloadUtilitySuccess(payload, action) }
+    function handleDownloadUtilityFailure(message, code, action) { return downloadsBackend.handleDownloadUtilityFailure(message, code, action) }
+    function markDownloadMissing(path, message) { return downloadsBackend.markDownloadMissing(path, message) }
+    function applyDownloadsState(state) { return downloadsBackend.applyDownloadsState(state) }
+    function verifyRestoredDownloads() { return downloadsBackend.verifyRestoredDownloads() }
+    function pumpDownloadQueue() { return downloadsBackend.pumpDownloadQueue() }
+    function startDownloadAt(index) { return downloadsBackend.startDownloadAt(index) }
+    function handleDownloadStarted(jobId) { return downloadsBackend.handleDownloadStarted(jobId) }
+    function handleDownloadProgress(payload, jobId) { return downloadsBackend.handleDownloadProgress(payload, jobId) }
+    function handleDownloadPostprocess(payload, jobId) { return downloadsBackend.handleDownloadPostprocess(payload, jobId) }
+    function handleDownloadFile(path, jobId) { return downloadsBackend.handleDownloadFile(path, jobId) }
+    function handleDownloadFinished(payload, jobId) { return downloadsBackend.handleDownloadFinished(payload, jobId) }
+    function handleDownloadFailure(message, code, jobId) { return downloadsBackend.handleDownloadFailure(message, code, jobId) }
+    function handleDownloadCancelled(jobId) { return downloadsBackend.handleDownloadCancelled(jobId) }
+    function retryDownload(id) { return downloadsBackend.retryDownload(id) }
+    function openDownload(id) { return downloadsBackend.openDownload(id) }
+    function setDownloadQueuePaused(paused) { return downloadsBackend.setDownloadQueuePaused(paused) }
+    function toggleDownloadQueue() { return downloadsBackend.toggleDownloadQueue() }
+    function clearFinishedDownloads() { return downloadsBackend.clearFinishedDownloads() }
+    function dlAction(d, action) { return downloadsBackend.dlAction(d, action) }
+    onDlUrlTextChanged: {
+        if (downloadsBackend.dlInspection !== null || downloadsBackend.dlInspectedUrl !== "") {
+            downloadsBackend.dlInspection = null
+            downloadsBackend.dlInspectedUrl = ""
+            downloadsBackend.dlFormatId = ""
+            downloadsBackend.dlFormatHasAudio = false
+            downloadsBackend.dlQuality = "Best"
+            downloadsBackend.dlScope = "single"
+            downloadsBackend.dlFullConfirmed = false
+        }
+        if (downloadsBackend.inspecting) downloadsBackend.cancelInspect()
+        downloadsBackend.dlError = ""
+        downloadsBackend.dlErrorCode = ""
     }
 
     // --- surprise me --------------------------------------------------------
@@ -2533,11 +2626,11 @@ Item {
                         }
                     }
                     Rectangle {
-                        visible: !root.compact && index === 5 && root.dlCount("downloading") > 0
+                        visible: !root.compact && index === 5 && root.dlActiveCount() > 0
                         anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         width: 20; height: 18; radius: 9
                         color: Qt.alpha("#7bd0ff", 0.2)
-                        Lbl { anchors.centerIn: parent; text: root.dlCount("downloading"); mono: true; font.pixelSize: 10; color: "#7bd0ff" }
+                        Lbl { anchors.centerIn: parent; text: root.dlActiveCount(); mono: true; font.pixelSize: 10; color: "#7bd0ff" }
                     }
                     MouseArea {
                         id: nma
@@ -3065,7 +3158,7 @@ Item {
                 { name: "Wallpapers", icon: "wallpaper", go: 1, sub: (root.wallhavenUsingRemote ? "Wallhaven live" : "Bundled samples") + " \u00b7 " + root.favCount() + " favorites" },
                 { name: "Anime", icon: "anime", go: 2, sub: root.countListed("anime") + " on watchlist" },
                 { name: "Manga & Manhwa", icon: "manga", go: 3, sub: root.countListed("manga") + " on reading list" },
-                { name: "Downloads", icon: "download", go: 5, sub: root.dlCount("downloading") + " active \u00b7 " + root.dlCount("queued") + " queued" },
+                { name: "Downloads", icon: "download", go: 5, sub: root.dlActiveCount() + " active \u00b7 " + root.dlCount("queued") + " queued" },
                 { name: "My Library", icon: "library", go: 6, sub: root.libraryItems().length + " items" },
                 { name: "Music", icon: "music", go: 4, sub: "Online player \u00b7 " + root.musicFavorites.length + " saved" }
             ]
@@ -5017,51 +5110,98 @@ Item {
         id: dlPage
         Item {
             id: dp
-            property string mode: "video"
-            property string format: "MP4"
-            property string quality: "1080p"
-            property string dir: "~/Videos/GPS"
-            property string urlText: ""
-            property string err: ""
             property string filter: "All"
-            readonly property var formats: mode === "video" ? ["MP4", "MKV", "WebM"] : ["MP3", "M4A", "FLAC", "Opus"]
-            readonly property var qualities: mode === "video" ? ["Best", "1080p", "720p", "480p"] : ["320k", "256k", "192k", "128k"]
-            readonly property var filters: ["All", "Downloading", "Queued", "Completed", "Failed"]
+            readonly property var previewMeta: root.dlInspection ? root.dlInspection : ({})
+            readonly property var previewItem: dp.previewMeta.item ? dp.previewMeta.item : ({})
+            readonly property var previewPlaylist: root.downloadPlaylist()
+            readonly property bool playlistMode: dp.previewPlaylist !== null
+                && dp.previewPlaylist.isPlaylist === true
+            readonly property int playlistCount: dp.previewPlaylist ? (Number(dp.previewPlaylist.count) || 0) : 0
+            readonly property var qualities: root.downloadQualityChoices()
+            readonly property var containers: ["Auto", "MP4", "MKV", "WebM"]
+            readonly property var audioFormats: ["Original", "MP3", "M4A", "FLAC", "Opus"]
+            readonly property var audioQualities: ["Best", "320k", "256k", "192k", "128k"]
+            readonly property var videoFormats: root.downloadVideoFormats()
+            readonly property var audioSources: root.downloadAudioSources()
+            readonly property var filters: ["All", "Active", "Queued", "Completed", "Failed"]
             readonly property var rows: root.downloads.filter(function (d) {
                 if (dp.filter === "All") return true
-                if (dp.filter === "Downloading") return d.status === "downloading" || d.status === "paused"
+                if (dp.filter === "Active") return d.status === "downloading" || d.status === "postprocessing"
+                if (dp.filter === "Failed") return d.status === "failed" || d.status === "cancelled"
                 return d.status === dp.filter.toLowerCase()
             })
             function countFor(f) {
                 var n = 0
                 for (var i = 0; i < root.downloads.length; i++) {
                     var s = root.downloads[i].status
-                    if (f === "All" || (f === "Downloading" && (s === "downloading" || s === "paused")) || s === f.toLowerCase()) n++
+                    if (f === "All") n++
+                    else if (f === "Active" && (s === "downloading" || s === "postprocessing")) n++
+                    else if (f === "Failed" && (s === "failed" || s === "cancelled")) n++
+                    else if (f === "Queued" && s === "queued") n++
+                    else if (f === "Completed" && s === "completed") n++
                 }
                 return n
             }
-            function setMode(m) {
-                mode = m
-                format = m === "video" ? "MP4" : "MP3"
-                quality = m === "video" ? "1080p" : "320k"
-                dir = m === "video" ? "~/Videos/GPS" : "~/Music/GPS"
+            function finishedCount() {
+                var n = 0
+                for (var i = 0; i < root.downloads.length; i++) {
+                    var s = root.downloads[i].status
+                    if (s === "completed" || s === "failed" || s === "cancelled") n++
+                }
+                return n
             }
-            function submit() {
-                var u = urlText.trim()
-                if (u === "") { err = "Paste a video or audio URL first."; return }
-                if (!/^https?:\/\/[^\s\/$.?#][^\s]*$/i.test(u)) { err = "That doesn't look like a valid http(s) URL."; return }
-                if (dir.trim() === "") { err = "Choose an output folder."; return }
-                for (var i = 0; i < root.downloads.length; i++)
-                    if (root.downloads[i].url === u) { err = "This URL is already in the queue."; return }
-                err = ""
-                root.enqueue(u, mode, format, quality, dir.trim())
-                urlText = ""
+            function statusTint(job) {
+                if (!job) return pal.faint
+                if (job.status === "completed") return "#86efac"
+                if (job.status === "failed") return "#ffb4ab"
+                if (job.status === "cancelled") return "#fde047"
+                if (job.status === "downloading") return "#7bd0ff"
+                if (job.status === "postprocessing") return "#ddb8ff"
+                if (job.status === "queued") return pal.dim
+                return pal.faint
             }
+            function sizeText(job) {
+                var total = Number(job.totalBytes) || 0
+                var done = Number(job.downloadedBytes) || 0
+                if (total > 0) return DownloadsQueue.formatBytes(done) + " / " + DownloadsQueue.formatBytes(total)
+                if (job.status === "completed") return "size unavailable"
+                if (job.status === "queued") return "waiting"
+                return DownloadsQueue.formatBytes(done)
+            }
+            function detailText(job) {
+                var parts = [job.mode === "audio" ? "Audio" : "Video", job.quality, job.dest]
+                if (job.files && job.files.length > 1) parts.push(job.files.length + " files")
+                return parts.join(" \u00b7 ")
+            }
+            function progressText(job) {
+                var base = Math.round(DownloadsQueue.progressFraction(job) * 100) + "%"
+                if (job.status === "downloading" && Number(job.speed) > 0) {
+                    base += " \u00b7 " + DownloadsQueue.formatSpeed(job.speed)
+                    var eta = DownloadsQueue.formatEta(job.eta)
+                    if (eta !== "") base += " \u00b7 " + eta
+                }
+                return base
+            }
+            function setMode(mode) { root.setDownloadMode(mode) }
+            function submit() { root.inspectDownloadUrl() }
+            function add() { root.enqueueInspectedDownload() }
             function consumePending() {
-                if (root.pendingUrl !== "") { urlText = root.pendingUrl; root.pendingUrl = ""; err = "" }
+                if (root.pendingUrl !== "") {
+                    root.dlUrlText = root.pendingUrl
+                    root.pendingUrl = ""
+                    root.dlError = ""
+                    root.dlInspection = null
+                }
             }
             Component.onCompleted: consumePending()
             Connections { target: root; function onPendingUrlChanged() { dp.consumePending() } }
+
+            FolderDialog {
+                id: dlFolderDialog
+                title: "Choose a download folder"
+                currentFolder: Qt.resolvedUrl(root.dlDirectory)
+                onAccepted: root.setDownloadDirectory(selectedFolder.toLocalFile())
+            }
 
             Flickable {
                 id: df2
@@ -5080,24 +5220,48 @@ Item {
                     RowLayout {
                         width: parent.width
                         ColumnLayout {
+                            Layout.fillWidth: true
                             spacing: 3
                             Lbl { text: "Downloads"; font.pixelSize: 26; font.weight: Font.Bold }
-                            Lbl { text: "Prepare video and audio downloads. Nothing starts without you pressing Add."; dim: true; font.pixelSize: 13 }
+                            Lbl { Layout.fillWidth: true; elide: Text.ElideRight
+                                  text: "Inspect a public link, choose exact formats and playlist items, then add it to the queue."
+                                  dim: true; font.pixelSize: 13 }
                         }
-                        Item { Layout.fillWidth: true }
-                        Tag { visible: df2.width > 700; text: "SAMPLE QUEUE"; tint: "#fde047" }
+                        Tag { visible: df2.width > 780
+                              text: root.downloadBackendConnected ? "YT-DLP READY" : (downloadsBackend.checkingStatus ? "CHECKING" : "YT-DLP MISSING")
+                              tint: root.downloadBackendConnected ? "#86efac" : (downloadsBackend.checkingStatus ? pal.dim : "#ffb4ab") }
+                        IconBtn { box: 34; icon: "refresh"; tip: "Recheck yt-dlp and FFmpeg"
+                                  onClicked: downloadsBackend.checkStatus() }
+                        Btn { compact: true; icon: root.downloadsQueuePaused ? "play" : "pause"
+                              label: root.downloadsQueuePaused ? "Resume queue" : "Pause queue"
+                              onClicked: root.toggleDownloadQueue() }
                     }
 
                     Card {
                         width: parent.width
-                        visible: !root.downloadBackendConnected
+                        visible: !root.downloadBackendConnected || root.dlStatusError !== ""
                         tint: "#fde047"
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
-                            Ico { name: "warn"; size: 18; tint: "#fde047" }
-                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
-                                  text: "Download backend not connected. yt-dlp and FFmpeg will run here in a future build. The records below are samples; progress does not advance, and pause, resume and retry only change the UI." }
+                            Ico { name: "warn"; size: 18; tint: "#fde047"; Layout.alignment: Qt.AlignTop }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 13; font.weight: Font.DemiBold
+                                      text: downloadsBackend.checkingStatus ? "Checking download dependencies\u2026" : "The download backend is not ready." }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
+                                      text: {
+                                          if (root.dlStatusError !== "") return root.dlStatusError
+                                          var guidance = downloadsBackend.toolStatus.guidance
+                                          if (guidance && guidance.ytDlp) return guidance.ytDlp
+                                          return "Install yt-dlp with your package manager, then press Recheck. GPS never installs or updates packages automatically."
+                                      } }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                                      visible: root.downloadBackendConnected && !root.dlCanMerge
+                                      text: "FFmpeg is missing, so merging video-only formats and audio conversion are disabled. Single-file video and original audio still work." }
+                            }
+                            Btn { compact: true; icon: "refresh"; label: "Recheck"; onClicked: downloadsBackend.checkStatus() }
                         }
                     }
 
@@ -5110,45 +5274,238 @@ Item {
                                 Layout.fillWidth: true
                                 icon: "link"
                                 accent: root.accent
-                                placeholder: "Paste a video or audio URL (https://...)"
-                                text: dp.urlText
-                                onEdited: { dp.urlText = text; dp.err = "" }
+                                placeholder: "Paste a public video or audio URL (https://...)"
+                                text: root.dlUrlText
+                                onEdited: { root.dlUrlText = text; root.dlError = "" }
                                 onSubmitted: dp.submit()
                             }
-                            Btn { kind: "primary"; accent: root.accent; icon: "plus"; label: "Add to Queue"; onClicked: dp.submit() }
+                            Btn { kind: root.dlInspecting ? "secondary" : "primary"
+                                  accent: root.accent
+                                  icon: root.dlInspecting ? "close" : "search"
+                                  label: root.dlInspecting ? "Cancel" : "Inspect"
+                                  onClicked: root.dlInspecting ? root.cancelDownloadInspection() : dp.submit() }
                         }
-                        Lbl { visible: dp.err !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: dp.err; color: "#ffb4ab"; font.pixelSize: 12 }
-                        Lbl { visible: dp.err === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
-                              text: "Pasting or clipboard changes never start a download. Press Add to Queue (or Enter) deliberately." }
+                        Lbl { visible: root.dlError !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                              text: root.dlError; color: "#ffb4ab"; font.pixelSize: 12 }
+                        Lbl { visible: root.dlError === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; faint: true; font.pixelSize: 11
+                              text: "Inspection is read-only. Pasting or clipboard changes never start a download; Add to queue is a separate deliberate action." }
+                    }
+
+                    Card {
+                        width: parent.width
+                        visible: root.dlInspection !== null
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 14
+                            Art {
+                                Layout.preferredWidth: 132; Layout.preferredHeight: 74; radiusPx: 10
+                                frameColor: pal.cont
+                                src: root.loadRemoteArt ? String(dp.previewItem.thumbnail || dp.previewMeta.thumbnail || "") : ""
+                                grad: ["#1a2238", "#2a1b5e", "#0e4a6b"]
+                                glyph: root.dlMode === "audio" ? "music" : "video"
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Lbl { Layout.fillWidth: true; text: dp.previewItem.title || dp.previewMeta.title || "Untitled media"
+                                      elide: Text.ElideRight; font.pixelSize: 16; font.weight: Font.DemiBold }
+                                Lbl { Layout.fillWidth: true; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 11
+                                      text: [dp.previewMeta.source || "Unknown source", dp.previewItem.uploader || dp.previewMeta.uploader || "", DownloadsQueue.formatDuration(dp.previewItem.duration || 0)].filter(function (v) { return v !== "" }).join(" \u00b7 ") }
+                                RowLayout {
+                                    spacing: 8
+                                    Tag { visible: dp.playlistMode; text: "PLAYLIST \u00b7 " + (dp.playlistCount > 0 ? dp.playlistCount : "?") + " ITEMS"; tint: "#7bd0ff" }
+                                    Tag { text: "INSPECTED"; tint: "#86efac" }
+                                }
+                                Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: dp.previewMeta.warning !== undefined; faint: true; font.pixelSize: 11
+                                      text: dp.previewMeta.warning || "" }
+                            }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: pal.line }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
-                            Lbl { text: "Mode"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
-                            Chip { label: "Video"; icon: "video"; accent: root.accent; active: dp.mode === "video"; onClicked: dp.setMode("video") }
-                            Chip { label: "Audio"; icon: "music"; accent: root.accent; active: dp.mode === "audio"; onClicked: dp.setMode("audio") }
+                            Lbl { text: "Mode"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Chip { label: "Video"; icon: "video"; accent: root.accent; active: root.dlMode === "video"; onClicked: dp.setMode("video") }
+                            Chip { label: "Audio"; icon: "music"; accent: root.accent; active: root.dlMode === "audio"; onClicked: dp.setMode("audio") }
                             Item { Layout.fillWidth: true }
                         }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "video" && dp.videoFormats.length > 0
+                            spacing: 10
+                            Lbl { text: "Source"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64; Layout.alignment: Qt.AlignTop }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Chip { label: "Auto (best)"; accent: root.accent; active: root.dlFormatId === ""
+                                       onClicked: root.selectDownloadFormat(null) }
+                                Repeater {
+                                    model: dp.videoFormats
+                                    delegate: Chip { label: DownloadsQueue.formatLabel(modelData); accent: root.accent
+                                                     active: root.dlFormatId === modelData.format_id
+                                                     onClicked: root.selectDownloadFormat(modelData) }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "video"
+                            spacing: 10
+                            Lbl { text: "Container"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Repeater {
+                                    model: dp.containers
+                                    delegate: Chip { label: modelData; accent: root.accent; active: root.dlContainer === modelData
+                                                     onClicked: { root.dlContainer = modelData; root.dlError = "" } }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "video"
+                            spacing: 10
+                            Lbl { text: "Quality"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Repeater {
+                                    model: dp.qualities
+                                    delegate: Chip { label: modelData; accent: root.accent; active: root.dlQuality === modelData && root.dlFormatId === ""
+                                                     onClicked: root.setDownloadQuality(modelData) }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "audio" && dp.audioSources.length > 0
+                            spacing: 10
+                            Lbl { text: "Source"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64; Layout.alignment: Qt.AlignTop }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Chip { label: "Auto (best audio)"; accent: root.accent; active: root.dlFormatId === ""
+                                       onClicked: root.selectDownloadFormat(null) }
+                                Repeater {
+                                    model: dp.audioSources
+                                    delegate: Chip { label: DownloadsQueue.formatLabel(modelData); accent: root.accent
+                                                     active: root.dlFormatId === modelData.format_id
+                                                     onClicked: root.selectAudioSource(modelData) }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "audio"
+                            spacing: 10
+                            Lbl { text: "Format"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Repeater {
+                                    model: dp.audioFormats
+                                    delegate: Chip { label: modelData; accent: root.accent; active: root.dlAudioFormat === modelData.toLowerCase()
+                                                     onClicked: { root.dlAudioFormat = modelData.toLowerCase(); root.dlError = "" } }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: root.dlMode === "audio" && root.dlAudioFormat !== "original"
+                            spacing: 10
+                            Lbl { text: "Quality"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Wrap {
+                                Layout.fillWidth: true; spacing: 8
+                                Repeater {
+                                    model: dp.audioQualities
+                                    delegate: Chip { label: modelData; accent: root.accent; active: root.dlAudioQuality === modelData.toLowerCase()
+                                                     onClicked: { root.dlAudioQuality = modelData.toLowerCase(); root.dlError = "" } }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: dp.playlistMode
+                            spacing: 10
+                            Lbl { text: "Playlist"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            Chip { label: "This item"; accent: root.accent; active: root.dlScope === "single"; onClicked: root.setDownloadScope("single") }
+                            Chip { label: "Selected items"; accent: root.accent; active: root.dlScope === "selected"; onClicked: root.setDownloadScope("selected") }
+                            Chip { label: "Full playlist"; accent: root.accent; active: root.dlScope === "full"
+                                   onClicked: { if (dp.playlistCount > 0) root.setDownloadScope("full") } }
+                            Item { Layout.fillWidth: true }
+                            Lbl { text: dp.playlistCount > 0 ? (dp.playlistCount + " item" + (dp.playlistCount === 1 ? "" : "s")) : "count unknown"; mono: true; faint: true; font.pixelSize: 10 }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; visible: dp.playlistMode && root.dlScope === "selected"
+                            spacing: 10
+                            Lbl { text: "Items"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            SearchField {
+                                Layout.fillWidth: true
+                                icon: "list"
+                                accent: root.accent
+                                placeholder: "Item numbers, e.g. 1,3-5,7"
+                                text: root.dlPlaylistItems
+                                onEdited: { root.dlPlaylistItems = text; root.dlError = "" }
+                            }
+                            Lbl { text: root.downloadPlaylistSelectedCount() > 0
+                                     ? (root.downloadPlaylistSelectedCount() + " selected") : "invalid selection"
+                                  mono: true; font.pixelSize: 11
+                                  color: root.downloadPlaylistSelectedCount() > 0 ? "#86efac" : "#ffb4ab" }
+                        }
+
+                        Card {
+                            Layout.fillWidth: true
+                            visible: dp.playlistMode && root.dlScope === "full"
+                            tint: "#fde047"
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12
+                                  text: dp.playlistCount > 100
+                                      ? ("This playlist has " + dp.playlistCount + " items. GPS will download only the first 100.")
+                                      : ("This will queue " + (dp.playlistCount > 0 ? dp.playlistCount : "all available") + " playlist items, one at a time.") }
+                            Chip { label: "I understand \u2014 download " + (dp.playlistCount > 100 ? "first 100" : (dp.playlistCount > 0 ? dp.playlistCount : "all")) + " items"
+                                   accent: root.accent; active: root.dlFullConfirmed
+                                   onClicked: root.dlFullConfirmed = !root.dlFullConfirmed }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: pal.line }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
-                            Lbl { text: "Format"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
-                            Wrap { Layout.fillWidth: true; spacing: 8
-                                Repeater { model: dp.formats; delegate: Chip { label: modelData; accent: root.accent; active: dp.format === modelData; onClicked: dp.format = modelData } } }
+                            Lbl { text: "Save to"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 64 }
+                            SearchField { Layout.fillWidth: true; icon: "folder"; accent: root.accent; placeholder: "Absolute output folder"
+                                          text: root.dlDirectory; onEdited: root.setDownloadDirectory(text) }
+                            Btn { compact: true; icon: "folder"; label: "Browse\u2026"; onClicked: dlFolderDialog.open() }
+                            Btn { compact: true; icon: "check"; label: "Check"; onClicked: root.checkDownloadDestination() }
+                            Btn { compact: true; icon: "plus"; label: "Create"
+                                  onClicked: root.createDownloadDestination() }
                         }
+                        Lbl {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                            text: root.downloadDestinationLabel() !== "" ? root.downloadDestinationLabel() : "Check the folder or create it before adding a download."
+                            color: root.downloadDestinationReady() ? "#86efac"
+                                 : (root.dlDestError !== "" || (root.dlDestInfo && root.dlDestInfo.exists !== true) ? "#ffb4ab" : pal.faint)
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
-                            Lbl { text: "Quality"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
-                            Wrap { Layout.fillWidth: true; spacing: 8
-                                Repeater { model: dp.qualities; delegate: Chip { label: modelData; accent: root.accent; active: dp.quality === modelData; onClicked: dp.quality = modelData } } }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: root.dlError !== ""; text: root.dlError; color: "#ffb4ab"; font.pixelSize: 12 }
+                            Item { Layout.fillWidth: true; visible: root.dlError === "" }
+                            Btn { kind: "primary"; accent: root.accent; icon: "plus"; label: "Add to Queue"
+                                  muted: !root.downloadBackendConnected || root.dlInspecting || !root.downloadPlaylistValid()
+                                  onClicked: dp.add() }
                         }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-                            Lbl { text: "Save to"; mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 60 }
-                            SearchField { Layout.fillWidth: true; icon: "folder"; accent: root.accent; placeholder: "Output folder"; text: dp.dir; onEdited: dp.dir = text }
-                            Btn { compact: true; label: "Browse\u2026"; onClicked: root.notify("A folder picker needs the host (e.g. a FolderDialog). Type a path for now.", "info") }
-                        }
+                    }
+
+                    RowLayout {
+                        width: parent.width
+                        spacing: 10
+                        Lbl { text: root.downloads.length + " job" + (root.downloads.length === 1 ? "" : "s"); mono: true; faint: true; font.pixelSize: 11 }
+                        Item { Layout.fillWidth: true }
+                        Lbl { visible: root.downloadsQueuePaused; text: "QUEUE PAUSED \u2014 active transfer continues"; mono: true; font.pixelSize: 10; color: "#fde047" }
+                        Btn { compact: true; visible: dp.finishedCount() > 0; icon: "close"; label: "Clear finished"
+                              onClicked: root.clearFinishedDownloads() }
                     }
 
                     Wrap {
@@ -5167,50 +5524,54 @@ Item {
                             model: dp.rows
                             delegate: Rectangle {
                                 id: dr
-                                readonly property bool failed: modelData.status === "failed"
+                                readonly property bool active: DownloadsQueue.isActiveStatus(modelData.status)
+                                readonly property bool done: modelData.status === "completed"
+                                readonly property bool failed: modelData.status === "failed" || modelData.status === "cancelled"
                                 width: parent.width
-                                height: failed ? 98 : 80
+                                height: failed ? 108 : (active ? 98 : 84)
                                 radius: 12
                                 color: pal.cont
                                 border.width: 1
-                                border.color: failed ? Qt.alpha(pal.err, 0.35) : pal.line
+                                border.color: failed ? Qt.alpha(pal.err, 0.35) : (done ? Qt.alpha("#86efac", 0.25) : pal.line)
                                 RowLayout {
                                     anchors { fill: parent; leftMargin: 14; rightMargin: 12 }
                                     spacing: 14
                                     Rectangle {
                                         Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 11
-                                        color: Qt.alpha(modelData.type === "video" ? "#7bd0ff" : "#ddb8ff", 0.15)
-                                        Ico { anchors.centerIn: parent; name: modelData.type === "video" ? "video" : "music"; size: 16; tint: modelData.type === "video" ? "#7bd0ff" : "#ddb8ff" }
+                                        color: Qt.alpha(modelData.mode === "video" ? "#7bd0ff" : "#ddb8ff", 0.15)
+                                        Ico { anchors.centerIn: parent; name: modelData.mode === "video" ? "video" : "music"; size: 16
+                                              tint: modelData.mode === "video" ? "#7bd0ff" : "#ddb8ff" }
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 4
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            Lbl { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                            Tag { px: 9
-                                                  text: modelData.status.toUpperCase()
-                                                  tint: modelData.status === "completed" ? "#86efac" : (modelData.status === "failed" ? "#ffb4ab" : (modelData.status === "downloading" ? "#7bd0ff" : (modelData.status === "paused" ? "#fde047" : "#cac4d4"))) }
+                                            Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                            Tag { px: 9; text: DownloadsQueue.statusLabel(modelData); tint: dp.statusTint(modelData) }
                                         }
                                         Lbl { Layout.fillWidth: true; elide: Text.ElideRight; mono: true; faint: true; font.pixelSize: 11
-                                              text: modelData.format + " \u00b7 " + modelData.quality + " \u00b7 " + modelData.dest + " \u00b7 " + modelData.size }
+                                              text: dp.detailText(modelData) + " \u00b7 " + dp.sizeText(modelData) }
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            visible: modelData.progress > 0 && modelData.status !== "queued"
+                                            visible: active || done || failed || Number(modelData.progress) > 0
                                             spacing: 10
-                                            Bar { Layout.fillWidth: true; height: 5; value: modelData.progress; tint: modelData.status === "completed" ? "#86efac" : (dr.failed ? "#ffb4ab" : "#7bd0ff") }
-                                            Lbl { text: Math.round(modelData.progress * 100) + "%"; mono: true; font.pixelSize: 11; dim: true }
+                                            Bar { Layout.fillWidth: true; height: 5
+                                                  value: DownloadsQueue.progressFraction(modelData)
+                                                  tint: failed ? "#ffb4ab" : (done ? "#86efac" : (modelData.status === "postprocessing" ? "#ddb8ff" : "#7bd0ff")) }
+                                            Lbl { text: dp.progressText(modelData); mono: true; font.pixelSize: 10; dim: true }
                                         }
-                                        Lbl { visible: dr.failed; Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.error; color: "#ffb4ab"; font.pixelSize: 12 }
+                                        Lbl { Layout.fillWidth: true; elide: Text.ElideRight; visible: active && modelData.statusDetail !== ""
+                                              text: modelData.statusDetail; mono: true; faint: true; font.pixelSize: 10 }
+                                        Lbl { visible: failed; Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.error; color: "#ffb4ab"; font.pixelSize: 11 }
                                     }
                                     Row {
                                         spacing: 6
-                                        IconBtn { visible: modelData.status === "downloading"; icon: "pause"; tip: "Pause"; onClicked: root.dlAction(modelData, "pause") }
-                                        IconBtn { visible: modelData.status === "paused"; icon: "play"; tip: "Resume"; onClicked: root.dlAction(modelData, "resume") }
-                                        IconBtn { visible: dr.failed; icon: "refresh"; tip: "Retry"; onClicked: root.dlAction(modelData, "retry") }
-                                        IconBtn { visible: modelData.status === "completed"; icon: "folder"; tip: "Open location"; onClicked: root.dlAction(modelData, "open") }
-                                        IconBtn { icon: "close"; tip: (modelData.status === "completed" || dr.failed) ? "Remove" : "Cancel"
-                                                  onClicked: root.dlAction(modelData, (modelData.status === "completed" || dr.failed) ? "remove" : "cancel") }
+                                        IconBtn { visible: dr.active; icon: "close"; tip: "Cancel download"; onClicked: root.dlAction(modelData, "cancel") }
+                                        IconBtn { visible: failed && DownloadsQueue.canRetry(modelData); icon: "refresh"; tip: "Retry"; onClicked: root.dlAction(modelData, "retry") }
+                                        IconBtn { visible: done; icon: "folder"; tip: "Open location"; onClicked: root.dlAction(modelData, "open") }
+                                        IconBtn { visible: modelData.status === "queued"; icon: "close"; tip: "Remove from queue"; onClicked: root.dlAction(modelData, "cancel") }
+                                        IconBtn { visible: failed || done; icon: "close"; tip: "Remove"; onClicked: root.dlAction(modelData, "remove") }
                                     }
                                 }
                             }
@@ -5218,8 +5579,10 @@ Item {
                         Card {
                             width: parent.width
                             visible: dp.rows.length === 0
-                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: dp.filter === "All" ? "The queue is empty" : ("No " + dp.filter.toLowerCase() + " items") }
-                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; text: "Add a URL above to prepare a download." }
+                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold
+                                  text: dp.filter === "All" ? "The queue is empty" : ("No " + dp.filter.toLowerCase() + " downloads") }
+                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
+                                  text: dp.filter === "All" ? "Inspect a URL above to choose formats and add a real download." : "Try another filter." }
                         }
                     }
                 }
