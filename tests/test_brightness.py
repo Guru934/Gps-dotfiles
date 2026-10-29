@@ -6,6 +6,7 @@ Authoritative requirements:
   and zero max handling (max = 0 produces 0%, avoiding division by zero).
 - Contract verification for config/Brightness.qml singleton and config/qmldir.
 - Dynamic evaluation of config/Brightness.qml JavaScript via Node.js runtime.
+- Multi-device CSV parsing regression tests covering stub skip and device selection.
 """
 
 import json
@@ -191,7 +192,7 @@ class BrightnessQmlContractTests(unittest.TestCase):
 
 
 class BrightnessQmlEvaluatorTests(unittest.TestCase):
-    """Dynamic tests evaluating the exact JavaScript function extracted from Brightness.qml."""
+    """Dynamic tests evaluating JavaScript functions extracted from Brightness.qml."""
 
     @classmethod
     def setUpClass(cls):
@@ -201,16 +202,64 @@ class BrightnessQmlEvaluatorTests(unittest.TestCase):
             raise unittest.SkipTest("Node.js runtime not found; skipping dynamic JS evaluation.")
 
         qml = BRIGHTNESS_QML_PATH.read_text()
-        match = re.search(r"(function\s+calcPercent\s*\([^)]*\)\s*\{(?:[^{}]*|\{[^{}]*\})*\})", qml)
-        if not match:
+
+        def extract_function(name):
+            m = re.search(rf"function\s+{name}\s*\([^)]*\)\s*\{{", qml)
+            if not m:
+                return None
+            start = m.start()
+            braces = 0
+            end = start
+            for i in range(m.end() - 1, len(qml)):
+                if qml[i] == '{':
+                    braces += 1
+                elif qml[i] == '}':
+                    braces -= 1
+                    if braces == 0:
+                        end = i + 1
+                        break
+            return qml[start:end]
+
+        cls.calc_percent_js = extract_function("calcPercent")
+        if not cls.calc_percent_js:
             raise unittest.SkipTest("calcPercent function not found in config/Brightness.qml")
-        cls.calc_percent_js = match.group(1)
+
+        cls.parse_output_js = extract_function("_parseOutput")
+        if not cls.parse_output_js:
+            raise unittest.SkipTest("_parseOutput function not found in config/Brightness.qml")
 
     def eval_js(self, current, max_val):
         driver = f"""
 {self.calc_percent_js}
 const res = calcPercent({json.dumps(current)}, {json.dumps(max_val)});
 console.log(JSON.stringify(res));
+"""
+        proc = subprocess.run(["node", "-e", driver], capture_output=True, text=True, check=True)
+        return json.loads(proc.stdout.strip())
+
+    def eval_parse_js(self, raw, configured_device=""):
+        driver = f"""
+{self.calc_percent_js}
+{self.parse_output_js}
+
+const root = {{
+    device: {json.dumps(configured_device)},
+    _detectedDevice: {json.dumps(configured_device)},
+    _percent: 0,
+    _available: false,
+    _currentBrightness: 0,
+    _maxBrightness: 0,
+    calcPercent: calcPercent
+}};
+
+_parseOutput.call(root, {json.dumps(raw)});
+console.log(JSON.stringify({{
+    available: root._available,
+    device: root.device,
+    percent: root._percent,
+    current: root._currentBrightness,
+    max: root._maxBrightness
+}}));
 """
         proc = subprocess.run(["node", "-e", driver], capture_output=True, text=True, check=True)
         return json.loads(proc.stdout.strip())
@@ -242,6 +291,81 @@ console.log(JSON.stringify(res));
         self.assertEqual(self.eval_js(150, 100), 100)
         self.assertEqual(self.eval_js(0, 100), 0)
         self.assertEqual(self.eval_js(100, 100), 100)
+
+    # -------------------------------------------------------------------------
+    # Multi-Device Regression Tests
+    # -------------------------------------------------------------------------
+    def test_js_parse_single_device_nominal(self):
+        """Single line machine-readable output from brightnessctl -m."""
+        raw = "nvidia_wmi_ec_backlight,backlight,66,26%,254\n"
+        res = self.eval_parse_js(raw)
+        self.assertTrue(res["available"])
+        self.assertEqual(res["device"], "nvidia_wmi_ec_backlight")
+        self.assertEqual(res["percent"], 26)
+        self.assertEqual(res["current"], 66)
+        self.assertEqual(res["max"], 254)
+
+    def test_js_parse_multi_device_with_leds(self):
+        """Multi-device output containing both backlight and leds devices."""
+        raw = """nvidia_wmi_ec_backlight,backlight,87,34%,254
+enp110s0-1::lan,leds,0,0%,255
+phy0-led,leds,1,100%,1
+input3::numlock,leds,0,0%,1
+"""
+        res = self.eval_parse_js(raw)
+        self.assertTrue(res["available"])
+        self.assertEqual(res["device"], "nvidia_wmi_ec_backlight")
+        self.assertEqual(res["percent"], 34)
+        self.assertEqual(res["current"], 87)
+        self.assertEqual(res["max"], 254)
+
+    def test_js_parse_multi_device_acpi_video_stub_skipped(self):
+        """When an acpi_video stub (stuck at 1%) precedes the active panel backlight."""
+        raw = """acpi_video0,backlight,1,1%,100
+intel_backlight,backlight,450,50%,900
+"""
+        res = self.eval_parse_js(raw)
+        self.assertTrue(res["available"])
+        self.assertEqual(res["device"], "intel_backlight")
+        self.assertEqual(res["percent"], 50)
+        self.assertEqual(res["current"], 450)
+        self.assertEqual(res["max"], 900)
+
+    def test_js_parse_multi_device_configured_device_honored(self):
+        """Configured device must be selected even when other devices precede it."""
+        raw = """acpi_video0,backlight,1,1%,100
+card0-eDP-1,backlight,200,80%,250
+intel_backlight,backlight,450,50%,900
+"""
+        res = self.eval_parse_js(raw, configured_device="card0-eDP-1")
+        self.assertTrue(res["available"])
+        self.assertEqual(res["device"], "card0-eDP-1")
+        self.assertEqual(res["percent"], 80)
+        self.assertEqual(res["current"], 200)
+        self.assertEqual(res["max"], 250)
+
+    def test_js_parse_multi_device_configured_device_missing(self):
+        """If configured device does not exist in output, mark available as false."""
+        raw = """acpi_video0,backlight,1,1%,100
+intel_backlight,backlight,450,50%,900
+"""
+        res = self.eval_parse_js(raw, configured_device="nonexistent_dev")
+        self.assertFalse(res["available"])
+
+    def test_js_parse_empty_and_whitespace(self):
+        """Empty or whitespace-only output must result in available = false."""
+        self.assertFalse(self.eval_parse_js("")["available"])
+        self.assertFalse(self.eval_parse_js("   \n\n  ")["available"])
+
+    def test_js_parse_malformed_csv(self):
+        """Malformed lines with invalid columns or numbers must fail safely."""
+        self.assertFalse(self.eval_parse_js("invalid,line")["available"])
+        self.assertFalse(self.eval_parse_js("dev,backlight,notanumber,50%,100")["available"])
+        self.assertFalse(self.eval_parse_js("dev,backlight,50,50%,notanumber")["available"])
+
+    def test_js_parse_zero_max(self):
+        """Max brightness 0 must result in available = false without crash."""
+        self.assertFalse(self.eval_parse_js("dev,backlight,0,0%,0")["available"])
 
 
 if __name__ == "__main__":

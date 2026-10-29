@@ -12,9 +12,16 @@ Singleton {
     // =========================================================================
     readonly property int percent: _percent
     readonly property bool available: _available
-    property string device: ""
+    property string device: Quickshell.env("GPS_BRIGHTNESS_DEVICE") || ""
     readonly property int currentBrightness: _currentBrightness
     readonly property int maxBrightness: _maxBrightness
+
+    onDeviceChanged: {
+        if (root.device !== root._detectedDevice) {
+            root._detectedDevice = root.device;
+            root.refresh();
+        }
+    }
 
     // =========================================================================
     // Internal State
@@ -24,6 +31,7 @@ Singleton {
     property int _currentBrightness: 0
     property int _maxBrightness: 0
     property bool _pendingRefresh: false
+    property string _detectedDevice: root.device
 
     // =========================================================================
     // Canonical Calculation Function
@@ -72,34 +80,86 @@ Singleton {
             root._available = false;
             return;
         }
-        const line = raw.trim().split("\n")[0];
-        if (!line) {
+        const lines = raw.trim().split("\n");
+        const candidates = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const parts = line.split(",");
+            // Expected CSV: device,class,current,percentage,max
+            if (parts.length >= 5) {
+                const dev = parts[0].trim();
+                const cls = parts[1].trim();
+                const cur = parseInt(parts[2], 10);
+                const max = parseInt(parts[4], 10);
+
+                if (!isNaN(cur) && !isNaN(max) && max > 0 && dev !== "") {
+                    candidates.push({
+                        dev: dev,
+                        cls: cls,
+                        cur: cur,
+                        max: max,
+                        pct: calcPercent(cur, max)
+                    });
+                }
+            }
+        }
+
+        if (candidates.length === 0) {
             root._available = false;
             return;
         }
-        const parts = line.split(",");
-        // Expected CSV: device,class,current,percentage,max
-        if (parts.length >= 5) {
-            const dev = parts[0].trim();
-            const cur = parseInt(parts[2], 10);
-            const max = parseInt(parts[4], 10);
 
-            if (isNaN(cur) || isNaN(max) || max <= 0) {
+        // Selection strategy:
+        // 1. If root.device is configured, match it
+        let chosen = null;
+        if (root.device && root.device !== "") {
+            for (let i = 0; i < candidates.length; i++) {
+                if (candidates[i].dev === root.device) {
+                    chosen = candidates[i];
+                    break;
+                }
+            }
+            if (!chosen) {
                 root._available = false;
                 return;
             }
-
-            if (root.device === "" && dev !== "") {
-                root.device = dev;
-            }
-
-            root._currentBrightness = cur;
-            root._maxBrightness = max;
-            root._percent = calcPercent(cur, max);
-            root._available = true;
-        } else {
-            root._available = false;
         }
+
+        // 2. Otherwise auto-select the best device:
+        //    a. backlight device that is not an acpi_video stub
+        //    b. any backlight device
+        //    c. first candidate
+        if (!chosen) {
+            for (let i = 0; i < candidates.length; i++) {
+                if (candidates[i].cls === "backlight" && candidates[i].dev.indexOf("acpi_video") !== 0) {
+                    chosen = candidates[i];
+                    break;
+                }
+            }
+        }
+        if (!chosen) {
+            for (let i = 0; i < candidates.length; i++) {
+                if (candidates[i].cls === "backlight") {
+                    chosen = candidates[i];
+                    break;
+                }
+            }
+        }
+        if (!chosen) {
+            chosen = candidates[0];
+        }
+
+        if (root.device === "" && chosen.dev !== "") {
+            root._detectedDevice = chosen.dev;
+            root.device = chosen.dev;
+        }
+
+        root._currentBrightness = chosen.cur;
+        root._maxBrightness = chosen.max;
+        root._percent = chosen.pct;
+        root._available = true;
     }
 
     // =========================================================================
@@ -109,7 +169,7 @@ Singleton {
         id: brightReadProc
         command: (root.device && root.device !== "")
             ? ["brightnessctl", "-d", root.device, "-m"]
-            : ["brightnessctl", "-c", "backlight", "-m"]
+            : ["brightnessctl", "-m"]
         running: true
 
         stdout: StdioCollector {

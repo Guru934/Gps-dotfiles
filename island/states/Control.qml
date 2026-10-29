@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import "../../config"
 
 Item {
     id: st
@@ -349,9 +350,9 @@ Item {
 
     function commitBrightness(ratio) {
         if (!brightAvailable) return
-        const pct = Math.max(5, Math.min(100, Math.round(ratio * 100)))
+        const pct = Math.max(1, Math.min(100, Math.round(ratio * 100)))
         fallbackBrightPct = pct
-        runCmd('brightnessctl -q set "$1"', [pct + "%"], 250)
+        Brightness.setPercent(pct)
     }
 
     function lockScreen() {
