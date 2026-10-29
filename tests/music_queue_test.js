@@ -16,7 +16,7 @@ const M = load(path.join(__dirname, "..", "components", "MusicQueue.js"));
 function track(overrides) {
     return Object.assign({
         kind: "track",
-        id: "jamendo-987654",
+        id: "track-987654",
         title: "Rain on Neon Glass",
         artist: "Velvet Circuit",
         album: "Midnight Transit",
@@ -24,9 +24,9 @@ function track(overrides) {
         license: "CC BY-SA",
         moods: ["Night Drive"],
         dur: 214,
-        streamUrl: "https://prod-1.storage.jamendo.com/?trackid=987654",
-        art: "https://usercontent.jamendo.com/cover.jpg",
-        sourceUrl: "https://www.jamendo.com/track/987654",
+        streamUrl: "https://media.example/track/987654.mp3",
+        art: "https://media.example/cover.jpg",
+        sourceUrl: "https://catalogue.example/track/987654",
         g: ["#0b1030", "#2a1b5e", "#0e4a6b"]
     }, overrides || {});
 }
@@ -62,7 +62,7 @@ check("track fields are normalized and station-only fields omitted", () => {
     assert.strictEqual(item.title, "Rain on Neon");
     assert.strictEqual(item.dur, 214);
     assert.strictEqual(item.votes, undefined);
-    assert.strictEqual(item.streamUrl, "https://prod-1.storage.jamendo.com/?trackid=987654");
+    assert.strictEqual(item.streamUrl, "https://media.example/track/987654.mp3");
     assert.deepStrictEqual(Array.from(item.g), ["#0b1030", "#2a1b5e", "#0e4a6b"]);
 });
 
@@ -103,7 +103,7 @@ check("local file URLs are accepted only for local library tracks", () => {
         streamUrl: "file:///home/rice/Music/../secret.mp3"
     })), null);
     assert.strictEqual(M.sanitizeItem(track({
-        id: "jamendo-987654",
+        id: "track-987654",
         streamUrl: "file:///home/rice/Music/Local.mp3"
     })), null);
 });
@@ -136,7 +136,7 @@ check("invalid gradients fall back instead of entering the UI", () => {
 check("lists are deduplicated and bounded", () => {
     const list = M.sanitizeList([track(), track(), station(), null], 2);
     assert.strictEqual(list.length, 2);
-    assert.strictEqual(list[0].id, "jamendo-987654");
+    assert.strictEqual(list[0].id, "track-987654");
     assert.strictEqual(list[1].id, "radio-3d5a6c9e-12b4-4f51-9a8c-7e2f0d1b6c33");
     assert.deepStrictEqual(Array.from(M.sanitizeList("nope")), []);
 });
@@ -161,10 +161,10 @@ check("QVariantList-style array-like payloads are accepted", () => {
 check("favorites toggle add and remove by id", () => {
     const first = M.toggleFavorite([], track());
     assert.strictEqual(first.length, 1);
-    assert.strictEqual(M.isFavorite(first, "jamendo-987654"), true);
+    assert.strictEqual(M.isFavorite(first, "track-987654"), true);
     const second = M.toggleFavorite(first, track());
     assert.strictEqual(second.length, 0);
-    assert.strictEqual(M.isFavorite(second, "jamendo-987654"), false);
+    assert.strictEqual(M.isFavorite(second, "track-987654"), false);
 });
 
 check("queue insertion appends or inserts after the current item", () => {
@@ -184,7 +184,7 @@ check("queue insertion appends or inserts after the current item", () => {
 check("removing queue items keeps the playing index consistent", () => {
     const a = M.sanitizeItem(track());
     const b = M.sanitizeItem(station());
-    const c = M.sanitizeItem(track({ id: "jamendo-2", title: "Second track" }));
+    const c = M.sanitizeItem(track({ id: "track-2", title: "Second track" }));
     let result = M.removeAt([a, b, c], 0, 1);
     assert.strictEqual(result.index, 0);
     assert.strictEqual(result.removedCurrent, false);
@@ -212,7 +212,7 @@ check("moving queue entries swaps them and tracks the current index", () => {
 check("shuffle is deterministic with an injected RNG", () => {
     const a = M.sanitizeItem(track());
     const b = M.sanitizeItem(station());
-    const c = M.sanitizeItem(track({ id: "jamendo-3", title: "Third" }));
+    const c = M.sanitizeItem(track({ id: "track-3", title: "Third" }));
     const values = [0, 0];
     const shuffled = M.shuffle([a, b, c], () => values.shift());
     assert.strictEqual(shuffled.length, 3);
@@ -271,6 +271,11 @@ check("missing saved fields use fallback values", () => {
     assert.strictEqual(state.muted, true);
     assert.strictEqual(state.shuffleOn, true);
     assert.strictEqual(state.repeatOn, true);
+});
+
+check("unknown saved music sources migrate to Radio Browser", () => {
+    const state = M.parseState(JSON.stringify({ source: "retired" }), { source: "radio" });
+    assert.strictEqual(state.source, "radio");
 });
 
 check("saved local folder paths preserve intentional whitespace", () => {

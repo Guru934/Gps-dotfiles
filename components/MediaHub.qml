@@ -6,7 +6,7 @@
 //  PRESENT  : navigation, selection, favorites, persistent watchlist /
 //             reading-list status and progress; Wallhaven search plus
 //             download/cache/apply and optional GPS theme sync; live AniList
-//             anime/manga catalogue; Jamendo and Radio Browser music search
+//             anime/manga catalogue; Radio Browser search and local music
 //             with a real Qt Multimedia player.
 //  FUTURE   : media launching, yt-dlp / FFmpeg downloads, optional anime
 //             hand-off and local library scanning. Remaining mock boundaries
@@ -168,7 +168,6 @@ Item {
 
     MediaHubMusic {
         id: musicBackend
-        onStatusFinished: (configured, configPath, message) => root.handleMusicStatus(configured, configPath, message)
         onSearchSucceeded: (payload, request) => root.handleMusicSearch(payload, request)
         onSearchFailed: (message, code, request) => root.handleMusicSearchFailure(message, code, request)
     }
@@ -184,7 +183,6 @@ Item {
     }
 
     Component.onCompleted: {
-        musicBackend.checkStatus()
         toolsBackend.checkStatus()
         MediaNowPlaying.localPlayer = hubPlayerAdapter
     }
@@ -218,6 +216,7 @@ Item {
     QtObject {
         id: localPlayerStateWriter
         function save() {
+            if (!root.localPlayerStateFileReady) return
             var item = root.nowPlaying
             if (!item || typeof item.id !== "string" || item.id.indexOf("local:") !== 0) {
                 localPlayerStateFile.setText('{"active":false}')
@@ -1077,7 +1076,6 @@ Item {
         var kinds = ["mood", "wallpaper"]
         if (cataloguePool("anime").length > 0) kinds.push("anime")
         if (cataloguePool("manga").length > 0) kinds.push("manga")
-        if (jamendoTracks.length > 0) kinds.push("track")
         var k = pickRandom(kinds)
         if (k === "mood") {
             var others = moods.filter(function (m) { return m.id !== moodId })
@@ -1094,10 +1092,6 @@ Item {
             var a = pickRandom(cataloguePool("anime"))
             if (!a) return
             surprisePick = { kind: "anime", id: a.id, title: a.title, sub: "Anime \u00b7 " + a.genres.join(", ") }
-        } else if (k === "track") {
-            var tk = pickRandom(jamendoTracks)
-            if (!tk) return
-            surprisePick = { kind: "track", id: tk.id, title: tk.title, sub: tk.artist + " \u00b7 " + tk.genre }
         } else {
             var g = pickRandom(cataloguePool("manga"))
             if (!g) return
@@ -1112,7 +1106,6 @@ Item {
         if (!s) return
         if (s.kind === "mood") exploreMood(s.id)
         else if (s.kind === "wallpaper") previewWallpaper(s.id)
-        else if (s.kind === "track") { var ti = findMusicItem(s.id); if (ti) playNow(ti, [ti]) }
         else openDetail(s.kind, s.id)
     }
 
@@ -1143,7 +1136,6 @@ Item {
         scan(mediaLibrary.filter(function (m) { return m.kind === "anime" }), "anime", function (a) { return (a.seasonLabel || a.year) + " \u00b7 " + a.genres.slice(0, 2).join(", ") })
         scan(mediaLibrary.filter(function (m) { return m.kind === "manga" }), "manga", function (m) { return m.type + " \u00b7 " + m.genres.slice(0, 2).join(", ") })
         scan(mediaList, "media", function (m) { return m.meta })
-        scan(jamendoTracks, "track", function (t) { return t.artist + " \u00b7 " + t.genre })
         scan(radioStations, "station", function (s) { return s.genre + " \u00b7 radio" })
         return out.slice(0, 7)
     }
@@ -1699,14 +1691,13 @@ Item {
     }
 
     // ================================================================
-    //  MUSIC — Jamendo + Radio Browser + Qt Multimedia playback
+    //  MUSIC — Radio Browser, local files + Qt Multimedia playback
     // ================================================================
     readonly property int pgMusic: 4
     readonly property int pgDownloads: 5
     readonly property int pgLibrary: 6
 
     readonly property var musicSources: [
-        { id: "jamendo", name: "Jamendo", sub: "Free Creative Commons music", icon: "music", accent: "#a78bfa" },
         { id: "radio", name: "Internet Radio", sub: "Endless stations via Radio Browser", icon: "cloud", accent: "#7bd0ff" },
         { id: "local", name: "Local files", sub: "Your own music folders", icon: "folder", accent: "#ddb8ff" }
     ]
@@ -1722,7 +1713,6 @@ Item {
 
     // Live catalogue results. Search results are not persisted; favorites and
     // the queue are, with full stream metadata so they survive later searches.
-    property var jamendoTracks: []
     property var radioStations: []
     property var localTracks: []
     property bool localLoaded: false
@@ -1734,11 +1724,6 @@ Item {
     property string localMusicDir: Quickshell.env("GPS_MUSIC_DIR")
         || (Quickshell.env("HOME") + "/Music")
     property var musicFavorites: []
-    property bool musicStatusChecked: false
-    property bool jamendoConfigured: false
-    property string jamendoConfigPath: ""
-    property string musicStatusMessage: ""
-    property bool jamendoLoaded: false
     property bool radioLoaded: false
     property bool musicLoading: false
     property string musicError: ""
@@ -1822,7 +1807,7 @@ Item {
         onTriggered: root.mprisTick = Date.now()
     }
 
-    property string musicSource: "jamendo"
+    property string musicSource: "radio"
     property string musicMood: ""
     property string musicView: "Discover"
     property string musicQuery: ""
@@ -1841,6 +1826,7 @@ Item {
     property bool pendingMixPlay: false
     property bool pendingMixShuffle: false
     property bool musicStateReady: false
+    property bool localPlayerStateFileReady: false
     readonly property var nowPlaying: (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null
     readonly property real currentDuration: audioPlayer.duration > 0
         ? audioPlayer.duration / 1000
@@ -1946,6 +1932,10 @@ Item {
         id: localPlayerStateFile
         path: MediaNowPlaying.localStatePath
         printErrors: false
+        Component.onCompleted: {
+            root.localPlayerStateFileReady = true
+            localPlayerStateWriter.save()
+        }
     }
 
     FileView {
@@ -1996,11 +1986,6 @@ Item {
         return info ? info.tag : ""
     }
     function musicSourceState(id) {
-        if (id === "jamendo") {
-            if (musicLoading && musicSource === "jamendo") return "SEARCHING"
-            if (musicError !== "" && musicSource === "jamendo") return "OFFLINE"
-            return jamendoConfigured ? "LIVE CATALOGUE" : "SETUP REQUIRED"
-        }
         if (id === "radio") {
             if (musicLoading && musicSource === "radio") return "SEARCHING"
             return musicError !== "" && musicSource === "radio" ? "OFFLINE" : (radioLoaded ? "LIVE DIRECTORY" : "READY")
@@ -2013,10 +1998,6 @@ Item {
         return "UNAVAILABLE"
     }
     function musicSourceTint(id) {
-        if (id === "jamendo") {
-            if (musicError !== "" && musicSource === "jamendo") return "#ffb4ab"
-            return jamendoConfigured ? "#86efac" : "#fde047"
-        }
         if (id === "radio") return musicError !== "" && musicSource === "radio" ? "#ffb4ab" : "#7bd0ff"
         return localError !== "" && musicSource === "local" ? "#ffb4ab" : (localLoaded ? "#ddb8ff" : "#948e9d")
     }
@@ -2088,25 +2069,14 @@ Item {
     }
     function scheduleMusicSearch() {
         if (page !== pgMusic || musicSource === "local") return
-        if (!musicStatusChecked) return
-        if (musicSource === "jamendo" && !jamendoConfigured) return
         if (musicView === "Favorites") return
         musicSearchTimer.restart()
     }
     function runMusicSearch() {
-        if (page !== pgMusic || musicSource === "local" || !musicStatusChecked) return
-        if (musicSource === "jamendo" && !jamendoConfigured) return
+        if (page !== pgMusic || musicSource !== "radio") return
         if (musicView === "Favorites") return
         var moodTag = musicTagForMood(musicMood)
-        var tag = musicSource === "radio" && radioGenre !== "All" ? radioGenre : moodTag
-        var order = "popularity_total"
-        if (musicSource === "radio") {
-            order = "clickcount"
-        } else if (musicView === "Trending") {
-            order = "popularity_week"
-        } else if (musicView === "New") {
-            order = "releasedate_desc"
-        }
+        var tag = radioGenre !== "All" ? radioGenre : moodTag
         musicSearchSeq++
         musicLoading = true
         musicError = ""
@@ -2117,7 +2087,7 @@ Item {
             query: musicQuery.trim(),
             tag: tag,
             country: radioCountry.trim(),
-            order: order,
+            order: "clickcount",
             mood: musicMood,
             limit: 40,
             offset: 0
@@ -2126,16 +2096,6 @@ Item {
             musicLoading = false
             musicError = "Could not start the music search."
             musicErrorCode = "invalid_request"
-        }
-    }
-    function handleMusicStatus(configured, path, message) {
-        musicStatusChecked = true
-        jamendoConfigured = configured
-        jamendoConfigPath = path
-        musicStatusMessage = message
-        if (page === pgMusic) {
-            if (musicSource === "jamendo" && !configured) return
-            scheduleMusicSearch()
         }
     }
     function handleMusicSearch(payload, request) {
@@ -2147,21 +2107,16 @@ Item {
                     incoming[m].moods = incoming[m].moods.concat([request.mood])
             }
         }
-        var firstLoad = request.source === "jamendo" ? !jamendoLoaded : !radioLoaded
-        if (request.source === "jamendo") {
-            jamendoTracks = incoming
-            jamendoLoaded = true
-        } else {
-            radioStations = incoming
-            radioLoaded = true
-        }
+        var firstLoad = !radioLoaded
+        radioStations = incoming
+        radioLoaded = true
         musicLoading = false
         musicError = ""
         musicErrorCode = ""
-        logActivity((request.source === "jamendo" ? "Jamendo: " : "Radio Browser: ") + incoming.length + " result(s)")
+        logActivity("Radio Browser: " + incoming.length + " result(s)")
         if (pendingMixPlay) {
             pendingMixPlay = false
-            var mix = request.source === "jamendo" ? filteredTracks() : filteredStations()
+            var mix = filteredStations()
             var shuffle = pendingMixShuffle
             pendingMixShuffle = false
             if (mix.length === 0)
@@ -2169,7 +2124,7 @@ Item {
             else
                 playAll(mix, shuffle)
         } else if (firstLoad && incoming.length > 0) {
-            notify((request.source === "jamendo" ? "Jamendo" : "Radio Browser") + " connected \u2014 " + incoming.length + " live result(s).", "ok")
+            notify("Radio Browser connected \u2014 " + incoming.length + " live result(s).", "ok")
         }
     }
     function handleMusicSearchFailure(message, code, request) {
@@ -2179,14 +2134,7 @@ Item {
         musicErrorCode = code
         pendingMixPlay = false
         pendingMixShuffle = false
-        if (code === "jamendo_unconfigured") {
-            jamendoConfigured = false
-            musicStatusMessage = message
-            musicError = ""
-            musicErrorCode = ""
-        } else {
-            notify("Music search failed: " + message, "warn")
-        }
+        notify("Music search failed: " + message, "warn")
         logActivity("Music search failed: " + code)
     }
     function defaultMusicState() {
@@ -2244,7 +2192,7 @@ Item {
         if (!ref) return null
         var clean = MusicQueue.sanitizeItem(ref)
         if (clean) return clean
-        var lists = [jamendoTracks, radioStations, localTracks, musicFavorites]
+        var lists = [radioStations, localTracks, musicFavorites]
         for (var i = 0; i < lists.length; i++) {
             var found = findIn(lists[i], ref.id)
             if (found) return MusicQueue.sanitizeItem(found)
@@ -2252,7 +2200,7 @@ Item {
         return null
     }
     function findMusicItem(id) {
-        var lists = [jamendoTracks, radioStations, localTracks, musicFavorites, queue]
+        var lists = [radioStations, localTracks, musicFavorites, queue]
         for (var i = 0; i < lists.length; i++) {
             var found = findIn(lists[i], id)
             if (found) return MusicQueue.sanitizeItem(found)
@@ -2265,7 +2213,7 @@ Item {
             ? musicFavorites.filter(function (it) {
                 return it.kind === "track" && (musicSource !== "local" || it.id.indexOf("local:") === 0)
             })
-            : (musicSource === "local" ? localTracks : jamendoTracks)
+            : localTracks
         for (var i = 0; i < list.length; i++) {
             var t = list[i]
             if (musicSource !== "local" && musicMood !== "" && t.moods.indexOf(musicMood) < 0) continue
@@ -2357,12 +2305,8 @@ Item {
             notify(localLoading ? "The local library is still scanning." : "No local tracks match the current search.", "info")
             return
         }
-        if (musicSource === "jamendo" && !jamendoConfigured) {
-            notify("Add a Jamendo client ID to load a live mix.", "warn")
-            return
-        }
         if (musicView === "Favorites") {
-            notify("No favorite " + (musicSource === "jamendo" ? "tracks" : "stations") + " yet.", "info")
+            notify("No favorite stations yet.", "info")
             return
         }
         pendingMixPlay = true
@@ -2471,7 +2415,7 @@ Item {
     }
     function exploreMusicMood(name) {
         musicMood = name
-        if (musicSource === "local") setMusicSource("jamendo")
+        if (musicSource === "local") setMusicSource("radio")
         page = pgMusic
         vibeOpen = false
     }
@@ -2479,7 +2423,7 @@ Item {
         var name = musicMoodFor(moodId)
         if (name === "") name = "Focus"
         musicMood = name
-        if (musicSource === "local") setMusicSource("jamendo")
+        if (musicSource === "local") setMusicSource("radio")
         playCurrentMusicList(false)
     }
     function openMusicSource(url) {
@@ -4125,14 +4069,12 @@ Item {
             readonly property real cw: mf.width - 48
             readonly property string vibeMood: root.musicMoodFor(root.moodId)
             readonly property string activeMood: root.musicMood
-            readonly property var trackList: root.filteredTracks()
             readonly property var stationList: root.filteredStations()
             readonly property var views: src === "radio" ? ["Popular", "Favorites"] : ["Discover", "Trending", "New", "Favorites"]
             readonly property int moodCols: cw >= 900 ? 6 : (cw >= 600 ? 3 : 2)
             readonly property real moodW: (cw - 12 * (moodCols - 1)) / moodCols
             readonly property int cols: Math.max(1, Math.floor((cw + 16) / 266))
             readonly property real cardW: (cw - 16 * (cols - 1)) / cols
-            readonly property var mixList: src === "jamendo" ? trackList : (src === "radio" ? stationList : [])
 
             Flickable {
                 id: mf
@@ -4154,7 +4096,7 @@ Item {
                         ColumnLayout {
                             spacing: 3
                             Lbl { text: "Music"; font.pixelSize: 26; font.weight: Font.Bold }
-                            Lbl { text: "Free streaming from Jamendo and endless internet radio."; dim: true; font.pixelSize: 13 }
+                            Lbl { text: "Radio Browser stations and music from your local library."; dim: true; font.pixelSize: 13 }
                         }
                         Item { Layout.fillWidth: true }
                         Btn { compact: true; icon: "list"; kind: root.queueOpen ? "primary" : "secondary"; accent: root.accent
@@ -4410,7 +4352,7 @@ Item {
                             delegate: Rectangle {
                                 id: sc2
                                 readonly property bool sel: root.musicSource === modelData.id
-                                width: (srcWrap.width - 24) / 3 < 220 ? srcWrap.width : (srcWrap.width - 24) / 3
+                                width: srcWrap.width < 460 ? srcWrap.width : (srcWrap.width - 12) / 2
                                 height: 84
                                 radius: 14
                                 color: sh.containsMouse ? pal.high : pal.cont
@@ -4435,9 +4377,8 @@ Item {
 
                     Card {
                         width: parent.width
-                        visible: (mp.src === "jamendo" && !root.jamendoConfigured)
-                            || root.musicError !== ""
-                        tint: root.musicError !== "" ? "#ffb4ab" : "#fde047"
+                        visible: mp.src === "radio" && root.musicError !== ""
+                        tint: "#ffb4ab"
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
@@ -4447,15 +4388,9 @@ Item {
                                 tint: root.musicError !== "" ? "#ffb4ab" : "#fde047"
                             }
                             Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
-                                  text: mp.src === "local"
-                                      ? root.localError
-                                      : (root.musicError !== ""
-                                          ? ("Search failed: " + root.musicError + (root.musicErrorCode !== "" ? " (" + root.musicErrorCode + ")" : ""))
-                                          : ("Jamendo needs a client ID. Set JAMENDO_CLIENT_ID or add music.jamendoClientId to "
-                                             + (root.jamendoConfigPath !== "" ? root.jamendoConfigPath : "~/.config/quickshell/rice-settings.json")
-                                             + ". Radio Browser remains available without an account."
-                                             + (root.musicStatusMessage !== "" ? " " + root.musicStatusMessage : ""))) }
-                            Btn { visible: mp.src !== "local" && root.musicError !== ""; compact: true; icon: "refresh"; label: "Retry"
+                                  text: "Search failed: " + root.musicError
+                                      + (root.musicErrorCode !== "" ? " (" + root.musicErrorCode + ")" : "") }
+                            Btn { visible: root.musicError !== ""; compact: true; icon: "refresh"; label: "Retry"
                                   onClicked: root.runMusicSearch() }
                         }
                     }
@@ -4469,7 +4404,7 @@ Item {
                             spacing: 12
                             Ico { name: "search"; size: 18; tint: root.accent }
                             Lbl { Layout.fillWidth: true; dim: true; font.pixelSize: 13
-                                  text: "Searching " + (mp.src === "radio" ? "Radio Browser" : "Jamendo") + " for live results\u2026" }
+                                  text: "Searching Radio Browser for live results\u2026" }
                         }
                     }
 
@@ -4539,7 +4474,7 @@ Item {
                                 Lbl { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 19; font.weight: Font.Bold
                                       text: mp.activeMood !== "" ? (mp.activeMood + " mix") : "Everything mix" }
                                 Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 12
-                                      text: (root.musicLoading ? "Loading" : mp.mixList.length + " live " + (mp.src === "radio" ? "station" : "track") + (mp.mixList.length === 1 ? "" : "s"))
+                                      text: (root.musicLoading ? "Loading" : mp.stationList.length + " live station" + (mp.stationList.length === 1 ? "" : "s"))
                                             + (mp.vibeMood !== "" ? " \u00b7 GPS vibe suggests " + mp.vibeMood : "") }
                             }
                             Btn { kind: "primary"; accent: root.accent; icon: "play"; label: "Play mix"; muted: root.musicLoading; onClicked: root.playCurrentMusicList(false) }
@@ -4656,7 +4591,7 @@ Item {
                         SearchField {
                             Layout.fillWidth: true
                             accent: root.accent
-                            placeholder: mp.src === "radio" ? "Search stations or genres" : "Search tracks, artists or albums"
+                            placeholder: "Search stations or genres"
                             text: root.musicQuery
                             onEdited: root.musicQuery = text
                             onSubmitted: root.runMusicSearch()
@@ -4693,66 +4628,7 @@ Item {
                             wrapMode: Text.WordWrap
                             faint: true
                             font.pixelSize: 11
-                            text: mp.src === "radio"
-                                ? "Live directory data from Radio Browser. Stream quality and availability depend on each station."
-                                : "Creative Commons tracks streamed from Jamendo. Artist and licence details come from the catalogue."
-                        }
-                    }
-
-                    // ---- Jamendo tracks
-                    Column {
-                        width: parent.width
-                        spacing: 6
-                        visible: mp.src === "jamendo"
-                        Lbl { mono: true; faint: true; font.pixelSize: 11
-                              text: (root.musicLoading ? "Searching Jamendo\u2026" : (mp.trackList.length + " live track" + (mp.trackList.length === 1 ? "" : "s")))
-                                    + (root.musicMood !== "" ? " \u00b7 " + root.musicMood : "") }
-                        Repeater {
-                            model: mp.trackList
-                            delegate: Rectangle {
-                                id: row
-                                readonly property bool cur: root.nowPlaying !== null && root.nowPlaying.id === modelData.id
-                                width: parent.width
-                                height: 58
-                                radius: 12
-                                color: rh2.containsMouse ? pal.high : (cur ? Qt.alpha(root.accent, 0.10) : pal.low)
-                                border.width: 1
-                                border.color: cur ? Qt.alpha(root.accent, 0.45) : pal.line
-                                Behavior on color { ColorAnimation { duration: 140 } }
-                                MouseArea { id: rh2; anchors.fill: parent; hoverEnabled: true; onDoubleClicked: root.playNow(modelData, mp.trackList) }
-                                RowLayout {
-                                    anchors { fill: parent; leftMargin: 12; rightMargin: 10 }
-                                    spacing: 12
-                                    Lbl { Layout.preferredWidth: 22; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 11
-                                          text: row.cur ? (root.playing ? "\u25B6" : "\u2016") : (index + 1); color: row.cur ? root.accent : pal.faint }
-                                    Art { Layout.preferredWidth: 40; Layout.preferredHeight: 40; radiusPx: 8; frameColor: row.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "music" }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-                                        Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: row.cur ? root.accent : pal.text }
-                                        Lbl { Layout.fillWidth: true; text: root.musicSub(modelData); elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
-                                    }
-                                    Tag { visible: mp.cw > 760 && modelData.genre !== ""; text: modelData.genre.toUpperCase(); px: 9 }
-                                    Tag { visible: mp.cw > 640; text: modelData.license; tint: "#86efac"; px: 9 }
-                                    Lbl { text: root.fmtTime(modelData.dur); mono: true; faint: true; font.pixelSize: 11; Layout.preferredWidth: 38; horizontalAlignment: Text.AlignRight }
-                                    IconBtn { visible: modelData.sourceUrl !== ""; box: 30; icon: "link"; tip: "Open on Jamendo"
-                                              onClicked: root.openMusicSource(modelData.sourceUrl) }
-                                    IconBtn { box: 30; icon: root.favorites[modelData.id] ? "heart" : "heartO"; active: !!root.favorites[modelData.id]; tip: "Favorite"
-                                              onClicked: root.toggleFavorite(modelData.id, modelData.title) }
-                                    IconBtn { box: 30; icon: "plus"; tip: "Add to queue"; onClicked: root.queueAdd(modelData, false) }
-                                    IconBtn { box: 30; icon: "chev"; tip: "Play next"; onClicked: root.queueAdd(modelData, true) }
-                                    IconBtn { box: 30; icon: "play"; tip: "Play"; tint: root.accent; onClicked: root.playNow(modelData, mp.trackList) }
-                                }
-                            }
-                        }
-                        Card {
-                            width: parent.width
-                            visible: mp.trackList.length === 0 && !root.musicLoading && root.musicError === "" && root.jamendoConfigured
-                            Lbl { font.pixelSize: 15; font.weight: Font.DemiBold; text: root.musicView === "Favorites" ? "No favorite tracks yet" : "No tracks match" }
-                            Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
-                                  text: root.musicView === "Favorites" ? "Heart a few live tracks to keep them in My Library and this view."
-                                                                        : "Try a shorter search, clear the mood, or press Enter to retry the catalogue." }
-                            Btn { label: "Clear mood & search"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.musicView = "Discover" } }
+                            text: "Live directory data from Radio Browser. Stream quality and availability depend on each station."
                         }
                     }
 

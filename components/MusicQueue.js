@@ -11,7 +11,7 @@ var MAX_URL = 2048;
 var ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 var HEX_RE = /^#[0-9a-fA-F]{6}$/;
 var FALLBACK_GRAD = ["#0b1030", "#2a1b5e", "#0e4a6b"];
-var SOURCES = ["jamendo", "radio", "local"];
+var SOURCES = ["radio", "local"];
 
 function isNumber(value) {
     return typeof value === "number" && isFinite(value);
@@ -278,7 +278,7 @@ function parseState(text, fallback) {
         : sanitizeList(base.queue, MAX_QUEUE);
     var source = typeof raw.source === "string" && SOURCES.indexOf(raw.source) >= 0
         ? raw.source
-        : (SOURCES.indexOf(base.source) >= 0 ? base.source : "jamendo");
+        : (SOURCES.indexOf(base.source) >= 0 ? base.source : "radio");
     var localMusicDir = typeof raw.localMusicDir === "string"
         ? cleanPath(raw.localMusicDir)
         : cleanPath(base.localMusicDir);

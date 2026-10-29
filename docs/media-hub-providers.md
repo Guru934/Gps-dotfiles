@@ -40,7 +40,7 @@ may be included.
 ```json
 {
   "kind": "track",
-  "id": "jamendo:123",
+  "id": "catalogue:123",
   "title": "Track title",
   "artist": "Artist",
   "album": "Album",
@@ -169,5 +169,5 @@ while adapting LRCLIB results for Hub, Dashboard, and Island consumers.
   `quickshell/media-hub-library.json`. The new helper does not migrate or alter
   that state.
 
-Existing Jamendo, Radio Browser, AniList, MangaReader, and Media Hub component
+Existing Radio Browser, AniList, MangaReader, and Media Hub component
 behavior is intentionally unchanged by this shared service layer.
