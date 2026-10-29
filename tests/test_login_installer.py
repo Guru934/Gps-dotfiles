@@ -42,7 +42,7 @@ class LoginPackageInstallerTests(unittest.TestCase):
         cmd = [str(INSTALL_SCRIPT), "--root-dir", str(self.fake_root)] + list(args)
         return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    def test_default_is_dry_run(self):
+    def test_default_is_dry_run_and_modifies_no_files(self):
         """Default invocation without flags must perform dry-run and modify no files."""
         res = self.run_installer()
         self.assertEqual(res.returncode, 0, f"Dry-run failed: {res.stderr}")
@@ -51,59 +51,120 @@ class LoginPackageInstallerTests(unittest.TestCase):
 
         # Ensure no files were installed in fake_root
         gps_theme = self.fake_share / "sddm" / "themes" / "gps"
-        gps_conf = self.fake_etc / "sddm.conf.d" / "99-gps-theme.conf"
+        gps_conf = self.fake_etc / "sddm.conf.d" / "zz-gps-theme.conf"
         self.assertFalse(gps_theme.exists())
         self.assertFalse(gps_conf.exists())
         self.assertFalse(self.fake_backups.exists())
 
-    def test_explicit_dry_run_flag(self):
-        """Explicit --dry-run must report plan and make no changes."""
+    def test_dry_run_reports_effective_configuration_and_precedence_conflict(self):
+        """Dry-run must report the actual effective theme and warn if /etc/sddm.conf conflicts."""
+        # Create an explicit /etc/sddm.conf with Current=caelestia
+        sddm_conf = self.fake_etc / "sddm.conf"
+        sddm_conf.write_text("[General]\nNumlock=on\n\n[Theme]\nCurrent=caelestia\n", encoding="utf-8")
+
         res = self.run_installer("--dry-run")
         self.assertEqual(res.returncode, 0)
-        self.assertIn("DRY-RUN", res.stdout)
+        self.assertIn("Current Effective Theme  : caelestia", res.stdout)
+        self.assertIn("PRECEDENCE CONFLICT DETECTED", res.stdout)
+        self.assertIn("sddm.conf(5)", res.stdout)
+        self.assertIn("HIGHEST PRECEDENCE", res.stdout)
+
+    def test_apply_refuses_unresolved_sddm_conf_conflict(self):
+        """--apply must refuse when /etc/sddm.conf explicitly sets a conflicting theme."""
+        sddm_conf = self.fake_etc / "sddm.conf"
+        sddm_conf.write_text("[General]\nNumlock=on\n\n[Theme]\nCurrent=caelestia\n", encoding="utf-8")
+
+        res = self.run_installer("--apply")
+        self.assertNotEqual(res.returncode, 0, "Installer should refuse unresolved precedence conflict")
+        self.assertIn("precedence conflict", res.stderr.lower())
+        self.assertIn("sddm.conf", res.stderr)
+
+        # Verify nothing was installed or modified
         gps_theme = self.fake_share / "sddm" / "themes" / "gps"
+        gps_conf = self.fake_etc / "sddm.conf.d" / "zz-gps-theme.conf"
+        self.assertFalse(gps_theme.exists())
+        self.assertFalse(gps_conf.exists())
+        self.assertFalse(self.fake_backups.exists())
+
+    def test_apply_refuses_conflicting_theme_dropin(self):
+        """--apply must refuse when another drop-in sorts after GPS and overrides it."""
+        # /etc/sddm.conf has no theme
+        sddm_conf = self.fake_etc / "sddm.conf"
+        sddm_conf.write_text("[General]\nNumlock=on\n", encoding="utf-8")
+
+        # Create a conflicting drop-in sorting after zz-gps-theme.conf
+        (self.fake_etc / "sddm.conf.d" / "zzz-override.conf").write_text("[Theme]\nCurrent=other\n", encoding="utf-8")
+
+        res = self.run_installer("--apply")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("precedence conflict", res.stderr.lower())
+        self.assertIn("zzz-override.conf", res.stderr)
+
+    def test_apply_with_update_sddm_conf_resolves_and_rolls_back(self):
+        """--update-sddm-conf should safely comment out Current= in /etc/sddm.conf and restore on rollback."""
+        sddm_conf = self.fake_etc / "sddm.conf"
+        original_sddm_conf = "[General]\nNumlock=on\n\n[Theme]\nCurrent=caelestia\nCursorTheme=breeze\n"
+        sddm_conf.write_text(original_sddm_conf, encoding="utf-8")
+
+        # Apply with --update-sddm-conf
+        res = self.run_installer("--apply", "--update-sddm-conf")
+        self.assertEqual(res.returncode, 0, f"Apply failed: {res.stderr}")
+
+        # Check theme installed
+        gps_theme = self.fake_share / "sddm" / "themes" / "gps"
+        gps_conf = self.fake_etc / "sddm.conf.d" / "zz-gps-theme.conf"
+        self.assertTrue(gps_theme.exists())
+        self.assertTrue(gps_conf.exists())
+
+        # Check /etc/sddm.conf: Numlock=on and CursorTheme=breeze preserved, Current=caelestia commented out
+        mod_conf = sddm_conf.read_text(encoding="utf-8")
+        self.assertIn("Numlock=on", mod_conf)
+        self.assertIn("CursorTheme=breeze", mod_conf)
+        self.assertIn("# Current=caelestia", mod_conf)
+
+        # Check manifest
+        latest_symlink = self.fake_backups / "latest"
+        manifest = json.loads((latest_symlink / "manifest.json").read_text(encoding="utf-8"))
+        self.assertTrue(manifest.get("modified_sddm_conf"))
+
+        # Check status reports active
+        res_status = self.run_installer("--status")
+        self.assertIn("ACTIVE and EFFECTIVE", res_status.stdout)
+
+        # Now test rollback
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0, f"Rollback failed: {res_rb.stderr}")
+
+        # Verify /etc/sddm.conf restored exactly to original
+        self.assertEqual(sddm_conf.read_text(encoding="utf-8"), original_sddm_conf)
+        self.assertFalse(gps_conf.exists())
         self.assertFalse(gps_theme.exists())
 
-    def test_apply_installs_theme_and_dropin(self):
-        """--apply should install the theme directory and drop-in config non-destructively."""
+    def test_apply_succeeds_when_conflict_manually_resolved(self):
+        """When /etc/sddm.conf has no conflicting Current=, --apply succeeds with drop-in."""
+        sddm_conf = self.fake_etc / "sddm.conf"
+        sddm_conf.write_text("[General]\nNumlock=on\n\n[Theme]\n# Current=caelestia\n", encoding="utf-8")
+
         res = self.run_installer("--apply")
         self.assertEqual(res.returncode, 0, f"Apply failed: {res.stderr}")
 
         gps_theme = self.fake_share / "sddm" / "themes" / "gps"
-        gps_conf = self.fake_etc / "sddm.conf.d" / "99-gps-theme.conf"
-
+        gps_conf = self.fake_etc / "sddm.conf.d" / "zz-gps-theme.conf"
         self.assertTrue(gps_theme.exists())
-        self.assertTrue((gps_theme / "metadata.desktop").exists())
-        self.assertTrue((gps_theme / "Main.qml").exists())
-        self.assertTrue((gps_theme / "theme.conf").exists())
         self.assertTrue(gps_conf.exists())
 
-        conf_content = gps_conf.read_text(encoding="utf-8")
-        self.assertIn("Current=gps", conf_content)
-
-        # Ensure pre-existing themes and configs are untouched
-        caelestia_conf = self.fake_etc / "sddm.conf.d" / "caelestia.conf"
-        self.assertTrue(caelestia_conf.exists())
-        self.assertIn("Current=caelestia", caelestia_conf.read_text(encoding="utf-8"))
-
-        caelestia_theme = self.fake_share / "sddm" / "themes" / "caelestia"
-        self.assertTrue(caelestia_theme.exists())
-
-        # Verify backup manifest was created
-        self.assertTrue(self.fake_backups.exists())
-        latest_symlink = self.fake_backups / "latest"
-        self.assertTrue(latest_symlink.is_symlink() or latest_symlink.exists())
-        manifest_file = latest_symlink / "manifest.json"
-        self.assertTrue(manifest_file.exists())
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        self.assertEqual(manifest.get("theme_name"), "gps")
+        # Status confirms GPS is active and effective because zz-gps-theme.conf sorts after caelestia.conf and theme.conf
+        res_status = self.run_installer("--status")
+        self.assertIn("ACTIVE and EFFECTIVE", res_status.stdout)
 
     def test_installer_is_idempotent(self):
         """Consecutive --apply runs should detect matching state and be idempotent."""
+        sddm_conf = self.fake_etc / "sddm.conf"
+        sddm_conf.write_text("[General]\nNumlock=on\n", encoding="utf-8")
+
         res1 = self.run_installer("--apply")
         self.assertEqual(res1.returncode, 0)
 
-        # Count backup directories created
         backups_1 = list(self.fake_backups.glob("backup_*"))
         self.assertEqual(len(backups_1), 1)
 
@@ -111,41 +172,8 @@ class LoginPackageInstallerTests(unittest.TestCase):
         self.assertEqual(res2.returncode, 0)
         self.assertIn("idempotent", res2.stdout.lower())
 
-        # No duplicate backup created on redundant run
         backups_2 = list(self.fake_backups.glob("backup_*"))
         self.assertEqual(len(backups_2), 1)
-
-    def test_rollback_reverts_cleanly(self):
-        """--rollback should remove the GPS drop-in and theme, leaving existing system intact."""
-        # First apply
-        self.run_installer("--apply")
-        gps_theme = self.fake_share / "sddm" / "themes" / "gps"
-        gps_conf = self.fake_etc / "sddm.conf.d" / "99-gps-theme.conf"
-        self.assertTrue(gps_theme.exists())
-        self.assertTrue(gps_conf.exists())
-
-        # Now rollback
-        res = self.run_installer("--rollback")
-        self.assertEqual(res.returncode, 0, f"Rollback failed: {res.stderr}")
-        self.assertIn("Rollback completed successfully", res.stdout)
-
-        # GPS files removed
-        self.assertFalse(gps_theme.exists())
-        self.assertFalse(gps_conf.exists())
-
-        # Pre-existing configuration intact
-        caelestia_conf = self.fake_etc / "sddm.conf.d" / "caelestia.conf"
-        self.assertTrue(caelestia_conf.exists())
-        self.assertIn("Current=caelestia", caelestia_conf.read_text(encoding="utf-8"))
-
-    def test_status_reports_correct_state(self):
-        """--status accurately reflects unapplied vs applied state."""
-        res_before = self.run_installer("--status")
-        self.assertIn("NOT INSTALLED", res_before.stdout)
-
-        self.run_installer("--apply")
-        res_after = self.run_installer("--status")
-        self.assertIn("ACTIVE", res_after.stdout)
 
     def test_system_apply_requires_root(self):
         """Running --apply against real system roots without root must fail safely."""

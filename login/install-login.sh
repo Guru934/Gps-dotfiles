@@ -3,6 +3,7 @@
 #
 # Safe, idempotent installer for the GPS SDDM login theme.
 # Defaults to dry-run mode. Requires explicit --apply to make changes.
+# Strictly respects SDDM configuration precedence rules (sddm.conf(5)).
 # Supports isolated testing via --root-dir or environment overrides.
 set -euo pipefail
 
@@ -17,8 +18,9 @@ BACKUP_BASE_DIR="${GPS_BACKUP_DIR:-${ROOT_DIR}/var/backups/gps-login}"
 
 MODE="dry-run" # Default mode is always dry-run
 ROLLBACK_TARGET=""
+UPDATE_SDDM_CONF=false
 THEME_NAME="gps"
-DROPIN_FILENAME="99-gps-theme.conf"
+DROPIN_FILENAME="zz-gps-theme.conf"
 
 print_usage() {
     cat << EOF
@@ -28,24 +30,32 @@ Install, inspect, or roll back the GPS SDDM login screen theme package.
 DEFAULTS TO DRY-RUN. No system changes are made unless --apply is passed.
 
 Modes:
-  --dry-run             Simulate installation and print actions (default)
-  --apply               Execute installation (requires elevated privileges for system paths)
-  --rollback [PATH]     Revert to previous login configuration using latest or specified backup
-  --status              Check current installation and theme configuration status
-  --help, -h            Show this help message
+  --dry-run               Simulate installation and print precedence analysis (default)
+  --apply                 Execute installation (requires elevated privileges for system paths)
+  --rollback [PATH]       Revert to previous login configuration using latest or specified backup
+  --status                Check current installation, effective theme, and precedence status
+  --help, -h              Show this help message
 
-Options for isolated testing / custom targets:
-  --root-dir PATH       Set filesystem root prefix (e.g. temporary directory for tests)
-  --etc-dir PATH        Override /etc destination directory
-  --share-dir PATH      Override /usr/share destination directory
-  --backup-dir PATH     Override /var/backups/gps-login directory
+Options:
+  --update-sddm-conf      Safely back up and update /etc/sddm.conf if an explicit theme setting
+                          in that file overrides drop-in configuration (reversible on rollback)
+  --root-dir PATH         Set filesystem root prefix (e.g. temporary directory for tests)
+  --etc-dir PATH          Override /etc destination directory
+  --share-dir PATH        Override /usr/share destination directory
+  --backup-dir PATH       Override /var/backups/gps-login directory
+
+SDDM Precedence Rules (sddm.conf(5)):
+  1. /usr/lib/sddm/sddm.conf.d/*.conf  (System defaults, lowest precedence)
+  2. /etc/sddm.conf.d/*.conf          (Local drop-ins, loaded in alphabetical order)
+  3. /etc/sddm.conf                   (Compatibility config, HIGHEST PRECEDENCE)
 
 Safety guarantees:
   - Default mode is dry-run.
-  - Never touches PAM or authentication files.
+  - Never touches PAM, authentication files, or systemd display-manager services.
   - Never deletes existing default or user themes.
-  - Uses drop-in configuration (/etc/sddm.conf.d/${DROPIN_FILENAME}) for non-destructive overrides.
-  - Creates timestamped backups with manifests before writing files.
+  - Detects precedence conflicts: --apply will refuse to run if /etc/sddm.conf or a
+    higher-sorting drop-in would shadow the theme, preventing ineffective installation.
+  - Creates timestamped backups with manifests before modifying any file.
 EOF
 }
 
@@ -70,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --status)
             MODE="status"
+            shift
+            ;;
+        --update-sddm-conf)
+            UPDATE_SDDM_CONF=true
             shift
             ;;
         --root-dir)
@@ -112,6 +126,7 @@ fi
 DEST_THEME_DIR="${SHARE_DIR}/sddm/themes/${THEME_NAME}"
 DEST_CONF_DIR="${ETC_DIR}/sddm.conf.d"
 DEST_CONF_FILE="${DEST_CONF_DIR}/${DROPIN_FILENAME}"
+MAIN_SDDM_CONF="${ETC_DIR}/sddm.conf"
 
 # Detect Display Manager
 detect_display_manager() {
@@ -123,46 +138,219 @@ detect_display_manager() {
 }
 
 DM="$(detect_display_manager)"
-if [[ "${DM}" != "sddm" ]]; then
-    echo "Warning: Supported display manager (SDDM) was not detected in target environment."
-fi
 
-# Status check
+# Parse [Theme] Current value from an INI file
+parse_theme_current() {
+    local file="$1"
+    [[ -f "${file}" ]] || return 0
+    awk '
+        BEGIN { in_theme = 0 }
+        /^[[:space:]]*\[Theme\]/ { in_theme = 1; next }
+        /^[[:space:]]*\[/ { in_theme = 0 }
+        in_theme && /^[[:space:]]*Current[[:space:]]*=/ {
+            line = $0
+            sub(/^[[:space:]]*Current[[:space:]]*=[[:space:]]*/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            print line
+            exit
+        }
+    ' "${file}"
+}
+
+# Comment out [Theme] Current in a file
+comment_out_theme_current() {
+    local src="$1"
+    local dest="$2"
+    awk '
+        BEGIN { in_theme = 0 }
+        /^[[:space:]]*\[Theme\]/ { in_theme = 1; print; next }
+        /^[[:space:]]*\[/ { in_theme = 0 }
+        in_theme && /^[[:space:]]*Current[[:space:]]*=/ {
+            print "# " $0 " # Disabled by gps-login installer to allow drop-in precedence"
+            next
+        }
+        { print }
+    ' "${src}" > "${dest}"
+}
+
+# Determine currently effective theme according to sddm.conf(5) rules
+# Returns: "theme_name|source_file"
+get_current_effective_theme() {
+    local effective_theme=""
+    local effective_source="(default)"
+
+    # 1. System directory: /usr/lib/sddm/sddm.conf.d/*.conf
+    if [[ -d "/usr/lib/sddm/sddm.conf.d" ]]; then
+        while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            local val
+            val="$(parse_theme_current "$f")"
+            if [[ -n "$val" ]]; then
+                effective_theme="$val"
+                effective_source="$f"
+            fi
+        done < <(find /usr/lib/sddm/sddm.conf.d -maxdepth 1 -name "*.conf" 2>/dev/null | LC_ALL=C sort)
+    fi
+
+    # 2. Local drop-in directory: ${DEST_CONF_DIR}/*.conf
+    if [[ -d "${DEST_CONF_DIR}" ]]; then
+        while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            local val
+            val="$(parse_theme_current "$f")"
+            if [[ -n "$val" ]]; then
+                effective_theme="$val"
+                effective_source="$f"
+            fi
+        done < <(find "${DEST_CONF_DIR}" -maxdepth 1 -name "*.conf" 2>/dev/null | LC_ALL=C sort)
+    fi
+
+    # 3. Main config file: ${MAIN_SDDM_CONF} (highest precedence)
+    if [[ -f "${MAIN_SDDM_CONF}" ]]; then
+        local val
+        val="$(parse_theme_current "${MAIN_SDDM_CONF}")"
+        if [[ -n "$val" ]]; then
+            effective_theme="$val"
+            effective_source="${MAIN_SDDM_CONF}"
+        fi
+    fi
+
+    echo "${effective_theme}|${effective_source}"
+}
+
+# Simulate effective theme if GPS drop-in is installed
+# Returns: "simulated_theme|source_file|has_conflict|conflict_reason"
+simulate_post_install_effective_theme() {
+    local sim_theme=""
+    local sim_source=""
+    local has_conflict=false
+    local conflict_reason=""
+
+    # 1. System directory
+    if [[ -d "/usr/lib/sddm/sddm.conf.d" ]]; then
+        while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            local val
+            val="$(parse_theme_current "$f")"
+            if [[ -n "$val" ]]; then
+                sim_theme="$val"
+                sim_source="$f"
+            fi
+        done < <(find /usr/lib/sddm/sddm.conf.d -maxdepth 1 -name "*.conf" 2>/dev/null | LC_ALL=C sort)
+    fi
+
+    # 2. Local drop-in directory merged with proposed drop-in in lexical order
+    local conf_names=()
+    if [[ -d "${DEST_CONF_DIR}" ]]; then
+        while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            conf_names+=("$(basename "$f")")
+        done < <(find "${DEST_CONF_DIR}" -maxdepth 1 -name "*.conf" 2>/dev/null)
+    fi
+
+    # Add our proposed drop-in if not present
+    local found_ours=false
+    for c in "${conf_names[@]:-}"; do
+        if [[ "$c" == "${DROPIN_FILENAME}" ]]; then
+            found_ours=true
+            break
+        fi
+    done
+    if [[ "${found_ours}" == false ]]; then
+        conf_names+=("${DROPIN_FILENAME}")
+    fi
+
+    # Sort list
+    local sorted_names
+    sorted_names="$(printf '%s\n' "${conf_names[@]}" | LC_ALL=C sort)"
+
+    while IFS= read -r cname; do
+        [[ -n "$cname" ]] || continue
+        if [[ "$cname" == "${DROPIN_FILENAME}" ]]; then
+            sim_theme="${THEME_NAME}"
+            sim_source="${DEST_CONF_DIR}/${DROPIN_FILENAME}"
+        else
+            local fpath="${DEST_CONF_DIR}/${cname}"
+            local val
+            val="$(parse_theme_current "$fpath")"
+            if [[ -n "$val" ]]; then
+                sim_theme="$val"
+                sim_source="$fpath"
+            fi
+        fi
+    done <<< "${sorted_names}"
+
+    # Check if a higher-sorting drop-in overrode our theme
+    if [[ "${sim_theme}" != "${THEME_NAME}" ]]; then
+        has_conflict=true
+        conflict_reason="Drop-in '${sim_source}' sorts after '${DROPIN_FILENAME}' and sets Current=${sim_theme}."
+    fi
+
+    # 3. Main configuration file: /etc/sddm.conf (highest precedence)
+    if [[ -f "${MAIN_SDDM_CONF}" ]]; then
+        local sddm_val
+        sddm_val="$(parse_theme_current "${MAIN_SDDM_CONF}")"
+        if [[ -n "$sddm_val" ]]; then
+            # If sddm.conf has Current=..., it overrides all drop-in files
+            if [[ "${UPDATE_SDDM_CONF}" == true ]]; then
+                # With --update-sddm-conf, this conflict will be resolved by commenting out
+                :
+            elif [[ "$sddm_val" != "${THEME_NAME}" ]]; then
+                sim_theme="$sddm_val"
+                sim_source="${MAIN_SDDM_CONF}"
+                has_conflict=true
+                conflict_reason="'${MAIN_SDDM_CONF}' explicitly sets Current=${sddm_val}, which overrides /etc/sddm.conf.d/ per sddm.conf(5)."
+            fi
+        fi
+    fi
+
+    echo "${sim_theme}|${sim_source}|${has_conflict}|${conflict_reason}"
+}
+
+# Status command
 do_status() {
-    echo "=== GPS Login Screen Status ==="
+    local cur_info
+    cur_info="$(get_current_effective_theme)"
+    local cur_theme="${cur_info%%|*}"
+    local cur_src="${cur_info##*|}"
+
+    echo "=== GPS Login Screen Status & SDDM Precedence ==="
     echo "Target Display Manager : ${DM}"
     echo "Theme Destination      : ${DEST_THEME_DIR}"
-    echo "Drop-in Configuration  : ${DEST_CONF_FILE}"
+    echo "Drop-in Destination    : ${DEST_CONF_FILE}"
+    echo "Main SDDM Config       : ${MAIN_SDDM_CONF}"
     echo "Backup Directory       : ${BACKUP_BASE_DIR}"
+    echo ""
+    echo "Current Effective Configuration (sddm.conf(5)): "
+    echo "  Theme  : ${cur_theme:-<none/default>}"
+    echo "  Source : ${cur_src}"
     echo ""
 
     local theme_installed=false
-    local dropin_active=false
+    local dropin_installed=false
 
     if [[ -d "${DEST_THEME_DIR}" && -f "${DEST_THEME_DIR}/metadata.desktop" ]]; then
         theme_installed=true
-        echo "[✓] GPS theme files are present in ${DEST_THEME_DIR}"
+        echo "[✓] GPS theme assets present in ${DEST_THEME_DIR}"
     else
-        echo "[ ] GPS theme files are NOT installed"
+        echo "[ ] GPS theme assets are NOT installed"
     fi
 
     if [[ -f "${DEST_CONF_FILE}" ]]; then
-        dropin_active=true
-        echo "[✓] GPS drop-in configuration is active (${DEST_CONF_FILE})"
-        echo "    Contents:"
-        sed 's/^/      /' "${DEST_CONF_FILE}"
+        dropin_installed=true
+        echo "[✓] GPS drop-in file is present (${DEST_CONF_FILE})"
     else
-        echo "[ ] GPS drop-in configuration is NOT active"
+        echo "[ ] GPS drop-in file is NOT present"
     fi
 
-    if [[ "${theme_installed}" == true && "${dropin_active}" == true ]]; then
-        echo ""
-        echo "Overall Status: GPS Login Theme is ACTIVE"
+    echo ""
+    if [[ "${cur_theme}" == "${THEME_NAME}" ]]; then
+        echo "Overall Status: GPS Login Theme is ACTIVE and EFFECTIVE (Source: ${cur_src})"
+    elif [[ "${theme_installed}" == true && "${dropin_installed}" == true ]]; then
+        echo "Overall Status: GPS Login Theme is INSTALLED but SHADOWED by higher-precedence config (${cur_src})"
     elif [[ "${theme_installed}" == true ]]; then
-        echo ""
-        echo "Overall Status: GPS Login Theme is INSTALLED but INACTIVE (drop-in missing)"
+        echo "Overall Status: GPS Login Theme is INSTALLED but INACTIVE (no active drop-in)"
     else
-        echo ""
         echo "Overall Status: GPS Login Theme is NOT INSTALLED (Package is unapplied)"
     fi
 
@@ -173,62 +361,79 @@ do_status() {
     fi
 }
 
-# Dry-run execution
+# Dry-run command
 do_dry_run() {
+    local cur_info
+    cur_info="$(get_current_effective_theme)"
+    local cur_theme="${cur_info%%|*}"
+    local cur_src="${cur_info##*|}"
+
+    local sim_info
+    sim_info="$(simulate_post_install_effective_theme)"
+    local sim_theme sim_src has_conflict conflict_reason
+    IFS='|' read -r sim_theme sim_src has_conflict conflict_reason <<< "${sim_info}"
+
     echo "=== GPS Login Screen Installation Plan (DRY-RUN) ==="
     echo "No files will be modified. Run with --apply to execute."
     echo ""
-    echo "Source package     : ${SOURCE_THEME_DIR}"
-    echo "Target display mgr : ${DM}"
-    echo "Theme destination  : ${DEST_THEME_DIR}"
-    echo "Drop-in config     : ${DEST_CONF_FILE}"
-    echo "Backup root        : ${BACKUP_BASE_DIR}"
+    echo "Target Display Manager : ${DM}"
+    echo "Source Package         : ${SOURCE_THEME_DIR}"
+    echo "Theme Destination      : ${DEST_THEME_DIR}"
+    echo "Drop-in Destination    : ${DEST_CONF_FILE}"
+    echo "Backup Root            : ${BACKUP_BASE_DIR}"
+    echo ""
+    echo "Configuration Precedence Evaluation (sddm.conf(5)):"
+    echo "  Current Effective Theme  : ${cur_theme:-<default>} (determined by ${cur_src})"
+    echo "  Simulated Post-Install   : ${sim_theme} (determined by ${sim_src})"
     echo ""
 
-    # Check if already installed and matching
-    local already_installed=false
-    if [[ -d "${DEST_THEME_DIR}" && -f "${DEST_CONF_FILE}" ]]; then
-        if diff -rq "${SOURCE_THEME_DIR}" "${DEST_THEME_DIR}" >/dev/null 2>&1; then
-            if grep -q "Current=${THEME_NAME}" "${DEST_CONF_FILE}" 2>/dev/null; then
-                already_installed=true
-            fi
-        fi
-    fi
-
-    if [[ "${already_installed}" == true ]]; then
-        echo "Status: Theme and drop-in configuration are already up-to-date (Idempotent)."
-        echo "Action: No actions needed."
-        return 0
-    fi
-
-    echo "Planned Actions:"
-    if [[ -d "${DEST_THEME_DIR}" || -f "${DEST_CONF_FILE}" ]]; then
-        echo "  1. Create timestamped backup under ${BACKUP_BASE_DIR}/backup-<timestamp>/"
-        [[ -d "${DEST_THEME_DIR}" ]] && echo "     - Back up existing ${DEST_THEME_DIR}"
-        [[ -f "${DEST_CONF_FILE}" ]] && echo "     - Back up existing ${DEST_CONF_FILE}"
+    if [[ "${has_conflict}" == "true" ]]; then
+        echo "[!] PRECEDENCE CONFLICT DETECTED:"
+        echo "    ${conflict_reason}"
+        echo ""
+        echo "    SDDM documented load order: configuration directories are read first,"
+        echo "    followed by /etc/sddm.conf with the latter having HIGHEST PRECEDENCE."
+        echo "    Therefore, installing '${DEST_CONF_FILE}' alone will NOT activate GPS."
+        echo ""
+        echo "    Resolution options:"
+        echo "      1. Manual: Comment out or remove 'Current=' in '${MAIN_SDDM_CONF}'."
+        echo "      2. Automated: Run with '--update-sddm-conf' to create a reversible backup and"
+        echo "         comment out the conflicting setting in '${MAIN_SDDM_CONF}' automatically:"
+        echo "         sudo $0 --apply --update-sddm-conf"
+        echo ""
+        echo "    NOTE: By default, '--apply' will refuse to proceed while an unresolved conflict exists."
     else
-        echo "  1. Record clean installation manifest under ${BACKUP_BASE_DIR}/backup-<timestamp>/"
+        echo "[✓] Precedence Check Passed:"
+        echo "    Drop-in '${DROPIN_FILENAME}' will successfully govern the active theme."
     fi
 
-    echo "  2. Create directory: ${SHARE_DIR}/sddm/themes"
-    echo "  3. Copy theme package to: ${DEST_THEME_DIR}"
-    echo "  4. Create directory: ${DEST_CONF_DIR}"
-    echo "  5. Write drop-in configuration: ${DEST_CONF_FILE}"
-    echo "     ---"
-    echo "     [Theme]"
-    echo "     Current=${THEME_NAME}"
-    echo "     ---"
-    echo "  6. Create/update symlink: ${BACKUP_BASE_DIR}/latest"
+    echo ""
+    echo "Planned Actions:"
+    local step=1
+    echo "  ${step}. Record timestamped backup manifest under ${BACKUP_BASE_DIR}/backup-<timestamp>/"
+    ((step++))
+
+    if [[ "${has_conflict}" == "true" && "${UPDATE_SDDM_CONF}" == true ]]; then
+        echo "  ${step}. Back up and update '${MAIN_SDDM_CONF}': comment out 'Current=${cur_theme}'"
+        ((step++))
+    fi
+
+    echo "  ${step}. Install theme assets to '${DEST_THEME_DIR}'"
+    ((step++))
+    echo "  ${step}. Create drop-in configuration '${DEST_CONF_FILE}' with '[Theme] Current=${THEME_NAME}'"
+    ((step++))
+    echo "  ${step}. Update '${BACKUP_BASE_DIR}/latest' symlink"
+
     echo ""
     echo "Safety check:"
     echo "  - PAM configuration: UNTOUCHED"
     echo "  - Existing themes (/usr/share/sddm/themes/caelestia, etc.): UNTOUCHED"
-    echo "  - Main /etc/sddm.conf: UNTOUCHED"
+    echo "  - Display manager services: UNTOUCHED"
     echo ""
     echo "DRY-RUN COMPLETE: 0 changes made."
 }
 
-# Apply installation
+# Apply command
 do_apply() {
     # Check permissions if targeting real system paths
     if [[ -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ]]; then
@@ -239,20 +444,50 @@ do_apply() {
         fi
     fi
 
+    # Precedence analysis before making any changes
+    local sim_info
+    sim_info="$(simulate_post_install_effective_theme)"
+    local sim_theme sim_src has_conflict conflict_reason
+    IFS='|' read -r sim_theme sim_src has_conflict conflict_reason <<< "${sim_info}"
+
+    if [[ "${has_conflict}" == "true" ]]; then
+        echo "Error: Cannot apply GPS login theme due to an unresolved SDDM precedence conflict." >&2
+        echo "" >&2
+        echo "Conflict Analysis:" >&2
+        echo "  ${conflict_reason}" >&2
+        echo "" >&2
+        echo "Explanation:" >&2
+        echo "  Per sddm.conf(5), /etc/sddm.conf overrides all files in /etc/sddm.conf.d/." >&2
+        echo "  Writing drop-in '${DROPIN_FILENAME}' would be ineffective because '${sim_src}'" >&2
+        echo "  takes precedence and would keep theme '${sim_theme}' active." >&2
+        echo "" >&2
+        echo "How to resolve:" >&2
+        echo "  Option A (Manual prerequisite):" >&2
+        echo "    Edit '${MAIN_SDDM_CONF}' and comment out or remove 'Current=' under [Theme]" >&2
+        echo "    so that drop-in configurations can govern the active theme." >&2
+        echo "" >&2
+        echo "  Option B (Reversible automated resolution):" >&2
+        echo "    Run with '--update-sddm-conf' to allow the installer to back up '${MAIN_SDDM_CONF}'" >&2
+        echo "    and comment out 'Current=' reversibly (fully restored on rollback):" >&2
+        echo "    sudo $0 --apply --update-sddm-conf" >&2
+        exit 1
+    fi
+
     echo "=== Applying GPS Login Screen Theme ==="
 
-    # Check if already up-to-date (Idempotent check)
-    if [[ -d "${DEST_THEME_DIR}" && -f "${DEST_CONF_FILE}" ]]; then
+    # Check if already installed and up-to-date (Idempotent check)
+    local cur_info
+    cur_info="$(get_current_effective_theme)"
+    local cur_theme="${cur_info%%|*}"
+    if [[ "${cur_theme}" == "${THEME_NAME}" && -d "${DEST_THEME_DIR}" && -f "${DEST_CONF_FILE}" ]]; then
         if diff -rq "${SOURCE_THEME_DIR}" "${DEST_THEME_DIR}" >/dev/null 2>&1; then
-            if grep -q "Current=${THEME_NAME}" "${DEST_CONF_FILE}" 2>/dev/null; then
-                echo "Theme files and drop-in configuration are already installed and identical."
-                echo "Installation is idempotent: no changes required."
-                return 0
-            fi
+            echo "Theme files and drop-in configuration are already installed, identical, and effective."
+            echo "Installation is idempotent: no changes required."
+            return 0
         fi
     fi
 
-    # Create backup directory
+    # Create timestamped backup directory
     local timestamp
     timestamp="$(date +%Y%m%d_%H%M%S)"
     local backup_dir="${BACKUP_BASE_DIR}/backup_${timestamp}"
@@ -260,6 +495,7 @@ do_apply() {
 
     local had_theme=false
     local had_conf=false
+    local modified_sddm_conf=false
 
     if [[ -d "${DEST_THEME_DIR}" ]]; then
         had_theme=true
@@ -273,6 +509,20 @@ do_apply() {
         cp -a "${DEST_CONF_FILE}" "${backup_dir}/${DROPIN_FILENAME}"
     fi
 
+    # Handle /etc/sddm.conf if --update-sddm-conf was requested and needed
+    if [[ "${UPDATE_SDDM_CONF}" == true && -f "${MAIN_SDDM_CONF}" ]]; then
+        local sddm_curr
+        sddm_curr="$(parse_theme_current "${MAIN_SDDM_CONF}")"
+        if [[ -n "$sddm_curr" && "$sddm_curr" != "${THEME_NAME}" ]]; then
+            modified_sddm_conf=true
+            echo "Backing up ${MAIN_SDDM_CONF} to ${backup_dir}/sddm.conf.orig..."
+            cp -a "${MAIN_SDDM_CONF}" "${backup_dir}/sddm.conf.orig"
+            echo "Updating ${MAIN_SDDM_CONF}: commenting out 'Current=${sddm_curr}' under [Theme]..."
+            comment_out_theme_current "${MAIN_SDDM_CONF}" "${MAIN_SDDM_CONF}.tmp"
+            mv "${MAIN_SDDM_CONF}.tmp" "${MAIN_SDDM_CONF}"
+        fi
+    fi
+
     # Write manifest
     cat << EOF > "${backup_dir}/manifest.json"
 {
@@ -281,7 +531,8 @@ do_apply() {
   "dest_theme_dir": "${DEST_THEME_DIR}",
   "dest_conf_file": "${DEST_CONF_FILE}",
   "had_preexisting_theme": ${had_theme},
-  "had_preexisting_conf": ${had_conf}
+  "had_preexisting_conf": ${had_conf},
+  "modified_sddm_conf": ${modified_sddm_conf}
 }
 EOF
 
@@ -305,10 +556,11 @@ Current=${THEME_NAME}
 EOF
 
     echo "Installation completed successfully."
+    echo "Effective Theme: ${THEME_NAME}"
     echo "Backup saved at: ${backup_dir}"
 }
 
-# Rollback installation
+# Rollback command
 do_rollback() {
     # Check permissions if targeting real system paths
     if [[ -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ]]; then
@@ -332,12 +584,18 @@ do_rollback() {
 
     if [[ -n "${backup_dir}" && -f "${backup_dir}/manifest.json" ]]; then
         echo "Using backup manifest from: ${backup_dir}"
-        local had_theme
-        local had_conf
+        local had_theme had_conf mod_sddm
         had_theme="$(grep '"had_preexisting_theme":' "${backup_dir}/manifest.json" | grep -o 'true\|false')"
         had_conf="$(grep '"had_preexisting_conf":' "${backup_dir}/manifest.json" | grep -o 'true\|false')"
+        mod_sddm="$(grep '"modified_sddm_conf":' "${backup_dir}/manifest.json" | grep -o 'true\|false')"
 
-        # Restore or remove configuration drop-in
+        # 1. Restore /etc/sddm.conf if it was modified
+        if [[ "${mod_sddm}" == "true" && -f "${backup_dir}/sddm.conf.orig" ]]; then
+            echo "Restoring ${MAIN_SDDM_CONF} from ${backup_dir}/sddm.conf.orig..."
+            cp -a "${backup_dir}/sddm.conf.orig" "${MAIN_SDDM_CONF}"
+        fi
+
+        # 2. Restore or remove configuration drop-in
         if [[ "${had_conf}" == "true" && -f "${backup_dir}/${DROPIN_FILENAME}" ]]; then
             echo "Restoring previous drop-in configuration..."
             cp -a "${backup_dir}/${DROPIN_FILENAME}" "${DEST_CONF_FILE}"
@@ -346,7 +604,10 @@ do_rollback() {
             rm -f "${DEST_CONF_FILE}"
         fi
 
-        # Restore or remove theme directory
+        # Also clean up legacy 99-gps-theme.conf if present
+        rm -f "${DEST_CONF_DIR}/99-gps-theme.conf"
+
+        # 3. Restore or remove theme directory
         if [[ "${had_theme}" == "true" && -d "${backup_dir}/theme_backup" ]]; then
             echo "Restoring previous theme files..."
             rm -rf "${DEST_THEME_DIR}"
@@ -359,14 +620,9 @@ do_rollback() {
         echo "Rollback completed successfully using ${backup_dir}."
     else
         echo "No backup manifest found. Performing safe direct cleanup of GPS files..."
-        if [[ -f "${DEST_CONF_FILE}" ]]; then
-            echo "Removing ${DEST_CONF_FILE}..."
-            rm -f "${DEST_CONF_FILE}"
-        fi
-        if [[ -d "${DEST_THEME_DIR}" ]]; then
-            echo "Removing ${DEST_THEME_DIR}..."
-            rm -rf "${DEST_THEME_DIR}"
-        fi
+        rm -f "${DEST_CONF_FILE}"
+        rm -f "${DEST_CONF_DIR}/99-gps-theme.conf"
+        rm -rf "${DEST_THEME_DIR}"
         echo "Direct cleanup completed. Existing system themes remain active."
     fi
 }
