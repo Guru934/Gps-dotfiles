@@ -51,6 +51,9 @@ Scope {
     readonly property var durations: islandSettings.durations
     property bool persistentMusicPill: islandSettings.persistentMusicPill
     onPersistentMusicPillChanged: root.updateVisibility()
+    property bool showWorkspaceName: islandSettings.showWorkspaceName
+    property int workspaceTransientMs: islandSettings.workspaceTransientMs
+    property var workspaceNames: islandSettings.workspaceNames
     property int hoverGraceMs: islandSettings.hoverDelay
     property int hoverZoneWidth: islandSettings.hoverZoneWidth
     property int hoverZoneHeight: islandSettings.hoverZoneHeight
@@ -58,6 +61,9 @@ Scope {
 
     onIslandSettingsChanged: {
         root.persistentMusicPill = islandSettings.persistentMusicPill
+        root.showWorkspaceName = islandSettings.showWorkspaceName
+        root.workspaceTransientMs = islandSettings.workspaceTransientMs
+        root.workspaceNames = islandSettings.workspaceNames
         root.hoverGraceMs = islandSettings.hoverDelay
         root.hoverZoneWidth = islandSettings.hoverZoneWidth
         root.hoverZoneHeight = islandSettings.hoverZoneHeight
@@ -124,22 +130,106 @@ Scope {
     readonly property var clock: SystemClock { precision: SystemClock.Minutes }
     property string timeText: Qt.formatTime(clock.date, "hh:mm")
     property int wsId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 0
+    property int lastWsId: wsId > 0 ? wsId : 1
+    property int wsDirection: 0
     onWsIdChanged: {
-        if (ready) {
-            root.postEvent("idle", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
+        if (wsId > 0) {
+            if (lastWsId > 0 && wsId !== lastWsId) {
+                root.wsDirection = wsId > lastWsId ? 1 : -1
+            }
+            lastWsId = wsId
+            if (ready) {
+                root.postEvent("workspace", IslandVisibility.PRIORITY.TRANSIENT, root.workspaceTransientMs)
+            }
         }
         root.updateVisibility()
     }
     Connections {
         target: Hyprland
         function onActiveToplevelChanged() { root.updateVisibility() }
-        function onFocusedWorkspaceChanged() { root.updateVisibility() }
+        function onFocusedWorkspaceChanged() {
+            if (wsRulesProc && !wsRulesProc.running) wsRulesProc.running = true
+            root.updateVisibility()
+        }
+        function onRawEvent(event) {
+            if (event && (event.name === "createworkspace" || event.name === "destroyworkspace" || event.name === "configreloaded")) {
+                if (wsRulesProc && !wsRulesProc.running) wsRulesProc.running = true
+            }
+        }
     }
     Connections {
         target: Hyprland.focusedWorkspace
         function onHasFullscreenChanged() { root.updateVisibility() }
+        function onNameChanged() { root.updateVisibility() }
     }
     property var wsList: Hyprland.workspaces.values.map(w => w.id).filter(i => i > 0).sort((a, b) => a - b)
+    property var allWorkspaces: {
+        let maxId = 5
+        if (wsList && wsList.length > 0) {
+            for (let i = 0; i < wsList.length; i++) {
+                if (wsList[i] > maxId) maxId = wsList[i]
+            }
+        }
+        if (wsId > maxId) maxId = wsId
+        let list = []
+        for (let i = 1; i <= maxId; i++) {
+            list.push(i)
+        }
+        return list
+    }
+    property var hyprlandWorkspaceRules: ({})
+    Process {
+        id: wsRulesProc
+        running: true
+        command: ["hyprctl", "-j", "workspacerules"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const parsed = JSON.parse(text)
+                    const map = {}
+                    if (Array.isArray(parsed)) {
+                        for (let i = 0; i < parsed.length; i++) {
+                            const r = parsed[i]
+                            if (r && r.workspaceString && r.defaultName) {
+                                map[r.workspaceString] = r.defaultName
+                            }
+                        }
+                    }
+                    root.hyprlandWorkspaceRules = map
+                } catch (e) {}
+            }
+        }
+    }
+    function getHyprlandWorkspaceName(id) {
+        if (!id) return ""
+        if (Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.id === id && Hyprland.focusedWorkspace.name) {
+            if (Hyprland.focusedWorkspace.name !== "" + id) {
+                return Hyprland.focusedWorkspace.name
+            }
+        }
+        if (Hyprland.workspaces && Hyprland.workspaces.values) {
+            for (let i = 0; i < Hyprland.workspaces.values.length; i++) {
+                const w = Hyprland.workspaces.values[i]
+                if (w.id === id && w.name && w.name !== "" + id) {
+                    return w.name
+                }
+            }
+        }
+        if (root.hyprlandWorkspaceRules && root.hyprlandWorkspaceRules["" + id]) {
+            return root.hyprlandWorkspaceRules["" + id]
+        }
+        return ""
+    }
+    function getWorkspaceLabel(id) {
+        const hyprName = getHyprlandWorkspaceName(id)
+        return IslandVisibility.formatWorkspaceLabel(
+            id,
+            hyprName,
+            root.workspaceNames,
+            root.showWorkspaceName
+        )
+    }
+    property string currentWsLabel: getWorkspaceLabel(wsId)
     readonly property bool isFullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen)
     property int temp: 0
 
@@ -267,7 +357,7 @@ Scope {
     property double focusDeadlineMs: 0
 
     // ───────────── state registry (each state file registers its size here) ─────────────
-    readonly property var stateFiles: ["Idle", "Music", "Charge", "Clip", "Osd", "Alert", "Notify", "Focus", "Dnd", "Launcher", "Privacy", "Control","FaceLock","Priority"]
+    readonly property var stateFiles: ["Idle", "Music", "Charge", "Clip", "Osd", "Alert", "Notify", "Focus", "Dnd", "Launcher", "Privacy", "Control", "FaceLock", "Priority", "Workspace"]
     property var registry: ({})
     function register(key, item) { const r = Object.assign({}, registry); r[key] = item; registry = r }
     readonly property var cur: registry[mode] || null
@@ -620,6 +710,9 @@ Scope {
             hoverLeaveExpiry: root.hoverLeaveExpiry,
             settings: {
                 persistentMusicPill: root.persistentMusicPill,
+                showWorkspaceName: root.showWorkspaceName,
+                workspaceTransientMs: root.workspaceTransientMs,
+                workspaceNames: root.workspaceNames,
                 hoverDelay: root.hoverGraceMs,
                 hoverZoneWidth: root.hoverZoneWidth,
                 hoverZoneHeight: root.hoverZoneHeight,
@@ -816,29 +909,29 @@ Scope {
     // focus preview:           qs -p <path> ipc call island debug focus
     IpcHandler {
         target: "island"
-        function dnd(state: string): void { root.setDnd(state === "toggle" ? !root.dnd : state === "on") }
-        function launcher(state: string): void { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
-        function control(action: string): void { root.setControl(action) }
-        function show(): void {
+        function dnd(state: string) { root.setDnd(state === "toggle" ? !root.dnd : state === "on") }
+        function launcher(state: string) { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
+        function control(action: string) { root.setControl(action) }
+        function show() {
             root.manualHide = false
             root.manualShow = true
             root.openControl()
             root.updateVisibility()
         }
-        function hide(): void {
+        function hide() {
             root.manualShow = false
             root.manualHide = true
             root.closeControl()
             root.updateVisibility()
         }
-        function pin(): void {
+        function pin() {
             root.manualHide = false
             root.manualShow = false
             root.isPinned = true
             root.openControl()
             root.updateVisibility()
         }
-        function unpin(): void {
+        function unpin() {
             root.isPinned = false
             root.manualShow = false
             root.closeControl()
@@ -847,17 +940,17 @@ Scope {
         function status(): string {
             return IslandVisibility.formatStatus(root.currentMode, root.currentReason, !root.isResting, root.isPinned)
         }
-        function clear(): void { root.dismissAllNotifs() }
-        function debug(mode: string): void { root.debugMode = mode }
-        function mediaHub(action: string): void { root.openMediaHub() }
-        function toolbox(action: string): void { root.openToolbox() }
-        function focusStart(workSeconds: int, breakSeconds: int, sessionCount: int, title: string): void {
+        function clear() { root.dismissAllNotifs() }
+        function debug(mode: string) { root.debugMode = mode }
+        function mediaHub(action: string) { root.openMediaHub() }
+        function toolbox(action: string) { root.openToolbox() }
+        function focusStart(workSeconds: int, breakSeconds: int, sessionCount: int, title: string) {
             root.startFocus(workSeconds, breakSeconds, sessionCount, title)
         }
-        function focusPause(): void { root.pauseFocus() }
-        function focusResume(): void { root.resumeFocus() }
-        function focusSkip(): void { root.skipFocus() }
-        function focusStop(): void { root.stopFocus() }
+        function focusPause() { root.pauseFocus() }
+        function focusResume() { root.resumeFocus() }
+        function focusSkip() { root.skipFocus() }
+        function focusStop() { root.stopFocus() }
         function focusState(): string {
             return JSON.stringify({
                 available: true,
@@ -873,21 +966,21 @@ Scope {
                 title: root.focusTitle
             })
         }
-        function osd(kind: string): void {
+        function osd(kind: string) {
             if (kind === "bright") Brightness.refresh()
             root.pokeOsd(kind)
         }
-        function alert(action: string): void {
+        function alert(action: string) {
             if (["expand", "toggle", "jump", "dismiss"].indexOf(action) < 0) return
             if (action === "expand") root.alertExpanded = root.alerts.length > 0
             else if (action === "toggle") root.alertExpanded = root.alerts.length > 0 && !root.alertExpanded
             else if (action === "jump" && root.alerts.length > 0) root.jump(root.alerts[0])
             else if (action === "dismiss" && root.alerts.length > 0) root.removeAlert(root.alerts[0].id)
         }
-        function privacy(action: string): void {
+        function privacy(action: string) {
             if (["toggle", "expand", "off"].indexOf(action) >= 0) root.setPrivacy(action)
         }
-        function clip(): void {
+        function clip() {
             root.clipHistoryOn = !root.clipHistoryOn
             if (root.clipHistoryOn) {
                 root.holdClip()
@@ -896,7 +989,7 @@ Scope {
                 if (root.debugMode === "clip") root.debugMode = ""
             }
         }
-        function clipboard(action: string): void {
+        function clipboard(action: string) {
             if (action === "close" || action === "off") {
                 root.clipHistoryOn = false
                 root.clipOn = false
@@ -975,8 +1068,9 @@ Scope {
         return true
     }
     function validAsk(o) {
+        const curNow = Date.now() / 1000
         return o && o.type === "ask" && typeof o.id === "string" && o.id !== ""
-            && typeof o.ts === "number" && o.ts <= now + 60 && now - o.ts <= expireSeconds
+            && typeof o.ts === "number" && o.ts <= curNow + 60 && curNow - o.ts <= expireSeconds
     }
     function clearMatches(a, o) {
         const idMatch = typeof o.id === "string" && o.id !== "" && a.id === o.id

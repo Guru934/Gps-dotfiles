@@ -853,6 +853,213 @@ check("simulated lifecycle generates correct transitions and status outputs", ()
     assert.strictEqual(logs.length, 5);
 });
 
+// 32. Workspace change transient with kind: "workspace"
+check("workspace change transient shows for configured workspaceTransientMs", () => {
+    const t0 = 1000;
+    const settings = IV.resolveIslandSettings({ workspaceTransientMs: 1500 });
+    const queue = IV.postEvent([], { kind: "workspace", priority: PRIORITY.TRANSIENT, duration: settings.workspaceTransientMs }, t0);
+    assert.strictEqual(queue.length, 1);
+    assert.strictEqual(queue[0].kind, "workspace");
+    assert.strictEqual(queue[0].expiry, t0 + 1500);
+
+    const res = IV.evaluateVisibility({
+        now: t0,
+        windowFocused: true,
+        workspaceEmpty: false,
+        transientQueue: queue
+    });
+    assert.strictEqual(res.visible, true);
+    assert.strictEqual(res.state, "workspace");
+    assert.strictEqual(res.nextExpiry, t0 + 1500);
+    assert.strictEqual(res.reason, "transient_workspace");
+
+    // After 1500ms, reverts to hidden when window is focused
+    const resAfter = IV.evaluateVisibility({
+        now: t0 + 1501,
+        windowFocused: true,
+        workspaceEmpty: false,
+        transientQueue: queue
+    });
+    assert.strictEqual(resAfter.visible, false);
+    assert.strictEqual(resAfter.state, "hidden");
+
+    // Reverts to resting idle when workspace is empty
+    const resEmpty = IV.evaluateVisibility({
+        now: t0 + 1501,
+        windowFocused: false,
+        workspaceEmpty: true,
+        transientQueue: queue
+    });
+    assert.strictEqual(resEmpty.visible, true);
+    assert.strictEqual(resEmpty.state, "idle");
+    assert.strictEqual(resEmpty.reason, "workspace_empty");
+});
+
+// 33. Rapid workspace changes restart the timer and replace transient event
+check("rapid workspace changes restart transient timer and replace previous event", () => {
+    let t = 1000;
+    let queue = [];
+
+    // First change: user switches to workspace 2 at t=1000
+    queue = IV.postEvent(queue, { kind: "workspace", priority: PRIORITY.TRANSIENT, duration: 1500 }, t);
+    assert.strictEqual(queue.length, 1);
+    assert.strictEqual(queue[0].expiry, 1000 + 1500);
+
+    // Second change: user quickly switches to workspace 3 at t=1200 (200ms later)
+    t = 1200;
+    queue = IV.postEvent(queue, { kind: "workspace", priority: PRIORITY.TRANSIENT, duration: 1500 }, t);
+    assert.strictEqual(queue.length, 1);
+    // Expiry must be restarted to 1200 + 1500 = 2700
+    assert.strictEqual(queue[0].expiry, 2700);
+
+    // Third change: user switches to workspace 4 at t=1400 (200ms later)
+    t = 1400;
+    queue = IV.postEvent(queue, { kind: "workspace", priority: PRIORITY.TRANSIENT, duration: 1500 }, t);
+    assert.strictEqual(queue.length, 1);
+    assert.strictEqual(queue[0].expiry, 2900);
+
+    const evalAt2500 = IV.evaluateVisibility({
+        now: 2500,
+        windowFocused: true,
+        workspaceEmpty: false,
+        transientQueue: queue
+    });
+    // At t=2500, original 2500ms expiry would have expired, but restarted timer keeps it active
+    assert.strictEqual(evalAt2500.visible, true);
+    assert.strictEqual(evalAt2500.state, "workspace");
+    assert.strictEqual(evalAt2500.nextExpiry, 2900);
+
+    // Expires cleanly at t=2901
+    const evalAt2901 = IV.evaluateVisibility({
+        now: 2901,
+        windowFocused: true,
+        workspaceEmpty: false,
+        transientQueue: queue
+    });
+    assert.strictEqual(evalAt2901.visible, false);
+    assert.strictEqual(evalAt2901.state, "hidden");
+});
+
+// 34. Transient workspace vs alert, hover, and pinned priority
+check("transient workspace yields to alert, hover, and pinned", () => {
+    const t0 = 1000;
+    const queue = [{ kind: "workspace", priority: PRIORITY.TRANSIENT, expiry: t0 + 1500 }];
+
+    // Active alert takes precedence over transient workspace
+    const resAlert = IV.evaluateVisibility({
+        now: t0,
+        activeAlert: true,
+        transientQueue: queue,
+        windowFocused: true
+    });
+    assert.strictEqual(resAlert.visible, true);
+    assert.strictEqual(resAlert.state, "alert");
+    assert.strictEqual(resAlert.reason, "active_alert");
+
+    // Hover takes precedence over transient workspace
+    const resHover = IV.evaluateVisibility({
+        now: t0,
+        hovered: true,
+        transientQueue: queue,
+        windowFocused: true
+    });
+    assert.strictEqual(resHover.visible, true);
+    assert.strictEqual(resHover.state, "control");
+    assert.strictEqual(resHover.reason, "hover_active");
+
+    // Pinned takes precedence over transient workspace
+    const resPinned = IV.evaluateVisibility({
+        now: t0,
+        pinned: true,
+        transientQueue: queue,
+        windowFocused: true
+    });
+    assert.strictEqual(resPinned.visible, true);
+    assert.strictEqual(resPinned.state, "control");
+    assert.strictEqual(resPinned.reason, "pinned_open");
+
+    // Fullscreen suppresses transient workspace
+    const resFullscreen = IV.evaluateVisibility({
+        now: t0,
+        fullscreen: true,
+        transientQueue: queue,
+        windowFocused: true
+    });
+    assert.strictEqual(resFullscreen.visible, false);
+    assert.strictEqual(resFullscreen.state, "hidden");
+    assert.strictEqual(resFullscreen.reason, "fullscreen_suppressed");
+});
+
+// 35. Workspace names fallback: Hyprland default_name > settings store > number fallback
+check("workspace name resolution correctly follows fallback chain", () => {
+    const settingsMap = {
+        "1": "Browser",
+        "2": "Code",
+        3: "Chat"
+    };
+
+    // Case A: Hyprland default_name takes precedence over settings store map
+    const nameA = IV.resolveWorkspaceName(1, "Web", settingsMap);
+    assert.strictEqual(nameA, "Web");
+    assert.strictEqual(IV.formatWorkspaceLabel(1, "Web", settingsMap, true), "1 Web");
+
+    // Case B: Hyprland name is empty or default number string -> uses settings store map
+    const nameB1 = IV.resolveWorkspaceName(2, "2", settingsMap);
+    assert.strictEqual(nameB1, "Code");
+    assert.strictEqual(IV.formatWorkspaceLabel(2, "2", settingsMap, true), "2 Code");
+
+    const nameB2 = IV.resolveWorkspaceName(3, "", settingsMap);
+    assert.strictEqual(nameB2, "Chat");
+    assert.strictEqual(IV.formatWorkspaceLabel(3, "", settingsMap, true), "3 Chat");
+
+    // Case C: Neither has custom name -> falls back to empty string / number
+    const nameC = IV.resolveWorkspaceName(4, "4", settingsMap);
+    assert.strictEqual(nameC, "");
+    assert.strictEqual(IV.formatWorkspaceLabel(4, "4", settingsMap, true), "4");
+
+    const nameD = IV.resolveWorkspaceName(5, null, null);
+    assert.strictEqual(nameD, "");
+    assert.strictEqual(IV.formatWorkspaceLabel(5, null, null, true), "5");
+
+    // Case D: showWorkspaceName = false -> outputs only number regardless of custom names
+    assert.strictEqual(IV.formatWorkspaceLabel(1, "Web", settingsMap, false), "1");
+    assert.strictEqual(IV.formatWorkspaceLabel(2, "2", settingsMap, false), "2");
+    assert.strictEqual(IV.formatWorkspaceLabel(4, "", settingsMap, false), "4");
+});
+
+// 36. Settings store parsing for workspace settings
+check("settings store parses showWorkspaceName, workspaceTransientMs, and workspaceNames", () => {
+    const raw = {
+        island: {
+            showWorkspaceName: false,
+            workspaceTransientMs: 2500,
+            workspaceNames: {
+                "1": "Primary",
+                "2": "Secondary"
+            }
+        }
+    };
+    const s = IV.resolveIslandSettings(raw);
+    assert.strictEqual(s.showWorkspaceName, false);
+    assert.strictEqual(s.workspaceTransientMs, 2500);
+    assert.strictEqual(s.durations.workspace, 2500);
+    assert.strictEqual(s.workspaceNames["1"], "Primary");
+    assert.strictEqual(s.workspaceNames["2"], "Secondary");
+
+    // Invalid values fall back to defaults safely
+    const sInvalid = IV.resolveIslandSettings({
+        island: {
+            showWorkspaceName: "yes", // not boolean
+            workspaceTransientMs: -100, // negative
+            workspaceNames: ["bad", "array"] // array, not map
+        }
+    });
+    assert.strictEqual(sInvalid.showWorkspaceName, true);
+    assert.strictEqual(sInvalid.workspaceTransientMs, 1500);
+    assert.strictEqual(JSON.stringify(sInvalid.workspaceNames), "{}");
+    assert.strictEqual(Object.keys(sInvalid.workspaceNames).length, 0);
+});
+
 console.log("ALL PASS (" + passed + " island visibility checks)");
 
 

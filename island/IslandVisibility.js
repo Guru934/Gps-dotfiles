@@ -19,9 +19,12 @@ var PRIORITY = {
  */
 var DEFAULT_SETTINGS = {
   persistentMusicPill: false,
+  showWorkspaceName: true,
+  workspaceTransientMs: 1500,
   hoverDelay: 300,
   hoverZoneWidth: 300,
   hoverZoneHeight: 5,
+  workspaceNames: {},
   durations: {
     workspace: 1500,
     clipboard: 2500,
@@ -41,9 +44,12 @@ var DEFAULT_SETTINGS = {
 function resolveIslandSettings(raw) {
   var base = {
     persistentMusicPill: DEFAULT_SETTINGS.persistentMusicPill,
+    showWorkspaceName: DEFAULT_SETTINGS.showWorkspaceName,
+    workspaceTransientMs: DEFAULT_SETTINGS.workspaceTransientMs,
     hoverDelay: DEFAULT_SETTINGS.hoverDelay,
     hoverZoneWidth: DEFAULT_SETTINGS.hoverZoneWidth,
     hoverZoneHeight: DEFAULT_SETTINGS.hoverZoneHeight,
+    workspaceNames: {},
     durations: {
       workspace: DEFAULT_SETTINGS.durations.workspace,
       clipboard: DEFAULT_SETTINGS.durations.clipboard,
@@ -72,6 +78,25 @@ function resolveIslandSettings(raw) {
   if (typeof island.persistentMusicPill === "boolean") {
     base.persistentMusicPill = island.persistentMusicPill;
   }
+  if (typeof island.showWorkspaceName === "boolean") {
+    base.showWorkspaceName = island.showWorkspaceName;
+  }
+  if (typeof island.workspaceTransientMs === "number" && !isNaN(island.workspaceTransientMs) && island.workspaceTransientMs >= 0) {
+    base.workspaceTransientMs = island.workspaceTransientMs;
+    base.durations.workspace = island.workspaceTransientMs;
+  }
+  if (island.workspaceNames && typeof island.workspaceNames === "object" && !Array.isArray(island.workspaceNames)) {
+    var customMap = {};
+    for (var wsKey in island.workspaceNames) {
+      if (Object.prototype.hasOwnProperty.call(island.workspaceNames, wsKey)) {
+        var val = island.workspaceNames[wsKey];
+        if (typeof val === "string") {
+          customMap[wsKey] = val;
+        }
+      }
+    }
+    base.workspaceNames = customMap;
+  }
   if (typeof island.hoverDelay === "number" && !isNaN(island.hoverDelay) && island.hoverDelay >= 0) {
     base.hoverDelay = island.hoverDelay;
   }
@@ -88,6 +113,9 @@ function resolveIslandSettings(raw) {
       var k = durKeys[i];
       if (typeof island.durations[k] === "number" && !isNaN(island.durations[k]) && island.durations[k] >= 0) {
         base.durations[k] = island.durations[k];
+        if (k === "workspace" && typeof island.workspaceTransientMs !== "number") {
+          base.workspaceTransientMs = island.durations[k];
+        }
       }
     }
   }
@@ -381,11 +409,69 @@ function formatTransitionLog(oldState, newState, reason) {
   return "[GPS Island] Transition: " + oldVal + " -> " + newVal + " (reason: " + r + ")";
 }
 
+/**
+ * Resolves a custom workspace name with fallback priority:
+ * 1. Hyprland default_name / rule name (if non-empty and not just the workspace number)
+ * 2. Settings store workspaceNames map (e.g. { "3": "Web", 3: "Web" })
+ * 3. Empty string "" if no custom name exists
+ *
+ * @param {number|string} wsId - Workspace number / ID
+ * @param {string} [hyprlandName] - Name reported by Hyprland
+ * @param {Object} [settingsWorkspaceNames] - Map from settings store
+ * @returns {string} Resolved name or empty string
+ */
+function resolveWorkspaceName(wsId, hyprlandName, settingsWorkspaceNames) {
+  if (wsId === undefined || wsId === null) return "";
+  var idStr = String(wsId);
+
+  // 1. Hyprland default_name check
+  if (hyprlandName && typeof hyprlandName === "string") {
+    var trimmedHypr = hyprlandName.trim();
+    if (trimmedHypr !== "" && trimmedHypr !== idStr) {
+      return trimmedHypr;
+    }
+  }
+
+  // 2. Settings store workspaceNames check
+  if (settingsWorkspaceNames && typeof settingsWorkspaceNames === "object") {
+    var custom = settingsWorkspaceNames[wsId] !== undefined
+      ? settingsWorkspaceNames[wsId]
+      : settingsWorkspaceNames[idStr];
+    if (custom && typeof custom === "string") {
+      var trimmedSettings = custom.trim();
+      if (trimmedSettings !== "") {
+        return trimmedSettings;
+      }
+    }
+  }
+
+  // 3. Fallback: no custom name
+  return "";
+}
+
+/**
+ * Formats full workspace label (e.g. "3 Web" or "3") honoring showWorkspaceName.
+ *
+ * @param {number|string} wsId - Workspace number / ID
+ * @param {string} [hyprlandName] - Name reported by Hyprland
+ * @param {Object} [settingsWorkspaceNames] - Map from settings store
+ * @param {boolean} [showWorkspaceName=true] - Setting controlling custom name display
+ * @returns {string} Formatted label (e.g. "3 Web" or "3")
+ */
+function formatWorkspaceLabel(wsId, hyprlandName, settingsWorkspaceNames, showWorkspaceName) {
+  if (wsId === undefined || wsId === null || Number(wsId) <= 0) return "";
+  var showName = showWorkspaceName !== false;
+  var customName = showName ? resolveWorkspaceName(wsId, hyprlandName, settingsWorkspaceNames) : "";
+  return customName !== "" ? (wsId + " " + customName) : String(wsId);
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     PRIORITY: PRIORITY,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     resolveIslandSettings: resolveIslandSettings,
+    resolveWorkspaceName: resolveWorkspaceName,
+    formatWorkspaceLabel: formatWorkspaceLabel,
     evaluateVisibility: evaluateVisibility,
     postEvent: postEvent,
     formatStatus: formatStatus,
