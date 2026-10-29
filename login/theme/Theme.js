@@ -1,0 +1,29 @@
+.pragma library
+
+const palette = {
+    surface: "#B30F131C",
+    surfaceDeep: "#0F131C",
+    surfaceBase: "#181B25",
+    surfaceHigh: "#262A34",
+    surfaceVariant: "#31353F",
+    card: "#CC1C1F29",
+    cardHover: "#E0262A34",
+    track: "#0B1016",
+    border: "#3C4A46",
+    outlineSoft: "#2F3A40",
+    brandAccent: "#2DD4BF",
+    brandAccentFg: "#003731",
+    accentPrimary: "#57F1DB",
+    accentPrimaryDim: "#1F5950",
+    accentSecondary: "#DDB8FF",
+    accentSecondaryDim: "#62259B",
+    accentTertiary: "#FFD47B",
+    statusGood: "#9CE5C0",
+    statusWarn: "#FFD47B",
+    statusDanger: "#FFB4AB",
+    textMain: "#DFE2EF",
+    textMuted: "#BACAC5",
+    textDim: "#859490",
+    fontUi: "Plus Jakarta Sans",
+    fontMono: "JetBrains Mono"
+};
