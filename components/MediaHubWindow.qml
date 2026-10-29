@@ -18,16 +18,16 @@ FloatingWindow {
         ? root.hub.popupScreen
         : (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null)
     readonly property int initialWidth: root.targetScreen
-        ? Math.min(1280, Math.max(860, root.targetScreen.width - 160))
+        ? Math.min(1400, Math.max(960, Math.round(root.targetScreen.width * 0.8)))
         : 1180
     readonly property int initialHeight: root.targetScreen
-        ? Math.min(820, Math.max(600, root.targetScreen.height - 160))
+        ? Math.min(900, Math.max(600, Math.round(root.targetScreen.height * 0.8)))
         : 760
     readonly property int minWidth: root.targetScreen
-        ? Math.min(860, Math.max(480, root.targetScreen.width - 40))
-        : 860
+        ? Math.min(960, Math.max(480, root.targetScreen.width - 60))
+        : 960
     readonly property int minHeight: root.targetScreen
-        ? Math.min(600, Math.max(360, root.targetScreen.height - 40))
+        ? Math.min(600, Math.max(360, root.targetScreen.height - 60))
         : 600
     readonly property bool hyprlandAvailable: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") !== ""
     property int floatAttempts: 0

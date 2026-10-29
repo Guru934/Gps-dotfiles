@@ -322,8 +322,8 @@ Item {
         if (core && typeof core.openMediaHub === "function") {
             core.openMediaHub()
         } else {
-            const script = Qt.resolvedUrl("../../scripts/gps-ipc").toString().replace(/^file:\/\//, "")
-            Quickshell.execDetached([script, "mediahub", "toggle"])
+            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "mediahub", "toggle"])
         }
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")
@@ -333,8 +333,8 @@ Item {
         if (core && typeof core.openToolbox === "function") {
             core.openToolbox()
         } else {
-            const script = Qt.resolvedUrl("../../scripts/gps-ipc").toString().replace(/^file:\/\//, "")
-            Quickshell.execDetached([script, "toolbox", "toggle"])
+            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "toolbox", "toggle"])
         }
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")

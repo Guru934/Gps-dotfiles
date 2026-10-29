@@ -58,7 +58,7 @@ Item {
     // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Music · 5 Downloads · 6 My Library
     property int page: 0
 
-    readonly property bool compact: width < 940
+    readonly property bool compact: width < 1000
     readonly property int sidebarW: compact ? 68 : 208
 
     // ================================================================
@@ -2306,7 +2306,16 @@ Item {
                         color: Qt.alpha("#7bd0ff", 0.2)
                         Lbl { anchors.centerIn: parent; text: root.dlCount("downloading"); mono: true; font.pixelSize: 10; color: "#7bd0ff" }
                     }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.go(index) }
+                    MouseArea {
+                        id: nma
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.go(index)
+                    }
+                    ToolTip.visible: root.compact && nma.containsMouse
+                    ToolTip.text: modelData.name
+                    ToolTip.delay: 350
                 }
             }
         }

@@ -378,6 +378,20 @@ hl.window_rule({
     float = true,
 })
 
+hl.window_rule({
+    name  = "gps-media-hub-and-toolbox",
+    match = {
+        class = "^(org\\.quickshell)$",
+        title = "^(GPS Media Hub|GPS Toolbox)$",
+    },
+
+    float    = true,
+    center   = true,
+    size     = "80% 80%",
+    max_size = "1400 900",
+    min_size = "960 600",
+})
+
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell wallpaper toggle"))
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell dashboard toggle"))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell notifcenter toggle"))

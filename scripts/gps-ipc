@@ -25,12 +25,12 @@ case "$cmd" in
             echo "Usage: gps-ipc shell <target> <action> [args...]" >&2
             exit 1
         fi
-        exec quickshell ipc -p "$REPO_DIR/shell.qml" call "$target" "$action" "$@"
+        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call "$target" "$action" "$@"
         ;;
     settings)
         action="${1:-toggle}"
         shift || true
-        if ! quickshell ipc -p "$REPO_DIR/settings.qml" call settings "$action" "$@" 2>/dev/null; then
+        if ! quickshell ipc --any-display -p "$REPO_DIR/settings.qml" call settings "$action" "$@" 2>/dev/null; then
             nohup quickshell --no-duplicate -p "$REPO_DIR/settings.qml" >/dev/null 2>&1 &
         fi
         ;;
@@ -43,9 +43,9 @@ case "$cmd" in
         fi
         backend="$(get_backend)"
         if [[ "$backend" == "tide" ]]; then
-            exec quickshell ipc -p "$HOME/.local/share/tide-island" call island "$action" "$@"
+            exec quickshell ipc --any-display -p "$HOME/.local/share/tide-island" call island "$action" "$@"
         else
-            exec quickshell ipc -p "$REPO_DIR/island/IslandProduction.qml" call island "$action" "$@"
+            exec quickshell ipc --any-display -p "$REPO_DIR/island/IslandProduction.qml" call island "$action" "$@"
         fi
         ;;
     clipboard|clip)
@@ -53,20 +53,20 @@ case "$cmd" in
         shift || true
         backend="$(get_backend)"
         if [[ "$backend" == "tide" ]]; then
-            exec quickshell ipc -p "$HOME/.local/share/tide-island" call clipboard "$action" "$@"
+            exec quickshell ipc --any-display -p "$HOME/.local/share/tide-island" call clipboard "$action" "$@"
         else
-            exec quickshell ipc -p "$REPO_DIR/island/IslandProduction.qml" call island clipboard "$action" "$@"
+            exec quickshell ipc --any-display -p "$REPO_DIR/island/IslandProduction.qml" call island clipboard "$action" "$@"
         fi
         ;;
     mediahub)
         action="${1:-toggle}"
         shift || true
-        exec quickshell ipc -p "$REPO_DIR/shell.qml" call mediahub "$action" "$@"
+        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call mediahub "$action" "$@"
         ;;
     toolbox)
         action="${1:-toggle}"
         shift || true
-        exec quickshell ipc -p "$REPO_DIR/shell.qml" call toolbox "$action" "$@"
+        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call toolbox "$action" "$@"
         ;;
     *)
         echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox> [args...]" >&2

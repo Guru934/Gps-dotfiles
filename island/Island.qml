@@ -360,7 +360,7 @@ Scope {
         }
         return true
     }
-    readonly property string repoRoot: Qt.resolvedUrl("..").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
     function openMediaHub() {
         Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "mediahub", "toggle"])
     }
