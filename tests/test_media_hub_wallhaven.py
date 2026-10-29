@@ -369,7 +369,7 @@ class MediaHubContractTests(unittest.TestCase):
         self.assertIn("function open()", window)
         self.assertIn("function close()", window)
         self.assertIn("function toggle()", window)
-        self.assertIn("hl.dsp.window.float", window)
+        self.assertNotIn("hl.dsp.window.float", window)
 
     def test_wallpaper_browser_keeps_sfw_locked(self):
         hub = (ROOT / "components/MediaHub.qml").read_text()

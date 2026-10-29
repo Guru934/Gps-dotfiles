@@ -270,6 +270,7 @@ local closeWindowBind = hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.window.float({ action = "toggle" }))
+hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
@@ -384,19 +385,6 @@ hl.window_rule({
     float = true,
 })
 
-hl.window_rule({
-    name  = "gps-media-hub-and-toolbox",
-    match = {
-        class = "^(org\\.quickshell)$",
-        title = "^(GPS Media Hub|GPS Toolbox)$",
-    },
-
-    float    = true,
-    center   = true,
-    size     = "80% 80%",
-    max_size = "1400 900",
-    min_size = "960 600",
-})
 
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell wallpaper toggle"))
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell dashboard toggle"))

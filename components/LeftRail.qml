@@ -128,7 +128,7 @@ PanelWindow {
         bottom: root.railMarginBottom
     }
     implicitWidth: root.railWidth
-    exclusiveZone: root.railWidth + root.railMarginLeft
+    exclusiveZone: root.railWidth
     color: "transparent"
 
     // ========================================================================

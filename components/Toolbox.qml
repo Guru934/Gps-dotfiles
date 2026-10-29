@@ -1230,18 +1230,21 @@ Item {
                     spacing: 8
                     Field {
                         id: globalSearch
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 100
                         Layout.maximumWidth: 440
-                        icon: "⌕"; placeholder: "Search saved items, actions, automations…  (Ctrl+K)"
+                        icon: "⌕"
+                        placeholder: root.width < 750 ? "Search… (Ctrl+K)" : "Search saved items, actions, automations…  (Ctrl+K)"
                         onTextChanged: root.searchOpen = text !== ""
                         onAccepted: if (root.searchResults.length) root.pickResult(root.searchResults[0])
                     }
                     Spacer {}
-                    Chip { visible: !root.integrationAvailable; text: "INTEGRATION UNAVAILABLE"; tone: th.amber; dot: true }
-                    Chip { visible: root.settings.showDeviceChip && root.firstConnected() !== null
+                    Chip { visible: !root.integrationAvailable && root.width >= 860; text: "INTEGRATION UNAVAILABLE"; tone: th.amber; dot: true }
+                    Chip { visible: root.settings.showDeviceChip && root.firstConnected() !== null && root.width >= 960
                            text: root.firstConnected() ? ("PHONE · " + root.firstConnected().name + (root.firstConnected().battery >= 0 ? " " + root.firstConnected().battery + "%" : "")) : ""
                            tone: th.cyan; dot: true }
-                    Chip { visible: root.nextRunSummary !== ""; text: "NEXT · " + root.nextRunSummary; tone: th.lilac }
-                    Btn { icon: "+"; text: "Capture"; onClicked: root.openCapture("bookmark", null) }
+                    Chip { visible: root.nextRunSummary !== "" && root.width >= 1060; text: "NEXT · " + root.nextRunSummary; tone: th.lilac }
+                    Btn { icon: "+"; text: root.width < 700 ? "" : "Capture"; onClicked: root.openCapture("bookmark", null) }
                     Item {
                         implicitWidth: 34; implicitHeight: 32
                         Btn { anchors.fill: parent; kind: "ghost"; icon: "◉"; active: root.notifOpen; onClicked: { root.notifOpen = !root.notifOpen; root.unread = 0 } }

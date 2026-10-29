@@ -2394,10 +2394,11 @@ Item {
                 SearchField {
                     id: gsearch
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 120
                     Layout.maximumWidth: 520
                     Layout.preferredHeight: 38
                     accent: root.accent
-                    placeholder: "Search wallpapers, anime, manga \u2014 or paste a URL"
+                    placeholder: root.width < 700 ? "Search… or paste URL" : "Search wallpapers, anime, manga \u2014 or paste a URL"
                     onEdited: root.gq = text
                     onSubmitted: {
                         var r = root.globalResults(root.gq)
