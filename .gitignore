@@ -7,6 +7,7 @@ __pycache__/
 
 # Editor & IDE settings
 .vscode/
+.agents/
 
 # Local environment/credentials
 .env
@@ -22,4 +23,3 @@ pet.json
 rice-settings.json
 media-hub-*.json
 gps-island-backend
-
