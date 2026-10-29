@@ -82,9 +82,9 @@ Item {
     property bool dlRestoreVerifyPending: false
     property string dlStatusError: ""
 
-    readonly property bool dlInspecting: downloadsBackend.inspecting
-    readonly property bool dlBusy: downloadsBackend.downloading || downloadsBackend.inspecting
-    readonly property bool dlCanMerge: downloadsBackend.toolStatus.ffmpegReady === true
+    readonly property bool dlInspecting: inspecting
+    readonly property bool dlBusy: downloading || inspecting
+    readonly property bool dlCanMerge: toolStatus.ffmpegReady === true
 
     readonly property string downloadStateDir: {
         var stateHome = Quickshell.env("XDG_STATE_HOME")
@@ -453,7 +453,7 @@ Item {
             }
         }
         if (!root.downloadBackendConnected) {
-            downloadsBackend.checkStatus()
+            root.checkStatus()
             root.dlError = root.dlStatusError || "yt-dlp is not available. Install it, then press Recheck."
             root.dlErrorCode = "yt_dlp_missing"
             return false
@@ -464,11 +464,11 @@ Item {
         root.dlInspectedUrl = ""
         root.dlError = ""
         root.dlErrorCode = ""
-        return downloadsBackend.inspect(url, root.dlInspectRequestId)
+        return root.inspect(url, root.dlInspectRequestId)
     }
     function cancelDownloadInspection() {
-        if (!downloadsBackend.inspecting) return
-        downloadsBackend.cancelInspect()
+        if (!root.inspecting) return
+        root.cancelInspect()
         root.dlError = "Cancelling inspection\u2026"
     }
     function handleDownloadInspection(payload, requestId) {
@@ -494,12 +494,12 @@ Item {
         root.dlInspectedUrl = ""
         root.dlError = String(message || "Link inspection failed.")
         root.dlErrorCode = String(code || "inspect_failed")
-        if (code === "yt_dlp_missing" || code === "ffmpeg_missing") downloadsBackend.checkStatus()
+        if (code === "yt_dlp_missing" || code === "ffmpeg_missing") root.checkStatus()
         dlQueueTimer.restart()
     }
     function handleDownloadStatus(payload) {
         if (payload === null) {
-            root.dlStatusError = downloadsBackend.statusError
+            root.dlStatusError = root.statusError
             return
         }
         root.dlStatusError = ""
@@ -525,7 +525,7 @@ Item {
         root.dlPendingEnqueue = null
         root.dlDestInfo = null
         root.dlDestError = ""
-        return downloadsBackend.checkDestination(dest)
+        return root.checkDestination(dest)
     }
     function createDownloadDestination() {
         var dest = expandHomePath(root.dlDirectory)
@@ -534,7 +534,7 @@ Item {
             return false
         }
         root.dlDestError = ""
-        return downloadsBackend.createDestination(dest)
+        return root.createDestination(dest)
     }
     function buildDownloadRequest() {
         var meta = root.dlInspection
@@ -616,7 +616,7 @@ Item {
         root.dlPendingEnqueue = request
         root.dlError = ""
         root.dlDestError = ""
-        return downloadsBackend.checkDestination(request.dest)
+        return root.checkDestination(request.dest)
     }
     function commitDownloadEnqueue(request) {
         if (!request) return false
@@ -798,11 +798,11 @@ Item {
         }
         if (paths.length === 0) return
         root.dlRestoreVerifyPending = true
-        if (!downloadsBackend.verify(paths)) root.dlRestoreVerifyPending = false
+        if (!root.verify(paths)) root.dlRestoreVerifyPending = false
     }
     function pumpDownloadQueue() {
         if (!root.downloadsStateReady || root.downloadsQueuePaused || root.dlInspecting) return
-        if (downloadsBackend.downloading || root.dlActiveCount() > 0) return
+        if (root.downloading || root.dlActiveCount() > 0) return
         if (!root.downloadBackendConnected) return
         var index = DownloadsQueue.nextQueuedIndex(downloads)
         if (index < 0) return
@@ -841,7 +841,7 @@ Item {
         job.postprocessor = ""
         job.updatedAt = Date.now()
         downloads = downloads.map(function (d) { return d.id === job.id ? job : d })
-        if (!downloadsBackend.startDownload(job)) dlQueueTimer.restart()
+        if (!root.startDownload(job)) dlQueueTimer.restart()
         return true
     }
     function handleDownloadStarted(jobId) {
@@ -860,7 +860,7 @@ Item {
             eta: Number(payload.eta) || 0,
             fragmentIndex: Number(payload.fragmentIndex) || 0,
             fragmentCount: Number(payload.fragmentCount) || 0,
-            statusDetail: downloadsBackend.cancelRequested ? "Cancelling\u2026" : "Downloading"
+            statusDetail: root.cancelRequested ? "Cancelling\u2026" : "Downloading"
         }
         patch.progress = DownloadsQueue.progressFraction(Object.assign({}, job, patch))
         root.updateDownload(jobId, patch)
@@ -985,7 +985,7 @@ Item {
         }
         root.dlOpenVerifyPending = true
         root.dlOpenPath = job.dest
-        if (!downloadsBackend.verify(files.slice(0, 100))) {
+        if (!root.verify(files.slice(0, 100))) {
             root.dlOpenVerifyPending = false
             root.dlOpenPath = ""
         }
@@ -1114,8 +1114,8 @@ Item {
         if (!job) return
         if (action === "cancel") {
             if (DownloadsQueue.isActiveStatus(job.status)) {
-                if (downloadsBackend.downloading) {
-                    downloadsBackend.cancelDownload()
+                if (root.downloading) {
+                    root.cancelDownload()
                     root.updateDownload(job.id, { statusDetail: "Cancelling\u2026" })
                 } else {
                     root.handleDownloadFailure("This job is not running.", "not_running", job.id)

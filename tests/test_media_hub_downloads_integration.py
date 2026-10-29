@@ -171,6 +171,21 @@ class LayerSeparationTests(unittest.TestCase):
         self.assertNotIn("property var downloads: []", source)
         self.assertNotIn("property string dlMode: \"video\"", source)
 
+    def test_controller_does_not_reference_itself_as_downloadsBackend(self):
+        """MediaHubDownloads.qml must not reference `downloadsBackend` from
+        within its own scope. `downloadsBackend` is only defined in MediaHub.qml
+        where MediaHubDownloads is instantiated. Inside MediaHubDownloads.qml,
+        local properties must be referenced directly (or via `root`), otherwise
+        bindings like dlInspecting, dlBusy and dlCanMerge are always undefined."""
+        source = Path(ROOT / "components" / "MediaHubDownloads.qml").read_text()
+        # The dl-prefixed computed properties must reference local state, not
+        # the external `downloadsBackend` id (which is undefined in this file).
+        self.assertIn("readonly property bool dlInspecting: inspecting", source)
+        self.assertIn("readonly property bool dlBusy: downloading || inspecting", source)
+        self.assertIn("readonly property bool dlCanMerge: toolStatus.ffmpegReady === true", source)
+        # No self-reference to downloadsBackend within MediaHubDownloads.qml
+        self.assertNotIn("downloadsBackend", source)
+
 
 class NoFalseSuccessTests(unittest.TestCase):
     """Downloads without verified output files must never be marked completed."""
