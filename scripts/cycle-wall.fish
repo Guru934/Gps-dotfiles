@@ -22,4 +22,5 @@ if test $idx -gt (count $walls)
 end
 echo $idx > "$state_file"
 
-(status dirname)/set-wallpaper "$walls[$idx]" --transition-type outer --transition-pos 0.92,0.06 --transition-fps 165 --transition-duration 1.1 >/dev/null 2>&1
+set -l script_dir (status dirname)
+$script_dir/set-wallpaper "$walls[$idx]" --transition-type outer --transition-pos 0.92,0.06 --transition-fps 165 --transition-duration 1.1 >/dev/null 2>&1

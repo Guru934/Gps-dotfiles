@@ -42,6 +42,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import qs.config
 
 Item {
     id: root
@@ -197,38 +198,38 @@ Item {
 
     // ======================= INLINE COMPONENTS ==============================
     component ThemeData: QtObject {
-        readonly property color bg: "#0f131c"
-        readonly property color well: "#0a0e17"
-        readonly property color panel: "#181b25"
-        readonly property color panelHi: "#1c2029"
-        readonly property color raised: "#262a34"
-        readonly property color raisedHi: "#31353f"
-        readonly property color line: "#2a2e3a"
-        readonly property color text: "#dfe2ef"
-        readonly property color dim: "#cac4d4"
-        readonly property color mute: "#948e9d"
-        readonly property color violet: "#a78bfa"
-        readonly property color lilac: "#cebdff"
-        readonly property color inkViolet: "#2a0f6b"
+        readonly property color bg: Theme.surfaceDeep
+        readonly property color well: Theme.track
+        readonly property color panel: Theme.surfaceBase
+        readonly property color panelHi: Theme.surfaceHigh
+        readonly property color raised: Theme.card
+        readonly property color raisedHi: Theme.cardHover
+        readonly property color line: Theme.outlineSoft
+        readonly property color text: Theme.textMain
+        readonly property color dim: Theme.textDim
+        readonly property color mute: Theme.textMuted
+        readonly property color violet: Theme.brandAccent
+        readonly property color lilac: Theme.accentSecondary
+        readonly property color inkViolet: Theme.onAccent
         readonly property color cyan: "#7bd0ff"
-        readonly property color teal: "#3cddc7"
-        readonly property color red: "#ffb4ab"
+        readonly property color teal: Theme.brandAccent
+        readonly property color red: Theme.statusDanger
         readonly property color redDeep: "#93000a"
-        readonly property color amber: "#f2c26b"
-        readonly property string sans: "Plus Jakarta Sans"
-        readonly property string mono: "JetBrains Mono"
+        readonly property color amber: Theme.statusWarn
+        readonly property string sans: Theme.fontUi
+        readonly property string mono: Theme.fontMono
         function a(c, o) { return Qt.rgba(c.r, c.g, c.b, o) }
     }
     component Lbl: Text {
-        color: "#dfe2ef"; font.family: "Plus Jakarta Sans"; font.pixelSize: 13
+        color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 13
         elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
     }
-    component Mono: Lbl { font.family: "JetBrains Mono"; font.pixelSize: 11 }
-    component Cap: Mono { font.pixelSize: 10; font.bold: true; font.letterSpacing: 0.8; color: "#948e9d" }
+    component Mono: Lbl { font.family: Theme.fontMono; font.pixelSize: 11 }
+    component Cap: Mono { font.pixelSize: 10; font.bold: true; font.letterSpacing: 0.8; color: Theme.textMuted }
     component Txt: Lbl { Layout.fillWidth: true }
-    component Wrap: Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone; color: "#cac4d4"; font.pixelSize: 12 }
+    component Wrap: Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone; color: Theme.textDim; font.pixelSize: 12 }
     component Spacer: Item { Layout.fillWidth: true }
-    component Rule: Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#2a2e3a" }
+    component Rule: Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.outlineSoft }
 
     component Btn: Rectangle {
         id: b
@@ -270,21 +271,21 @@ Item {
         property string icon: ""
         property int count: -1
         property bool active: false
-        property color tone: "#cebdff"
+        property color tone: Theme.accentSecondary
         signal clicked()
         implicitHeight: 28
         implicitWidth: pr.implicitWidth + 24
         radius: 14
         opacity: enabled ? 1 : 0.45
-        color: active ? Qt.rgba(tone.r, tone.g, tone.b, 0.16) : (pma.containsMouse ? "#1c2029" : "transparent")
+        color: active ? Qt.rgba(tone.r, tone.g, tone.b, 0.16) : (pma.containsMouse ? Theme.surfaceHigh : "transparent")
         border.width: 1
-        border.color: active ? Qt.rgba(tone.r, tone.g, tone.b, 0.55) : "#2a2e3a"
+        border.color: active ? Qt.rgba(tone.r, tone.g, tone.b, 0.55) : Theme.outlineSoft
         Behavior on color { ColorAnimation { duration: 90 } }
         Row {
             id: pr; anchors.centerIn: parent; spacing: 6
-            Lbl { visible: p.icon !== ""; text: p.icon; color: p.active ? p.tone : "#948e9d"; font.pixelSize: 12 }
-            Lbl { text: p.text; color: p.active ? p.tone : "#cac4d4"; font.pixelSize: 12; font.weight: p.active ? Font.DemiBold : Font.Normal }
-            Mono { visible: p.count >= 0; text: p.count; color: p.active ? p.tone : "#948e9d"; font.pixelSize: 10 }
+            Lbl { visible: p.icon !== ""; text: p.icon; color: p.active ? p.tone : Theme.textMuted; font.pixelSize: 12 }
+            Lbl { text: p.text; color: p.active ? p.tone : Theme.textDim; font.pixelSize: 12; font.weight: p.active ? Font.DemiBold : Font.Normal }
+            Mono { visible: p.count >= 0; text: p.count; color: p.active ? p.tone : Theme.textMuted; font.pixelSize: 10 }
         }
         MouseArea { id: pma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: p.clicked() }
     }
@@ -292,7 +293,7 @@ Item {
     component Chip: Rectangle {
         id: c
         property string text: ""
-        property color tone: "#948e9d"
+        property color tone: Theme.textMuted
         property bool dot: false
         implicitHeight: 20
         implicitWidth: cr.implicitWidth + 14
@@ -311,7 +312,7 @@ Item {
         property int gap: 10
         default property alias content: col.data
         implicitHeight: col.implicitHeight + 2 * pad
-        radius: 12; color: "#181b25"; border.width: 1; border.color: "#252936"
+        radius: 12; color: Theme.surfaceBase; border.width: 1; border.color: Theme.outlineSoft
         ColumnLayout { id: col; x: cd.pad; y: cd.pad; width: cd.width - 2 * cd.pad; spacing: cd.gap }
     }
 
@@ -432,7 +433,7 @@ Item {
         contentWidth: width; contentHeight: col.implicitHeight + 2 * pad
         ScrollBar.vertical: ScrollBar {
             id: sb; policy: ScrollBar.AsNeeded
-            contentItem: Rectangle { implicitWidth: 6; radius: 3; color: "#3a3f4d"; opacity: sb.pressed || sb.hovered ? 1 : 0.7 }
+            contentItem: Rectangle { implicitWidth: 6; radius: 3; color: Theme.cardHover; opacity: sb.pressed || sb.hovered ? 1 : 0.7 }
             background: Item {}
         }
         ColumnLayout { id: col; x: pg.pad; y: pg.pad; width: pg.width - 2 * pg.pad; spacing: 14 }
@@ -459,7 +460,7 @@ Item {
         id: st
         property string text: ""
         property string icon: ""
-        property color tone: "#cebdff"
+        property color tone: Theme.accentSecondary
         default property alias rightSide: rr.data
         Layout.fillWidth: true
         spacing: 8
@@ -477,7 +478,7 @@ Item {
         Layout.fillWidth: true
         Layout.topMargin: 10; Layout.bottomMargin: 10
         spacing: 6
-        Lbl { text: em.icon; color: "#494552"; font.pixelSize: 30; Layout.alignment: Qt.AlignHCenter }
+        Lbl { text: em.icon; color: Theme.textMuted; font.pixelSize: 30; Layout.alignment: Qt.AlignHCenter }
         Lbl { text: em.title; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
         Wrap { text: em.message; horizontalAlignment: Text.AlignHCenter; Layout.maximumWidth: 420; Layout.alignment: Qt.AlignHCenter }
         RowLayout { id: ea; spacing: 8; Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 4 }
@@ -486,9 +487,9 @@ Item {
     component LayoutPreview: Rectangle {
         id: lp
         property var blocks: []
-        readonly property var tones: ["#a78bfa", "#7bd0ff", "#3cddc7", "#f2c26b"]
-        implicitHeight: 64; radius: 8; color: "#0a0e17"; border.width: 1; border.color: "#252936"
-        Mono { visible: lp.blocks.length === 0; anchors.centerIn: parent; text: "no windows"; color: "#494552" }
+        readonly property var tones: [Theme.brandAccent, "#7bd0ff", Theme.accentSecondary, Theme.statusWarn]
+        implicitHeight: 64; radius: 8; color: Theme.track; border.width: 1; border.color: Theme.outlineSoft
+        Mono { visible: lp.blocks.length === 0; anchors.centerIn: parent; text: "no windows"; color: Theme.textMuted }
         Repeater {
             model: lp.blocks
             Rectangle {
@@ -518,7 +519,7 @@ Item {
         visible: opacity > 0.01
         opacity: open ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: m.animMs; easing.type: Easing.OutCubic } }
-        Rectangle { anchors.fill: parent; color: "#e6070a10"; MouseArea { anchors.fill: parent; onClicked: m.dismissed() } }
+        Rectangle { anchors.fill: parent; color: Qt.alpha(Theme.surfaceDeep, 0.9); MouseArea { anchors.fill: parent; onClicked: m.dismissed() } }
         Rectangle {
             id: dlg
             anchors.centerIn: parent
@@ -1750,7 +1751,7 @@ Item {
                         readonly property bool power: root.isPowerAuto(a)
                         readonly property bool exp: !!root.expandedAuto[a.id]
                         Layout.fillWidth: true; Layout.preferredWidth: ag.cw; Layout.alignment: Qt.AlignTop
-                        border.color: power ? th.a(th.red, 0.35) : "#252936"
+                        border.color: power ? th.a(th.red, 0.35) : th.line
                         RowLayout { Layout.fillWidth: true; spacing: 10
                             Rectangle { Layout.preferredWidth: 34; Layout.preferredHeight: 34; radius: 9; color: th.a(ac.power ? th.red : th.cyan, 0.14)
                                 Lbl { anchors.centerIn: parent; text: ac.power ? "⏻" : root.trigIcon(ac.a); color: ac.power ? th.red : th.cyan; font.pixelSize: 15 } }
@@ -1846,7 +1847,7 @@ Item {
                                 id: lc2
                                 readonly property var a: modelData
                                 Layout.fillWidth: true; Layout.preferredWidth: lg.cw; Layout.alignment: Qt.AlignTop; gap: 8
-                                border.color: root.inspId === a.id ? th.violet : "#252936"
+                                border.color: root.inspId === a.id ? th.violet : th.line
                                 opacity: a.enabled ? 1 : 0.6
                                 RowLayout { Layout.fillWidth: true
                                     Lbl { text: a.name; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
@@ -2146,7 +2147,7 @@ Item {
                         id: pc2
                         readonly property var p: modelData
                         Layout.fillWidth: true; Layout.preferredWidth: prg.cw; Layout.alignment: Qt.AlignTop; gap: 8
-                        border.color: root.presetSel === p.id ? th.violet : "#252936"
+                        border.color: root.presetSel === p.id ? th.violet : th.line
                         RowLayout { Layout.fillWidth: true; spacing: 6
                             Lbl { text: p.name; font.pixelSize: 15; font.weight: Font.DemiBold; Layout.fillWidth: true }
                             Chip { visible: p.sample; text: "SAMPLE"; tone: th.mute }

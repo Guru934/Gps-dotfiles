@@ -20,5 +20,6 @@ set chosen (
 )
 
 if test -n "$chosen"
-    (status dirname)/set-wallpaper "$wall_dir/$chosen" --transition-type wave --transition-fps 165 --transition-duration 1.2 >/dev/null 2>&1
+    set -l script_dir (status dirname)
+    $script_dir/set-wallpaper "$wall_dir/$chosen" --transition-type wave --transition-fps 165 --transition-duration 1.2 >/dev/null 2>&1
 end

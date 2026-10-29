@@ -52,7 +52,7 @@ PanelWindow {
     Rectangle {
         anchors.fill: parent
         radius: 22
-        color: "#F20F131C"
+        color: Qt.alpha(Theme.surfaceDeep, 0.95)
         border.width: 1
         border.color: Theme.brandAccent
 
