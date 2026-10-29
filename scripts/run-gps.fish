@@ -4,6 +4,8 @@
 set -l REPO_DIR (realpath (status dirname)/..)
 
 set -gx LC_CTYPE C.UTF-8
+set -gx QML2_IMPORT_PATH "$REPO_DIR"
+set -gx QML_IMPORT_PATH "$REPO_DIR"
 set -g __done_enabled 0
 
 # Visible startup log: every run appends here so a startup failure leaves a
@@ -85,7 +87,7 @@ end
 if test "$island_backend" = gps
     set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
     if not pgrep -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
-        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
+        nohup /usr/bin/quickshell --no-duplicate -d -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
         disown
     end
     sleep 0.5
@@ -107,7 +109,7 @@ else
 end
 
 # 6. Launch the QuickShell master shell.
-nohup /usr/bin/quickshell -p "$REPO_DIR/shell.qml" >/tmp/qs-gps.log 2>&1 &
+nohup /usr/bin/quickshell -d -p "$REPO_DIR/shell.qml" >/tmp/qs-gps.log 2>&1 &
 disown
 sleep 1
 set -l shell_pid (pgrep -f 'my-rice/she[l]l.qml' | head -1)

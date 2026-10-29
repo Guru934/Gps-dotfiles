@@ -3,6 +3,8 @@
 # Exactly one top-center island is allowed to run at a time.
 
 set -l REPO_DIR (realpath (status dirname)/..)
+set -gx QML2_IMPORT_PATH "$REPO_DIR"
+set -gx QML_IMPORT_PATH "$REPO_DIR"
 set -l mode $argv[1]
 set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
 set -l tide_path "$HOME/.local/share/tide-island"
