@@ -538,6 +538,14 @@ def apply_wallpaper(args: argparse.Namespace) -> dict:
         last_wall_path().write_text(str(path), encoding="utf-8")
     except OSError:
         pass
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        import set_wallpaper
+        set_wallpaper.apply_wallpaper(str(path), skip_awww=True)
+    except Exception:
+        pass
     return {"ok": True, "path": str(path), "cached": cached, "title": args.title}
 
 

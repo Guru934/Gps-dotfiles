@@ -11,6 +11,7 @@ PanelWindow {
     property bool isOpen: false
     property int currentIndex: 0
     readonly property int visibleRadius: 2
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
     readonly property string wallpaperDirectory: "file://" + Quickshell.env("HOME") + "/Pictures/Wallpapers"
 
     function toggle() { root.isOpen = !root.isOpen }
@@ -23,8 +24,7 @@ PanelWindow {
         if (wallpapers.count === 0) return
         const path = wallpapers.get(root.currentIndex, "filePath")
         if (!path) return
-        Quickshell.execDetached(["awww", "img", path, "--transition-type", "outer", "--transition-pos", "0.92,0.06", "--transition-fps", "165", "--transition-duration", "1.1"])
-        Quickshell.execDetached([Qt.resolvedUrl("../scripts/extract-theme.py").toString().replace(/^file:\/\//, "")])
+        Quickshell.execDetached([root.repoRoot + "/scripts/set-wallpaper", path])
         root.close()
     }
 
