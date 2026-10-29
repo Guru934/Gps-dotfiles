@@ -15,7 +15,7 @@ PanelWindow {
 
     // Dimensional & Placement Properties (Top-level configurable contract)
     property int railWidth: 40
-    property int railMarginLeft: 6
+    property int railMarginLeft: 0
     property int railMarginTop: 6
     property int railMarginBottom: 6
     property int railRadius: 18
