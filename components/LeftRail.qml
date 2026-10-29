@@ -23,8 +23,25 @@ PanelWindow {
     // Rail Layout Mode: "split" (default: 3 floating capsules) | "full" (legacy full-slab)
     property string railLayout: "split"
     readonly property bool isSplit: root.railLayout === "split"
-    readonly property color glassColor: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.48)
-    readonly property color glassBorderColor: Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.45)
+
+    // Wallpaper-adaptive glass alpha & tint based on left strip luminance:
+    // Bright wallpaper (high luminance): darker, higher-alpha glass (~0.60 - 0.82) for >=4.5:1 text contrast
+    // Dark wallpaper (low luminance): lighter, lower-alpha glass (~0.35 - 0.45)
+    readonly property real railGlassAlpha: {
+        const l = Math.max(0.0, Math.min(1.0, Theme.leftLuminance))
+        return 0.38 + 0.44 * Math.pow(l, 1.2)
+    }
+    readonly property color glassColor: {
+        const l = Math.max(0.0, Math.min(1.0, Theme.leftLuminance))
+        const a = root.railGlassAlpha
+        const darken = 1.0 - l * 0.55
+        return Qt.rgba(Theme.surface.r * darken, Theme.surface.g * darken, Theme.surface.b * darken, a)
+    }
+    readonly property color glassBorderColor: {
+        const l = Math.max(0.0, Math.min(1.0, Theme.leftLuminance))
+        const a = 0.35 + 0.35 * l
+        return Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, a)
+    }
 
     // Built-in Power Menu State
     property bool powerPopupOpen: false

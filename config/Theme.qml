@@ -31,6 +31,7 @@ Singleton {
         if (!j || typeof j !== "object") return
 
         const pick = (k, fallback) => (typeof j[k] === "string" && j[k] !== "") ? j[k] : fallback
+        const pickNum = (k, fallback) => (typeof j[k] === "number" && !isNaN(j[k])) ? j[k] : fallback
         root.live = {
             surface: pick("surface", root.live.surface),
             card: pick("card", root.live.card),
@@ -41,7 +42,8 @@ Singleton {
             brandAccentFg: pick("brandAccentFg", root.live.brandAccentFg),
             textMain: pick("textMain", root.live.textMain),
             textMuted: pick("textMuted", root.live.textMuted),
-            outlineSoft: pick("outlineSoft", root.live.outlineSoft)
+            outlineSoft: pick("outlineSoft", root.live.outlineSoft),
+            leftLuminance: pickNum("leftLuminance", root.live.leftLuminance !== undefined ? root.live.leftLuminance : 0.20)
         }
     }
 
@@ -109,6 +111,10 @@ Singleton {
 
     property color textMuted: root.live.textMuted !== undefined ? root.live.textMuted : "#BACAC5"
     Behavior on textMuted { ColorAnimation { duration: root.animDuration } }
+
+    // Left wallpaper strip relative luminance (0.0 = black, 1.0 = white, 0.20 default fallback)
+    property real leftLuminance: (root.live.leftLuminance !== undefined && typeof root.live.leftLuminance === "number") ? root.live.leftLuminance : 0.20
+    Behavior on leftLuminance { NumberAnimation { duration: root.animDuration } }
 
     readonly property int sidebarWindowWidth: 54
     readonly property int sidebarBarWidth: 54

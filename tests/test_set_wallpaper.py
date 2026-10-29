@@ -117,5 +117,133 @@ class SetWallpaperPipelineTests(unittest.TestCase):
         self.assertIn("inactive_border", call_args[2])
 
 
+class LeftStripLuminanceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_srgb_to_linear(self):
+        self.assertAlmostEqual(set_wallpaper.srgb_to_linear(0.0), 0.0, places=5)
+        self.assertAlmostEqual(set_wallpaper.srgb_to_linear(1.0), 1.0, places=5)
+        # Below threshold 0.04045
+        self.assertAlmostEqual(set_wallpaper.srgb_to_linear(0.04), 0.04 / 12.92, places=5)
+        # Above threshold: 0.5 -> ~0.21404
+        self.assertAlmostEqual(set_wallpaper.srgb_to_linear(0.5), 0.21404, places=4)
+
+    def test_black_and_white_inputs(self):
+        black_img = self.tmp_path / "black.png"
+        Image.new("RGB", (1920, 1080), color=(0, 0, 0)).save(black_img)
+        lum_black = set_wallpaper.calculate_left_strip_luminance(
+            black_img, monitor_res=(1920, 1080), monitor_scale=1.0
+        )
+        self.assertEqual(lum_black, 0.0)
+
+        white_img = self.tmp_path / "white.png"
+        Image.new("RGB", (1920, 1080), color=(255, 255, 255)).save(white_img)
+        lum_white = set_wallpaper.calculate_left_strip_luminance(
+            white_img, monitor_res=(1920, 1080), monitor_scale=1.0
+        )
+        self.assertEqual(lum_white, 1.0)
+
+    def test_gradient_inputs(self):
+        # Horizontal gradient: Left black (0) to Right white (255)
+        w, h = 1920, 1080
+        grad_lr = Image.new("RGB", (w, h))
+        pixels_lr = grad_lr.load()
+        for x in range(w):
+            val = int(255 * (x / (w - 1)))
+            for y in range(h):
+                pixels_lr[x, y] = (val, val, val)
+        grad_lr_path = self.tmp_path / "grad_lr.png"
+        grad_lr.save(grad_lr_path)
+
+        # Left strip (first 120 logical -> 180 physical pixels) is near black
+        lum_lr = set_wallpaper.calculate_left_strip_luminance(
+            grad_lr_path, monitor_res=(1920, 1080), monitor_scale=1.0
+        )
+        self.assertLess(lum_lr, 0.05)
+
+        # Inverted gradient: Left white (255) to Right black (0)
+        grad_rl = Image.new("RGB", (w, h))
+        pixels_rl = grad_rl.load()
+        for x in range(w):
+            val = int(255 * (1.0 - (x / (w - 1))))
+            for y in range(h):
+                pixels_rl[x, y] = (val, val, val)
+        grad_rl_path = self.tmp_path / "grad_rl.png"
+        grad_rl.save(grad_rl_path)
+
+        lum_rl = set_wallpaper.calculate_left_strip_luminance(
+            grad_rl_path, monitor_res=(1920, 1080), monitor_scale=1.0
+        )
+        self.assertGreater(lum_rl, 0.85)
+
+    def test_left_strip_only_changes(self):
+        # Two wide wallpapers with identical left strip but completely different right side
+        w, h = 3840, 2160
+        img_a = Image.new("RGB", (w, h), color=(0, 0, 0))
+        img_b = Image.new("RGB", (w, h), color=(255, 255, 255))
+
+        pixels_a = img_a.load()
+        pixels_b = img_b.load()
+        for x in range(600):
+            for y in range(h):
+                pixels_a[x, y] = (45, 212, 191)
+                pixels_b[x, y] = (45, 212, 191)
+
+        path_a = self.tmp_path / "strip_test_a.png"
+        path_b = self.tmp_path / "strip_test_b.png"
+        img_a.save(path_a)
+        img_b.save(path_b)
+
+        lum_a = set_wallpaper.calculate_left_strip_luminance(
+            path_a, monitor_res=(1920, 1200), monitor_scale=1.5
+        )
+        lum_b = set_wallpaper.calculate_left_strip_luminance(
+            path_b, monitor_res=(1920, 1200), monitor_scale=1.5
+        )
+        self.assertEqual(lum_a, lum_b)
+
+    def test_missing_and_corrupt_images(self):
+        # Non-existent file
+        lum_missing = set_wallpaper.calculate_left_strip_luminance(self.tmp_path / "non_existent.png")
+        self.assertEqual(lum_missing, 0.20)
+
+        # Corrupt file
+        corrupt_file = self.tmp_path / "corrupt.png"
+        corrupt_file.write_bytes(b"NOT_A_VALID_PNG_IMAGE_FILE_DATA")
+        lum_corrupt = set_wallpaper.calculate_left_strip_luminance(corrupt_file)
+        self.assertEqual(lum_corrupt, 0.20)
+
+    def test_theme_json_backward_compatibility_and_atomic_merge(self):
+        theme_json = self.tmp_path / "gps-theme.json"
+        initial_data = {
+            "surface": "#112233",
+            "customUserKey": "do_not_erase_me",
+        }
+        theme_json.write_text(json.dumps(initial_data), encoding="utf-8")
+
+        new_theme = {
+            "wallpaper": "/some/path/wall.png",
+            "leftLuminance": 0.42,
+            "surface": "#998877",
+        }
+
+        set_wallpaper.write_theme_files(new_theme, json_path=theme_json, rofi_path=self.tmp_path / "colors.rasi")
+
+        self.assertTrue(theme_json.exists())
+        saved = json.loads(theme_json.read_text(encoding="utf-8"))
+        self.assertEqual(saved.get("customUserKey"), "do_not_erase_me")
+        self.assertEqual(saved.get("leftLuminance"), 0.42)
+        self.assertEqual(saved.get("surface"), "#998877")
+        self.assertEqual(saved.get("wallpaper"), "/some/path/wall.png")
+
+        tmp_files = list(self.tmp_path.glob(".*gps-theme.json.tmp-*"))
+        self.assertEqual(len(tmp_files), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,12 @@ class ThemeContractTests(unittest.TestCase):
     def test_carousel_uses_theme_tokens(self):
         self.assertIn("Theme.surfaceDeep", CAROUSEL_QML)
 
+    def test_theme_exposes_and_animates_left_luminance(self):
+        self.assertIn("property real leftLuminance:", THEME_QML)
+        self.assertIn("Behavior on leftLuminance", THEME_QML)
+        self.assertIn("NumberAnimation { duration: root.animDuration }", THEME_QML)
+        self.assertIn("leftLuminance: pickNum(\"leftLuminance\"", THEME_QML)
+
 
 if __name__ == "__main__":
     unittest.main()

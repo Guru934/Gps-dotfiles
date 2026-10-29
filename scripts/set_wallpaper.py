@@ -7,6 +7,7 @@ import colorsys
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -158,10 +159,118 @@ def hsv_rgba_hex(h: float, s: float, v: float, alpha_hex: str = "FF") -> str:
     return f"#{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}{alpha_hex}"
 
 
+def srgb_to_linear(c: float) -> float:
+    """Convert an sRGB color component in [0.0, 1.0] to linear light per IEC 61966-2-1."""
+    if c <= 0.04045:
+        return max(0.0, c / 12.92)
+    return max(0.0, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def get_monitor_geometry() -> tuple[int, int, float]:
+    """Detect primary monitor physical resolution and scale factor, fallback to 1920x1200@1.5."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        try:
+            out = subprocess.check_output(["hyprctl", "monitors"], text=True, stderr=subprocess.DEVNULL)
+            match_res = re.search(r"(\d+)x(\d+)@[\d\.]+", out)
+            match_scale = re.search(r"scale:\s*([\d\.]+)", out)
+            if match_res:
+                w, h = int(match_res.group(1)), int(match_res.group(2))
+                scale = float(match_scale.group(1)) if match_scale else 1.0
+                return w, h, scale
+        except Exception:
+            pass
+    return 1920, 1200, 1.5
+
+
+def calculate_left_strip_luminance(
+    img_path: Path | str,
+    logical_strip_width: int = 120,
+    monitor_res: tuple[int, int] | None = None,
+    monitor_scale: float | None = None,
+) -> float:
+    """Calculate the average relative luminance of the left wallpaper strip.
+
+    Handles sRGB -> linear conversion, monitor aspect-fill crop geometry,
+    black, white, gradients, and returns safe fallback for missing/corrupt images.
+    """
+    from PIL import Image
+
+    DEFAULT_FALLBACK = 0.20
+
+    if not img_path:
+        return DEFAULT_FALLBACK
+
+    path = Path(img_path).expanduser().resolve()
+    if not path.is_file():
+        return DEFAULT_FALLBACK
+
+    try:
+        with Image.open(path) as raw_img:
+            img = raw_img.convert("RGB")
+    except Exception:
+        return DEFAULT_FALLBACK
+
+    w_img, h_img = img.size
+    if w_img <= 0 or h_img <= 0:
+        return DEFAULT_FALLBACK
+
+    if monitor_res is not None and monitor_scale is not None:
+        w_mon, h_mon = monitor_res
+        scale = float(monitor_scale)
+    else:
+        det_w, det_h, det_scale = get_monitor_geometry()
+        w_mon = monitor_res[0] if monitor_res else det_w
+        h_mon = monitor_res[1] if monitor_res else det_h
+        scale = monitor_scale if monitor_scale is not None else det_scale
+
+    scale = max(0.1, scale)
+    physical_strip_w = max(1, int(round(logical_strip_width * scale)))
+
+    s = max(w_mon / float(w_img), h_mon / float(h_img))
+
+    x0_raw = (w_img - (w_mon / s)) / 2.0
+    x1_raw = x0_raw + (physical_strip_w / s)
+    y0_raw = (h_img - (h_mon / s)) / 2.0
+    y1_raw = y0_raw + (h_mon / s)
+
+    x0 = max(0, min(w_img - 1, int(round(x0_raw))))
+    x1 = max(x0 + 1, min(w_img, int(round(x1_raw))))
+    y0 = max(0, min(h_img - 1, int(round(y0_raw))))
+    y1 = max(y0 + 1, min(h_img, int(round(y1_raw))))
+
+    strip = img.crop((x0, y0, x1, y1))
+    sample_w = max(1, min(32, strip.width))
+    sample_h = max(1, min(128, strip.height))
+
+    resample_filter = getattr(Image, "Resampling", Image).BILINEAR
+    sample = strip.resize((sample_w, sample_h), resample=resample_filter)
+
+    try:
+        pixels = sample.get_flattened_data()
+    except AttributeError:
+        pixels = sample.getdata()
+
+    total_lum = 0.0
+    count = 0
+    for r, g, b in pixels:
+        r_lin = srgb_to_linear(r / 255.0)
+        g_lin = srgb_to_linear(g / 255.0)
+        b_lin = srgb_to_linear(b / 255.0)
+        y = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+        total_lum += y
+        count += 1
+
+    if count == 0:
+        return DEFAULT_FALLBACK
+
+    return round(max(0.0, min(1.0, total_lum / count)), 4)
+
+
 def generate_theme(wall_path: Path | str) -> dict[str, Any]:
     """Generate color palette tokens from wallpaper image."""
     wall_str = str(Path(wall_path).expanduser().resolve())
     h, s, _ = extract_dominant_hsv(wall_str)
+    left_lum = calculate_left_strip_luminance(wall_str)
     acc_s = max(0.55, min(0.82, s * 0.95))
     acc_v = 0.96
 
@@ -171,6 +280,7 @@ def generate_theme(wall_path: Path | str) -> dict[str, Any]:
 
     theme = {
         "wallpaper": wall_str,
+        "leftLuminance": left_lum,
         "surface": hsv_hex(h, 0.48, 0.13, "F2"),
         "card": hsv_hex(h, 0.44, 0.20),
         "cardHover": hsv_hex(h, 0.46, 0.28),
@@ -222,11 +332,24 @@ def write_theme_files(
     json_path = json_path or get_theme_json_path()
     rofi_path = rofi_path or get_rofi_colors_path()
 
-    # 1. Write gps-theme.json atomically
-    json_content = json.dumps(theme, indent=2) + "\n"
+    # 1. Read existing JSON if present to preserve unrelated theme fields
+    existing: dict[str, Any] = {}
+    if json_path.exists():
+        try:
+            content = json_path.read_text(encoding="utf-8")
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                existing = parsed
+        except Exception:
+            existing = {}
+
+    merged_theme = {**existing, **theme}
+
+    # 2. Write gps-theme.json atomically
+    json_content = json.dumps(merged_theme, indent=2) + "\n"
     atomic_write(json_path, json_content)
 
-    # 2. Write rofi colors.rasi atomically
+    # 3. Write rofi colors.rasi atomically
     rofi_dir = rofi_path.parent
     if rofi_dir.exists():
         h, s, _ = extract_dominant_hsv(theme["wallpaper"])
@@ -239,9 +362,9 @@ def write_theme_files(
             f"    card: {hsv_rgba_hex(h, 0.44, 0.20)};\n"
             f"    hover: {hsv_rgba_hex(h, 0.46, 0.28)};\n"
             f"    accent: {hsv_rgba_hex(h, acc_s, acc_v)};\n"
-            f"    accent-fg: {theme['brandAccentFg']}FF;\n"
-            f"    text: {theme['textMain']}FF;\n"
-            f"    muted: {theme['textMuted']}FF;\n"
+            f"    accent-fg: {merged_theme.get('brandAccentFg', '#140E14')}FF;\n"
+            f"    text: {merged_theme.get('textMain', '#FFFFFF')}FF;\n"
+            f"    muted: {merged_theme.get('textMuted', '#DBBCBC')}FF;\n"
             f"    border-col: {hsv_rgba_hex(h, 0.45, 0.36)};\n"
             "}\n"
         )
