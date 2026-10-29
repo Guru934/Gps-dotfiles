@@ -513,12 +513,14 @@ PanelWindow {
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
-                    // Audio Button (compact, percentage in tooltip)
+                    // Audio Button (dynamic mute icon + live volume percentage)
                     RailButton {
                         glyph: root.isMuted
                             ? "󰝟"
                             : (root.volumePct < 35 ? "󰕿" : (root.volumePct < 75 ? "󰖀" : "󰕾"))
+                        sublabel: root.isMuted ? "MUT" : (root.volumePct + "%")
                         iconColor: root.isMuted ? Theme.statusDanger : Theme.accentSecondary
+                        sublabelColor: root.isMuted ? Theme.statusDanger : Theme.textMain
                         accentColor: root.isMuted ? Theme.statusDanger : Theme.accentSecondary
                         tooltip: (root.isMuted ? "Audio Muted" : ("Volume: " + root.volumePct + "%"))
                             + " · Click: Mute · Scroll: ±5%"
@@ -527,13 +529,15 @@ PanelWindow {
                         onScrolledDown: root.changeVolume(-5)
                     }
 
-                    // Brightness Button (compact, percentage in tooltip)
+                    // Brightness Button (sun icon + live brightness percentage)
                     RailButton {
                         visible: Brightness.available
                         glyph: Brightness.percent < 35
                             ? "󰃞"
                             : (Brightness.percent < 75 ? "󰃟" : "󰖨")
+                        sublabel: Brightness.percent + "%"
                         iconColor: Theme.accentTertiary
+                        sublabelColor: Theme.textMain
                         accentColor: Theme.accentTertiary
                         tooltip: "Brightness: " + Brightness.percent + "% · Click: Cycle · Scroll: ±5%"
                         onClicked: root.cycleBrightnessPreset()
@@ -1022,7 +1026,7 @@ PanelWindow {
     }
 
     // ========================================================================
-    // 5. ICON RAIL BUTTON COMPONENT (Compact)
+    // 5. ICON RAIL BUTTON COMPONENT (Compact with optional sublabel)
     // ========================================================================
     component RailButton: Rectangle {
         id: button
@@ -1030,12 +1034,14 @@ PanelWindow {
         property string tooltip: ""
         property color accentColor: Theme.brandAccent
         property color iconColor: Theme.textMain
+        property string sublabel: ""
+        property color sublabelColor: Theme.textMain
         signal clicked()
         signal scrolledUp()
         signal scrolledDown()
 
         width: 28
-        height: 24
+        height: button.sublabel !== "" ? 30 : 24
         radius: 6
         anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
         color: mouse.containsMouse
@@ -1052,14 +1058,30 @@ PanelWindow {
             NumberAnimation { duration: 140; easing.type: Easing.OutBack }
         }
 
-        Text {
+        Column {
             anchors.centerIn: parent
-            text: button.glyph
-            color: mouse.containsMouse ? button.accentColor : button.iconColor
-            opacity: mouse.containsMouse ? 1.0 : 0.92
-            font.family: Theme.fontMono
-            font.pixelSize: 13
-            Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            spacing: 0
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: button.glyph
+                color: mouse.containsMouse ? button.accentColor : button.iconColor
+                opacity: mouse.containsMouse ? 1.0 : 0.92
+                font.family: Theme.fontMono
+                font.pixelSize: button.sublabel !== "" ? 11 : 13
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            }
+
+            Text {
+                visible: button.sublabel !== ""
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: button.sublabel
+                color: mouse.containsMouse ? button.accentColor : button.sublabelColor
+                font.family: Theme.fontMono
+                font.pixelSize: 8
+                font.bold: true
+                Behavior on color { ColorAnimation { duration: Theme.animDuration } }
+            }
         }
 
         MouseArea {
