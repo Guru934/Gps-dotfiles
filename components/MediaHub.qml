@@ -216,7 +216,7 @@ Item {
     QtObject {
         id: localPlayerStateWriter
         function save() {
-            if (!root.localPlayerStateFileReady) return
+            if (!root.localPlayerStateFileReady || !localPlayerStateFile.path) return
             var item = root.nowPlaying
             if (!item || typeof item.id !== "string" || item.id.indexOf("local:") !== 0) {
                 localPlayerStateFile.setText('{"active":false}')
@@ -1932,10 +1932,13 @@ Item {
         id: localPlayerStateFile
         path: MediaNowPlaying.localStatePath
         printErrors: false
-        Component.onCompleted: {
+        function initializeWriter() {
+            if (!path) return
             root.localPlayerStateFileReady = true
             localPlayerStateWriter.save()
         }
+        onPathChanged: initializeWriter()
+        Component.onCompleted: initializeWriter()
     }
 
     FileView {
