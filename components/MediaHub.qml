@@ -1727,6 +1727,7 @@ Item {
     property string musicMood: ""
     property string musicView: "Discover"
     property string musicQuery: ""
+    property string musicWebSearchQuery: ""
     property string radioGenre: "All"
     property string radioCountry: ""
     property bool queueOpen: true
@@ -2063,6 +2064,24 @@ Item {
             return (it.genre || "Radio") + " \u00b7 " + (it.codec || "audio") + " \u00b7 " + quality
         }
         return it.artist + (it.album ? (" \u00b7 " + it.album) : "")
+    }
+    function openMusicWebSearch(service) {
+        const query = musicWebSearchQuery.trim()
+        if (query === "") return false
+
+        const encoded = encodeURIComponent(query)
+        let url = ""
+        if (service === "youtube")
+            url = "https://music.youtube.com/search?q=" + encoded
+        else if (service === "jiosaavn")
+            url = "https://www.jiosaavn.com/search/song/" + encoded
+        else if (service === "spotify")
+            url = "https://open.spotify.com/search/" + encoded
+        else
+            return false
+
+        Quickshell.execDetached(["xdg-open", url])
+        return true
     }
     function startCurrent() {
         if (!nowPlaying) return
@@ -4193,6 +4212,51 @@ Item {
                             }
                             Btn { kind: "primary"; accent: root.accent; icon: "play"; label: "Play mix"; muted: root.musicLoading; onClicked: root.playCurrentMusicList(false) }
                             Btn { icon: "sync"; label: mp.wide ? "Shuffle" : ""; muted: root.musicLoading; onClicked: root.playCurrentMusicList(true) }
+                        }
+                    }
+
+                    // ---- web search shortcuts
+                    Card {
+                        width: parent.width
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Lbl { text: "Search music services"; font.pixelSize: 15; font.weight: Font.DemiBold }
+                                Item { Layout.fillWidth: true }
+                                Lbl { text: "Opens your browser"; mono: true; faint: true; font.pixelSize: 10 }
+                            }
+                            SearchField {
+                                Layout.fillWidth: true
+                                accent: root.accent
+                                placeholder: "Search YouTube Music, JioSaavn or Spotify"
+                                text: root.musicWebSearchQuery
+                                onEdited: root.musicWebSearchQuery = text
+                                onSubmitted: root.openMusicWebSearch("youtube")
+                            }
+                            Wrap {
+                                width: parent.width
+                                spacing: 8
+                                Btn {
+                                    compact: true
+                                    icon: "search"
+                                    label: "YouTube Music"
+                                    onClicked: root.openMusicWebSearch("youtube")
+                                }
+                                Btn {
+                                    compact: true
+                                    icon: "search"
+                                    label: "JioSaavn"
+                                    onClicked: root.openMusicWebSearch("jiosaavn")
+                                }
+                                Btn {
+                                    compact: true
+                                    icon: "search"
+                                    label: "Spotify"
+                                    onClicked: root.openMusicWebSearch("spotify")
+                                }
+                            }
                         }
                     }
 
