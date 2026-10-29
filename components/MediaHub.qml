@@ -20,6 +20,7 @@ import QtMultimedia
 import QtQuick.Dialogs
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Mpris
 import qs.config
 import "MusicQueue.js" as MusicQueue
 import "MediaCatalogue.js" as MediaCatalogue
@@ -114,11 +115,23 @@ Item {
         onTriggered: root.runWallhavenSearch(false)
     }
 
+    Timer {
+        interval: 500
+        repeat: true
+        running: root.nowPlaying !== null && root.nowPlaying.id.indexOf("local:") === 0
+        onTriggered: localPlayerStateWriter.save()
+    }
+
     onPageChanged: {
         if (page === 1 && !wallhavenLoaded && !wallhavenLoading)
             wallhavenSearchTimer.restart()
-        if (page === pgMusic)
-            scheduleMusicSearch()
+        if (page === pgMusic) {
+            if (musicSource === "local") {
+                if (!localLoaded && !localLoading) reloadLocalLibrary()
+            } else {
+                scheduleMusicSearch()
+            }
+        }
     }
     onWpQueryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
     onWpCategoryChanged: { wpVisible = 6; scheduleWallhavenSearch() }
@@ -173,6 +186,7 @@ Item {
     Component.onCompleted: {
         musicBackend.checkStatus()
         toolsBackend.checkStatus()
+        MediaNowPlaying.localPlayer = hubPlayerAdapter
     }
 
     // ================================================================
@@ -197,6 +211,35 @@ Item {
     Component.onDestruction: {
         mediaSaveTimer.stop()
         if (mediaStateReady) saveMediaLibrary()
+        if (MediaNowPlaying.localPlayer === hubPlayerAdapter)
+            MediaNowPlaying.localPlayer = null
+    }
+
+    QtObject {
+        id: localPlayerStateWriter
+        function save() {
+            var item = root.nowPlaying
+            if (!item || typeof item.id !== "string" || item.id.indexOf("local:") !== 0) {
+                localPlayerStateFile.setText('{"active":false}')
+                return
+            }
+            localPlayerStateFile.setText(JSON.stringify({
+                active: true,
+                id: item.id,
+                title: item.title,
+                artist: item.artist,
+                album: item.album,
+                art: item.art,
+                playing: root.playing,
+                position: root.playPos,
+                length: root.currentDuration,
+                canPrevious: root.queue.length > 1
+                    && (root.queueIndex > 0 || root.repeatOn || root.shuffleOn),
+                canNext: root.queue.length > 1
+                    && (root.queueIndex < root.queue.length - 1 || root.repeatOn || root.shuffleOn),
+                updatedAt: Date.now()
+            }))
+        }
     }
 
     FileView {
@@ -1681,6 +1724,15 @@ Item {
     // the queue are, with full stream metadata so they survive later searches.
     property var jamendoTracks: []
     property var radioStations: []
+    property var localTracks: []
+    property bool localLoaded: false
+    property bool localLoading: false
+    property string localError: ""
+    property int localIndexedCount: 0
+    property int localSkippedCount: 0
+    property int localScanRequestId: 0
+    property string localMusicDir: Quickshell.env("GPS_MUSIC_DIR")
+        || (Quickshell.env("HOME") + "/Music")
     property var musicFavorites: []
     property bool musicStatusChecked: false
     property bool jamendoConfigured: false
@@ -1800,9 +1852,11 @@ Item {
     }
     readonly property string musicSaveKey: JSON.stringify([
         musicFavorites, queue, queueIndex, musicSource, musicMood,
-        volume, muted, shuffleOn, repeatOn
+        volume, muted, shuffleOn, repeatOn, localMusicDir
     ])
     onMusicSaveKeyChanged: if (musicStateReady) musicSaveTimer.restart()
+    onNowPlayingChanged: localPlayerStateWriter.save()
+    onPlayingChanged: localPlayerStateWriter.save()
 
     Timer {
         id: musicSearchTimer
@@ -1826,7 +1880,7 @@ Item {
             volume: root.muted ? 0 : root.volume
         }
         onPlaybackStateChanged: root.playing = playbackState === MediaPlayer.PlayingState
-        onPositionChanged: {
+        onPositionChanged: (position) => {
             if (root.nowPlaying && root.nowPlaying.kind === "track")
                 root.playPos = Math.max(0, position / 1000)
         }
@@ -1843,6 +1897,57 @@ Item {
         }
     }
 
+    QtObject {
+        id: hubPlayerAdapter
+        readonly property string dbusName: "gps.media-hub"
+        readonly property string identity: "GPS Media Hub"
+        readonly property string desktopEntry: "gps-media-hub"
+        readonly property string uniqueId: root.nowPlaying ? root.nowPlaying.id : ""
+        readonly property string trackTitle: root.nowPlaying ? root.nowPlaying.title : ""
+        readonly property string trackArtist: root.nowPlaying ? root.nowPlaying.artist : ""
+        readonly property string trackAlbum: root.nowPlaying
+            ? (root.nowPlaying.album || root.nowPlaying.genre || "") : ""
+        readonly property string trackAlbumArtist: trackArtist
+        readonly property string trackArtUrl: root.nowPlaying ? root.nowPlaying.art : ""
+        readonly property string trackArtists: trackArtist
+        readonly property bool isPlaying: root.playing
+        readonly property real position: root.playPos
+        readonly property real length: root.currentDuration
+        readonly property bool positionSupported: root.nowPlaying !== null
+            && root.nowPlaying.kind === "track" && root.currentDuration > 0
+        readonly property bool lengthSupported: positionSupported
+        readonly property bool canSeek: positionSupported
+        readonly property bool canControl: root.nowPlaying !== null
+        readonly property bool canPlay: canControl
+        readonly property bool canPause: canControl && isPlaying
+        readonly property bool canTogglePlaying: canControl
+        readonly property bool canGoPrevious: root.queue.length > 1
+            && (root.queueIndex > 0 || root.repeatOn || root.shuffleOn)
+        readonly property bool canGoNext: root.queue.length > 1
+            && (root.queueIndex < root.queue.length - 1 || root.repeatOn || root.shuffleOn)
+        readonly property var playbackState: root.playing
+            ? MprisPlaybackState.Playing
+            : (root.nowPlaying ? MprisPlaybackState.Paused : MprisPlaybackState.Stopped)
+
+        function play() { if (!root.playing) root.togglePlay() }
+        function pause() { if (root.playing) audioPlayer.pause() }
+        function togglePlaying() { root.togglePlay() }
+        function next() { root.skip(1) }
+        function previous() { root.skip(-1) }
+        function stop() { root.stopPlayer() }
+        function seekTo(seconds) {
+            if (!positionSupported) return
+            root.seekFrac(Math.max(0, Math.min(1, Number(seconds) / length)))
+        }
+        function seek(offset) { seekTo(position + Number(offset)) }
+    }
+
+    FileView {
+        id: localPlayerStateFile
+        path: MediaNowPlaying.localStatePath
+        printErrors: false
+    }
+
     FileView {
         id: musicStateFile
         path: root.musicStatePath
@@ -1852,6 +1957,19 @@ Item {
             root.musicStateReady = true
         }
         onLoadFailed: root.musicStateReady = true
+    }
+
+    Connections {
+        target: HubProvider
+        function onSucceeded(requestId, payload) {
+            if (requestId !== root.localScanRequestId) return
+            root.handleLocalLibrary(payload, requestId)
+        }
+        function onFailed(requestId, error) {
+            if (requestId !== root.localScanRequestId) return
+            root.localLoading = false
+            root.localError = error && error.message ? error.message : "The local music scan failed."
+        }
     }
 
     onMusicQueryChanged: if (page === pgMusic) scheduleMusicSearch()
@@ -1887,7 +2005,12 @@ Item {
             if (musicLoading && musicSource === "radio") return "SEARCHING"
             return musicError !== "" && musicSource === "radio" ? "OFFLINE" : (radioLoaded ? "LIVE DIRECTORY" : "READY")
         }
-        return "NOT CONNECTED"
+        if (id === "local") {
+            if (localLoading) return "SCANNING"
+            if (localError !== "") return "UNAVAILABLE"
+            return localLoaded ? (localIndexedCount + " TRACKS") : "READY"
+        }
+        return "UNAVAILABLE"
     }
     function musicSourceTint(id) {
         if (id === "jamendo") {
@@ -1895,7 +2018,7 @@ Item {
             return jamendoConfigured ? "#86efac" : "#fde047"
         }
         if (id === "radio") return musicError !== "" && musicSource === "radio" ? "#ffb4ab" : "#7bd0ff"
-        return "#948e9d"
+        return localError !== "" && musicSource === "local" ? "#ffb4ab" : (localLoaded ? "#ddb8ff" : "#948e9d")
     }
     function setMusicSource(id) {
         musicSource = id
@@ -1908,7 +2031,60 @@ Item {
         musicLoading = false
         pendingMixPlay = false
         pendingMixShuffle = false
-        scheduleMusicSearch()
+        if (id === "local")
+            reloadLocalLibrary()
+        else
+            scheduleMusicSearch()
+    }
+
+    function reloadLocalLibrary() {
+        const directory = localMusicDir.trim()
+        if (directory === "" || directory.charAt(0) !== "/") {
+            localError = "Choose an absolute music folder path."
+            return false
+        }
+        localLoading = true
+        localError = ""
+        localScanRequestId = HubProvider.run("media-hub-library.py", ["scan", directory])
+        if (localScanRequestId < 0) {
+            localLoading = false
+            localError = HubProvider.error && HubProvider.error.message
+                ? HubProvider.error.message : "Could not start the local music scan."
+            return false
+        }
+        return true
+    }
+
+    function setLocalMusicDirectory(directory) {
+        const value = String(directory || "").trim()
+        if (value === "" || value.charAt(0) !== "/") {
+            localError = "Choose a valid absolute music folder."
+            return false
+        }
+        localMusicDir = value
+        localTracks = []
+        localLoaded = false
+        localIndexedCount = 0
+        localSkippedCount = 0
+        localError = ""
+        if (musicSource === "local") reloadLocalLibrary()
+        return true
+    }
+
+    function handleLocalLibrary(payload, requestId) {
+        if (requestId !== localScanRequestId) return
+        if (!payload || !MusicQueue.isArrayLike(payload.results)) {
+            localLoading = false
+            localError = "The local music provider returned an invalid index."
+            return
+        }
+        localTracks = MusicQueue.sanitizeLibraryList(payload.results)
+        localIndexedCount = localTracks.length
+        localSkippedCount = Number.isInteger(payload.skipped) && payload.skipped >= 0 ? payload.skipped : 0
+        localLoaded = true
+        localLoading = false
+        localError = ""
+        logActivity("Local music: indexed " + localIndexedCount + " track(s)")
     }
     function scheduleMusicSearch() {
         if (page !== pgMusic || musicSource === "local") return
@@ -2019,6 +2195,7 @@ Item {
             queue: queue,
             queueIndex: queueIndex,
             source: musicSource,
+            localMusicDir: localMusicDir,
             mood: musicMood,
             volume: volume,
             muted: muted,
@@ -2032,6 +2209,7 @@ Item {
         queue = MusicQueue.sanitizeList(state.queue, 200)
         queueIndex = MusicQueue.normalizeIndex(state.queueIndex, queue.length)
         musicSource = state.source
+        localMusicDir = state.localMusicDir || localMusicDir
         musicView = musicSource === "radio" ? "Popular" : "Discover"
         musicMood = moodInfo(state.mood) ? state.mood : ""
         volume = state.volume
@@ -2041,7 +2219,10 @@ Item {
         var fav = Object.assign({}, favorites)
         for (var i = 0; i < musicFavorites.length; i++) fav[musicFavorites[i].id] = true
         favorites = fav
-        if (page === pgMusic) scheduleMusicSearch()
+        if (page === pgMusic) {
+            if (musicSource === "local") reloadLocalLibrary()
+            else scheduleMusicSearch()
+        }
     }
     function saveMusicState() {
         if (!musicStateReady) return
@@ -2050,6 +2231,7 @@ Item {
             queue: queue,
             queueIndex: queueIndex,
             source: musicSource,
+            localMusicDir: localMusicDir,
             mood: musicMood,
             volume: volume,
             muted: muted,
@@ -2062,7 +2244,7 @@ Item {
         if (!ref) return null
         var clean = MusicQueue.sanitizeItem(ref)
         if (clean) return clean
-        var lists = [jamendoTracks, radioStations, musicFavorites]
+        var lists = [jamendoTracks, radioStations, localTracks, musicFavorites]
         for (var i = 0; i < lists.length; i++) {
             var found = findIn(lists[i], ref.id)
             if (found) return MusicQueue.sanitizeItem(found)
@@ -2070,7 +2252,7 @@ Item {
         return null
     }
     function findMusicItem(id) {
-        var lists = [jamendoTracks, radioStations, musicFavorites, queue]
+        var lists = [jamendoTracks, radioStations, localTracks, musicFavorites, queue]
         for (var i = 0; i < lists.length; i++) {
             var found = findIn(lists[i], id)
             if (found) return MusicQueue.sanitizeItem(found)
@@ -2080,15 +2262,17 @@ Item {
     function filteredTracks() {
         var q = musicQuery.trim().toLowerCase(), out = []
         var list = musicView === "Favorites"
-            ? musicFavorites.filter(function (it) { return it.kind === "track" })
-            : jamendoTracks
+            ? musicFavorites.filter(function (it) {
+                return it.kind === "track" && (musicSource !== "local" || it.id.indexOf("local:") === 0)
+            })
+            : (musicSource === "local" ? localTracks : jamendoTracks)
         for (var i = 0; i < list.length; i++) {
             var t = list[i]
-            if (musicMood !== "" && t.moods.indexOf(musicMood) < 0) continue
+            if (musicSource !== "local" && musicMood !== "" && t.moods.indexOf(musicMood) < 0) continue
             if (q && (t.title + " " + t.artist + " " + t.album + " " + t.genre).toLowerCase().indexOf(q) < 0) continue
             out.push(t)
         }
-        return out
+        return musicSource === "local" ? out.slice(0, 200) : out
     }
     function filteredStations() {
         var q = musicQuery.trim().toLowerCase(), out = []
@@ -2132,6 +2316,7 @@ Item {
     }
     function startCurrent() {
         if (!nowPlaying) return
+        MediaNowPlaying.automaticPlayerSelection()
         musicPlaybackError = ""
         playPos = 0
         audioPlayer.source = nowPlaying.streamUrl
@@ -2163,13 +2348,13 @@ Item {
         playNow(l[0], l)
     }
     function playCurrentMusicList(shuffled) {
-        var list = musicSource === "jamendo" ? filteredTracks() : filteredStations()
+        var list = musicSource === "radio" ? filteredStations() : filteredTracks()
         if (list.length > 0) {
             playAll(list, shuffled)
             return
         }
         if (musicSource === "local") {
-            notify("Local music is not connected yet.", "warn")
+            notify(localLoading ? "The local library is still scanning." : "No local tracks match the current search.", "info")
             return
         }
         if (musicSource === "jamendo" && !jamendoConfigured) {
@@ -2698,6 +2883,13 @@ Item {
             "All files (*)"
         ]
         onAccepted: root.launchLocalVideo(selectedFile)
+    }
+
+    FolderDialog {
+        id: localMusicFolderDialog
+        title: "Choose a music folder"
+        currentFolder: Qt.resolvedUrl(root.localMusicDir)
+        onAccepted: root.setLocalMusicDirectory(selectedFolder.toLocalFile())
     }
 
     // ---------------------------------------------------------------- toast
@@ -4085,8 +4277,12 @@ Item {
                                         enabled: root.mprisPlayer && root.mprisPlayer.canSeek && root.mprisPlayer.length > 0
                                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: (mouse) => {
-                                            if (enabled)
-                                                root.mprisPlayer.position = Math.max(0, Math.min(1, mouse.x / width)) * root.mprisPlayer.length
+                                            if (!enabled) return
+                                            const target = Math.max(0, Math.min(1, mouse.x / width)) * root.mprisPlayer.length
+                                            if (typeof root.mprisPlayer.seekTo === "function")
+                                                root.mprisPlayer.seekTo(target)
+                                            else
+                                                root.mprisPlayer.position = target
                                         }
                                     }
                                 }
@@ -4239,15 +4435,20 @@ Item {
 
                     Card {
                         width: parent.width
-                        visible: mp.src === "local" || (mp.src === "jamendo" && !root.jamendoConfigured) || root.musicError !== ""
-                        tint: (root.musicError !== "" || mp.src === "local") ? "#ffb4ab" : "#fde047"
+                        visible: (mp.src === "jamendo" && !root.jamendoConfigured)
+                            || root.musicError !== ""
+                        tint: root.musicError !== "" ? "#ffb4ab" : "#fde047"
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
-                            Ico { name: "warn"; size: 18; tint: root.musicError !== "" ? "#ffb4ab" : "#fde047" }
+                            Ico {
+                                name: "warn"
+                                size: 18
+                                tint: root.musicError !== "" ? "#ffb4ab" : "#fde047"
+                            }
                             Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true; font.pixelSize: 13
                                   text: mp.src === "local"
-                                      ? "Local music is not connected yet. GPS Media Hub currently streams Jamendo and Radio Browser; local folder scanning is a later milestone."
+                                      ? root.localError
                                       : (root.musicError !== ""
                                           ? ("Search failed: " + root.musicError + (root.musicErrorCode !== "" ? " (" + root.musicErrorCode + ")" : ""))
                                           : ("Jamendo needs a client ID. Set JAMENDO_CLIENT_ID or add music.jamendoClientId to "
@@ -4391,6 +4592,63 @@ Item {
                         }
                     }
 
+                    // ---- local library controls
+                    Card {
+                        width: parent.width
+                        visible: mp.src === "local"
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Lbl { text: "Local library"; font.pixelSize: 15; font.weight: Font.DemiBold }
+                                Item { Layout.fillWidth: true }
+                                Btn {
+                                    compact: true
+                                    icon: "folder"
+                                    label: "Choose folder"
+                                    onClicked: localMusicFolderDialog.open()
+                                }
+                                Btn {
+                                    compact: true
+                                    icon: "refresh"
+                                    label: "Rescan"
+                                    muted: root.localLoading
+                                    onClicked: root.reloadLocalLibrary()
+                                }
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                text: root.localMusicDir
+                                elide: Text.ElideMiddle
+                                mono: true
+                                faint: true
+                                font.pixelSize: 10
+                            }
+                            SearchField {
+                                Layout.fillWidth: true
+                                accent: root.accent
+                                placeholder: "Search local tracks, artists, albums or genres"
+                                text: root.musicQuery
+                                onEdited: root.musicQuery = text
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                text: root.localLoading
+                                    ? "Scanning audio tags with ffprobe\u2026"
+                                    : (root.localError !== "" ? root.localError
+                                        : (root.localLoaded
+                                            ? root.localIndexedCount + " tracks indexed"
+                                                + (root.localSkippedCount > 0 ? " \u00b7 " + root.localSkippedCount + " files skipped" : "")
+                                                + (root.localIndexedCount > 200 ? " \u00b7 showing up to 200; search to narrow" : "")
+                                            : "Select Rescan to index this folder."))
+                                color: root.localError !== "" ? "#ffb4ab" : pal.dim
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
                     // ---- search + views
                     Card {
                         width: parent.width
@@ -4498,6 +4756,116 @@ Item {
                         }
                     }
 
+                    // ---- local tracks
+                    Column {
+                        width: parent.width
+                        spacing: 6
+                        visible: mp.src === "local"
+                        Lbl {
+                            mono: true
+                            faint: true
+                            font.pixelSize: 11
+                            text: root.localLoading ? "Indexing local music\u2026"
+                                : (root.filteredTracks().length + " local track" + (root.filteredTracks().length === 1 ? "" : "s"))
+                        }
+                        Repeater {
+                            model: root.filteredTracks()
+                            delegate: Rectangle {
+                                id: localTrackRow
+                                readonly property bool cur: root.nowPlaying !== null && root.nowPlaying.id === modelData.id
+                                width: parent.width
+                                height: 58
+                                radius: 12
+                                color: localTrackHover.containsMouse ? pal.high : (cur ? Qt.alpha(root.accent, 0.10) : pal.low)
+                                border.width: 1
+                                border.color: cur ? Qt.alpha(root.accent, 0.45) : pal.line
+                                MouseArea {
+                                    id: localTrackHover
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onDoubleClicked: root.playNow(modelData, root.filteredTracks())
+                                }
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 12; rightMargin: 10 }
+                                    spacing: 12
+                                    Lbl {
+                                        Layout.preferredWidth: 22
+                                        horizontalAlignment: Text.AlignHCenter
+                                        mono: true
+                                        font.pixelSize: 11
+                                        text: localTrackRow.cur ? (root.playing ? "\u25B6" : "\u2016") : (index + 1)
+                                        color: localTrackRow.cur ? root.accent : pal.faint
+                                    }
+                                    Art {
+                                        Layout.preferredWidth: 40
+                                        Layout.preferredHeight: 40
+                                        radiusPx: 8
+                                        frameColor: localTrackRow.color
+                                        src: root.artUrl(modelData.art)
+                                        grad: modelData.g
+                                        glyph: "music"
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Lbl {
+                                            Layout.fillWidth: true
+                                            text: modelData.title
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
+                                            color: localTrackRow.cur ? root.accent : pal.text
+                                        }
+                                        Lbl {
+                                            Layout.fillWidth: true
+                                            text: root.musicSub(modelData)
+                                            elide: Text.ElideRight
+                                            dim: true
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                    Tag { visible: mp.cw > 760 && modelData.genre !== ""; text: modelData.genre.toUpperCase(); px: 9 }
+                                    Lbl {
+                                        text: root.fmtTime(modelData.dur)
+                                        mono: true
+                                        faint: true
+                                        font.pixelSize: 11
+                                        Layout.preferredWidth: 38
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                    IconBtn {
+                                        box: 30
+                                        icon: root.favorites[modelData.id] ? "heart" : "heartO"
+                                        active: !!root.favorites[modelData.id]
+                                        tip: "Favorite"
+                                        onClicked: root.toggleFavorite(modelData.id, modelData.title)
+                                    }
+                                    IconBtn { box: 30; icon: "plus"; tip: "Add to queue"; onClicked: root.queueAdd(modelData, false) }
+                                    IconBtn { box: 30; icon: "chev"; tip: "Play next"; onClicked: root.queueAdd(modelData, true) }
+                                    IconBtn { box: 30; icon: "play"; tip: "Play"; tint: root.accent; onClicked: root.playNow(modelData, root.filteredTracks()) }
+                                }
+                            }
+                        }
+                        Card {
+                            width: parent.width
+                            visible: root.filteredTracks().length === 0 && !root.localLoading
+                            Lbl {
+                                font.pixelSize: 15
+                                font.weight: Font.DemiBold
+                                text: root.localError !== "" ? "Local library unavailable"
+                                    : (root.musicView === "Favorites" ? "No local favorites yet" : "No local tracks found")
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                dim: true
+                                text: root.localError !== "" ? root.localError
+                                    : (root.musicView === "Favorites" ? "Favorite a track to keep it in My Library."
+                                        : "Choose a music folder containing audio files, then rescan.")
+                            }
+                        }
+                    }
+
                     // ---- radio stations
                     Column {
                         width: parent.width
@@ -4550,16 +4918,6 @@ Item {
                                                                         : "Try another genre or country, clear the mood, or adjust the search." }
                             Btn { label: "Reset"; icon: "refresh"; onClicked: { root.musicMood = ""; root.musicQuery = ""; root.radioGenre = "All"; root.radioCountry = ""; root.musicView = "Popular" } }
                         }
-                    }
-
-                    // ---- local files (later)
-                    Card {
-                        width: parent.width
-                        visible: mp.src === "local"
-                        Lbl { font.pixelSize: 16; font.weight: Font.Bold; text: "Your music, your folders" }
-                        Lbl { Layout.fillWidth: true; wrapMode: Text.WordWrap; dim: true
-                              text: "Point GPS at folders of FLAC, MP3, Opus or M4A and they appear here with covers and tags. This is planned after Jamendo and Radio Browser." }
-                        Btn { icon: "folder"; label: "Add music folder"; onClicked: root.notify("Local music isn't connected yet \u2014 planned after the streaming sources.", "warn") }
                     }
 
                     // ---- narrow layouts: queue sits below the content

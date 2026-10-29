@@ -448,6 +448,8 @@ def validate_contract(shape: str, value: Any) -> None:
         permitted = {"https", "http"} | ({"file"} if allow_file else set())
         if parsed.scheme not in permitted or (parsed.scheme != "file" and not parsed.hostname):
             raise ValueError(f"{shape}.{field} must be an absolute URL")
+        if parsed.scheme == "file" and (parsed.netloc or not parsed.path.startswith("/") or parsed.query or parsed.fragment):
+            raise ValueError(f"{shape}.{field} must be an absolute local file URL")
 
     if shape == "Error":
         if value.get("ok") is not False:
@@ -471,7 +473,7 @@ def validate_contract(shape: str, value: Any) -> None:
         for field in ("id", "title", "artist", "album"):
             text(field, required=field in ("id", "title"))
         positive_int("dur", allow_zero=True)
-        url("streamUrl")
+        url("streamUrl", allow_file=isinstance(value.get("id"), str) and value["id"].startswith("local:"))
         for field in ("art", "sourceUrl"):
             if value.get(field):
                 url(field)

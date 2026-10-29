@@ -90,6 +90,35 @@ check("unsafe or incomplete queue items are rejected", () => {
     assert.strictEqual(M.sanitizeItem(track({ streamUrl: "https://example.com/a b" })), null);
 });
 
+check("local file URLs are accepted only for local library tracks", () => {
+    const local = M.sanitizeItem(track({
+        id: "local:" + "a".repeat(64),
+        title: "Local track",
+        streamUrl: "file:///home/rice/Music/Local%20track.mp3",
+        sourceUrl: ""
+    }));
+    assert.strictEqual(local.streamUrl, "file:///home/rice/Music/Local%20track.mp3");
+    assert.strictEqual(M.sanitizeItem(track({
+        id: "local:" + "b".repeat(64),
+        streamUrl: "file:///home/rice/Music/../secret.mp3"
+    })), null);
+    assert.strictEqual(M.sanitizeItem(track({
+        id: "jamendo-987654",
+        streamUrl: "file:///home/rice/Music/Local.mp3"
+    })), null);
+});
+
+check("local library sanitation accepts QVariantList-style results", () => {
+    const localTrack = track({
+        id: "local:" + "c".repeat(64),
+        title: "Local track",
+        streamUrl: "file:///home/rice/Music/Local.mp3"
+    });
+    const results = M.sanitizeLibraryList({ 0: localTrack, length: 1 });
+    assert.strictEqual(results.length, 1);
+    assert.strictEqual(results[0].id, localTrack.id);
+});
+
 check("HTTP radio streams remain valid while non-http artwork is dropped", () => {
     const item = M.sanitizeItem(station({
         streamUrl: "http://stream.example.net/live",
@@ -200,6 +229,7 @@ check("saved state rejects malformed data and clamps values", () => {
         queue: [station(), track({ streamUrl: "javascript:bad" })],
         queueIndex: 99,
         source: "radio",
+        localMusicDir: "relative/music",
         mood: "  Night\nDrive ",
         volume: 4,
         muted: "yes",
@@ -210,6 +240,7 @@ check("saved state rejects malformed data and clamps values", () => {
     assert.strictEqual(state.queue.length, 1);
     assert.strictEqual(state.queueIndex, -1);
     assert.strictEqual(state.source, "radio");
+    assert.strictEqual(state.localMusicDir, "");
     assert.strictEqual(state.mood, "Night Drive");
     assert.strictEqual(state.volume, 1);
     assert.strictEqual(state.muted, false);
@@ -223,6 +254,7 @@ check("missing saved fields use fallback values", () => {
         queue: [station()],
         queueIndex: 0,
         source: "radio",
+        localMusicDir: "/home/test/Music",
         mood: "Focus",
         volume: 0.4,
         muted: true,
@@ -233,11 +265,19 @@ check("missing saved fields use fallback values", () => {
     assert.strictEqual(state.queue.length, 1);
     assert.strictEqual(state.queueIndex, 0);
     assert.strictEqual(state.source, "radio");
+    assert.strictEqual(state.localMusicDir, "/home/test/Music");
     assert.strictEqual(state.mood, "Focus");
     assert.strictEqual(state.volume, 0.4);
     assert.strictEqual(state.muted, true);
     assert.strictEqual(state.shuffleOn, true);
     assert.strictEqual(state.repeatOn, true);
+});
+
+check("saved local folder paths preserve intentional whitespace", () => {
+    const state = M.parseState(JSON.stringify({
+        localMusicDir: "/home/test/Music  Archive"
+    }), { localMusicDir: "/home/test/Music" });
+    assert.strictEqual(state.localMusicDir, "/home/test/Music  Archive");
 });
 
 console.log("ALL PASS (" + passed + " music queue checks)");

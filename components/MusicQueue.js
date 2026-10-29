@@ -5,6 +5,7 @@
 // trusting previously written queue entries or API fields at face value.
 
 var MAX_QUEUE = 200;
+var MAX_LIBRARY = 10000;
 var MAX_TEXT = 240;
 var MAX_URL = 2048;
 var ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
@@ -37,6 +38,11 @@ function cleanText(value, limit) {
     return text.slice(0, limit || MAX_TEXT);
 }
 
+function cleanPath(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 1024);
+}
+
 function safeUrl(value, allowHttp) {
     if (typeof value !== "string") return "";
     var raw = value.trim();
@@ -53,7 +59,23 @@ function safeUrl(value, allowHttp) {
     return raw;
 }
 
-function safeStreamUrl(value) {
+function safeLocalFileUrl(value) {
+    if (typeof value !== "string" || value.length > MAX_URL || /[\u0000-\u0020\u007f]/.test(value)) return "";
+    var match = /^file:\/\/(\/[^?#]+)$/i.exec(value);
+    if (!match) return "";
+    try {
+        var path = decodeURIComponent(match[1]);
+        if (!path.startsWith("/") || path.startsWith("//") || path.indexOf("\u0000") >= 0
+                || path.split("/").some(function (part) { return part === "." || part === ".."; })) return "";
+    } catch (error) {
+        return "";
+    }
+    return value;
+}
+
+function safeStreamUrl(value, allowLocalFile) {
+    if (allowLocalFile === true && typeof value === "string" && value.indexOf("file:") === 0)
+        return safeLocalFileUrl(value);
     return safeUrl(value, true);
 }
 
@@ -88,7 +110,7 @@ function sanitizeItem(raw) {
     var id = typeof raw.id === "string" ? raw.id : "";
     if (!ID_RE.test(id)) return null;
     var title = cleanText(raw.title, 180);
-    var streamUrl = safeStreamUrl(raw.streamUrl);
+    var streamUrl = safeStreamUrl(raw.streamUrl, kind === "track" && id.indexOf("local:") === 0);
     if (!title || !streamUrl) return null;
     var item = {
         kind: kind,
@@ -128,6 +150,19 @@ function sanitizeList(value, limit) {
     for (var i = 0; i < value.length && out.length < max; i++) {
         var item = sanitizeItem(value[i]);
         if (!item || seen[item.id]) continue;
+        seen[item.id] = true;
+        out.push(item);
+    }
+    return out;
+}
+
+function sanitizeLibraryList(value) {
+    if (!isArrayLike(value)) return [];
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < value.length && out.length < MAX_LIBRARY; i++) {
+        var item = sanitizeItem(value[i]);
+        if (!item || item.kind !== "track" || item.id.indexOf("local:") !== 0 || seen[item.id]) continue;
         seen[item.id] = true;
         out.push(item);
     }
@@ -244,12 +279,18 @@ function parseState(text, fallback) {
     var source = typeof raw.source === "string" && SOURCES.indexOf(raw.source) >= 0
         ? raw.source
         : (SOURCES.indexOf(base.source) >= 0 ? base.source : "jamendo");
+    var localMusicDir = typeof raw.localMusicDir === "string"
+        ? cleanPath(raw.localMusicDir)
+        : cleanPath(base.localMusicDir);
+    if (localMusicDir.charAt(0) !== "/")
+        localMusicDir = cleanPath(base.localMusicDir);
     var queueIndex = isNumber(raw.queueIndex) ? raw.queueIndex : base.queueIndex;
     return {
         favorites: favorites,
         queue: queue,
         queueIndex: normalizeIndex(queueIndex, queue.length),
         source: source,
+        localMusicDir: localMusicDir,
         mood: typeof raw.mood === "string" ? cleanText(raw.mood, 40) : cleanText(base.mood, 40),
         volume: real(raw.volume, real(base.volume, 0.7, 0, 1), 0, 1),
         muted: typeof raw.muted === "boolean" ? raw.muted : base.muted === true,

@@ -111,7 +111,9 @@ Item {
         if (root.scrubActive && root.hasPlayer && root.player.canSeek && root.hasProgress) {
             const lengthMs = root.player.length * 1000
             const targetMs = Math.max(0, Math.min(lengthMs, root.scrubFrac * lengthMs))
-            if (root.player.positionSupported) {
+            if (typeof root.player.seekTo === "function") {
+                root.player.seekTo(targetMs / 1000.0)
+            } else if (root.player.positionSupported) {
                 root.player.position = targetMs / 1000.0
             } else {
                 root.player.seek((targetMs - Math.max(0, root.displayPos)) / 1000.0)
@@ -477,7 +479,9 @@ Item {
 
     function seekToLine(t) {
         if (!root.hasPlayer || !root.player.canSeek) return
-        if (root.player.positionSupported) {
+        if (typeof root.player.seekTo === "function") {
+            root.player.seekTo(t)
+        } else if (root.player.positionSupported) {
             root.player.position = t
         } else {
             const currentSec = root.displayPos / 1000.0

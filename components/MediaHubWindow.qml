@@ -62,6 +62,32 @@ FloatingWindow {
         }
     }
 
+    function toggleMusicPlayback() {
+        if (hubLoader.item && typeof hubLoader.item.togglePlay === "function")
+            hubLoader.item.togglePlay()
+    }
+
+    function nextMusicTrack() {
+        if (hubLoader.item && typeof hubLoader.item.skip === "function")
+            hubLoader.item.skip(1)
+    }
+
+    function previousMusicTrack() {
+        if (hubLoader.item && typeof hubLoader.item.skip === "function")
+            hubLoader.item.skip(-1)
+    }
+
+    function stopMusicPlayback() {
+        if (hubLoader.item && typeof hubLoader.item.stopPlayer === "function")
+            hubLoader.item.stopPlayer()
+    }
+
+    function seekMusicPlayback(seconds) {
+        if (!hubLoader.item || typeof hubLoader.item.seekFrac !== "function") return
+        const duration = Number(hubLoader.item.currentDuration)
+        if (duration > 0) hubLoader.item.seekFrac(Number(seconds) / duration)
+    }
+
     function openWallhavenSource(url) {
         const value = String(url || "")
         if (!/^https:\/\/wallhaven\.cc\/w\/[A-Za-z0-9]{6,12}$/.test(value))
@@ -107,6 +133,7 @@ FloatingWindow {
         clip: true
 
         Loader {
+            id: hubLoader
             anchors.fill: parent
             active: root.hubLoaded
             sourceComponent: mediaHubContent

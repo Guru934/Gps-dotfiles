@@ -199,6 +199,11 @@ class HubCommonTests(unittest.TestCase):
             "streamUrl": "https://media.example/stream",
         }
         hub_common.validate_contract("Track", valid)
+        hub_common.validate_contract("Track", {
+            **valid,
+            "id": "local:0123456789abcdef",
+            "streamUrl": "file:///home/test/Music/track.mp3",
+        })
         hub_common.validate_contract("Anime", {
             "kind": "anime", "id": "anime-1", "title": "Title",
             "siteUrl": "https://catalogue.example/anime/1",
@@ -221,6 +226,8 @@ class HubCommonTests(unittest.TestCase):
         hub_common.validate_contract("Error", hub_common.error_payload("network", "Offline"))
         with self.assertRaises(ValueError):
             hub_common.validate_contract("Track", {**valid, "dur": True})
+        with self.assertRaises(ValueError):
+            hub_common.validate_contract("Track", {**valid, "streamUrl": "file:///etc/passwd"})
         with self.assertRaises(ValueError):
             hub_common.validate_contract("Chapter", {
                 "title": "Chapter", "pageCount": 2, "pages": ["file:///tmp/page.png"],

@@ -181,6 +181,11 @@ Scope {
         function toggle() { root.toggleMediaHub() }
         function open() { root.openMediaHub() }
         function close() { root.closeMediaHub() }
+        function togglePlayback() { mediaHubWindow.toggleMusicPlayback() }
+        function nextTrack() { mediaHubWindow.nextMusicTrack() }
+        function previousTrack() { mediaHubWindow.previousMusicTrack() }
+        function stopPlayback() { mediaHubWindow.stopMusicPlayback() }
+        function seekPlayback(position: real) { mediaHubWindow.seekMusicPlayback(position) }
     }
 
     IpcHandler {

@@ -1,6 +1,7 @@
 // Island state: music — compact (326×40) · deck (420×150, on hover) · lyrics (420×190) · paused look
 // Everything is live: MPRIS title / artist / cover / position, PipeWire volume, spectrum from core,
-// lyrics from the shared, cached LRCLIB provider.
+// lyrics from the shared, cached LRCLIB provider. Hub-local playback is bridged
+// across the Island process by MediaNowPlaying.
 // Nothing is hard-coded; a field with no data hides. No "FLAC/96K" badge: MPRIS doesn't expose it.
 import QtQuick
 import QtQuick.Layouts
@@ -270,7 +271,13 @@ Item {
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         enabled: st.core.player !== null && st.core.player.canSeek
-                        onClicked: m => st.core.player.position = (m.x / width) * st.core.length
+                        onClicked: m => {
+                            const target = (m.x / width) * st.core.length
+                            if (typeof st.core.player.seekTo === "function")
+                                st.core.player.seekTo(target)
+                            else
+                                st.core.player.position = target
+                        }
                     }
                 }
                 RowLayout { Layout.fillWidth: true

@@ -54,6 +54,8 @@ may be included.
 `id`, `title`, and `streamUrl` are required. `artist`, `album`, `art`, and
 `sourceUrl` may be empty or omitted. `dur` is a non-negative integer in
 seconds; streaming URLs may use HTTP or HTTPS where the provider requires it.
+The local-library provider may use an absolute `file:///` URL only with an ID
+prefixed by `local:`.
 
 ### Lyrics
 
@@ -153,6 +155,14 @@ while adapting LRCLIB results for Hub, Dashboard, and Island consumers.
   family and `components/MediaCatalogue.js` filtering/sanitization.
 - Local manga page/chapter data can use the existing
   `components/MangaReader.js` collection/progress helpers.
+- `scripts/media-hub-library.py` scans a configurable music folder with
+  `ffprobe`, reuses unchanged file metadata from the shared disk cache, and
+  returns normalized local `Track` values with `local:` IDs.
+- Local playback remains in the Hub's Qt Multimedia player. A short-lived
+  snapshot under `XDG_RUNTIME_DIR` lets the separate Island process show that
+  player; Island transport and seek requests return to the shell over Quickshell
+  IPC. The snapshot is refreshed while a local track is selected and expires
+  when the Hub stops publishing.
 - Existing favorite, queue, and media-library state is currently owned by
   `components/MediaHub.qml` and stored via `FileView` below the user's config
   directory in `quickshell/media-hub-music.json` and
