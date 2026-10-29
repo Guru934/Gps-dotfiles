@@ -416,12 +416,6 @@ Item {
     ]
 
     // ================================================================
-    //  DOWNLOADS STATE + PERSISTENCE
-    // ================================================================
-    property bool downloadsStateReady: false
-    property bool downloadsDirty: false
-    property bool downloadsQueuePaused: false
-    // ================================================================
     //  DOWNLOADS STATE (delegated to MediaHubDownloads controller)
     // ================================================================
     property alias downloads: downloadsBackend.downloads

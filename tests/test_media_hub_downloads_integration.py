@@ -170,6 +170,42 @@ class LayerSeparationTests(unittest.TestCase):
         # MediaHub.qml must NOT contain raw download state declarations
         self.assertNotIn("property var downloads: []", source)
         self.assertNotIn("property string dlMode: \"video\"", source)
+        self.assertNotIn("property bool downloadsStateReady", source)
+        self.assertNotIn("property bool downloadsDirty", source)
+        self.assertNotIn("property bool downloadsQueuePaused", source)
+
+    def test_no_duplicate_property_declarations_in_media_hub(self):
+        """MediaHub.qml must not contain duplicate property declarations that
+        conflict with aliases (e.g. declaring property bool downloadsStateReady
+        and property alias downloadsStateReady)."""
+        import re
+        source = Path(ROOT / "components" / "MediaHub.qml").read_text()
+        root_scope = source.split("//  INLINE BUILDING BLOCKS")[0]
+        aliases = re.findall(r"^\s+property\s+(?:readonly\s+)?alias\s+(\w+)\s*:", root_scope, re.M)
+        raw_props = re.findall(r"^\s+property\s+(?:bool|int|real|string|var|list)\s+(\w+)\s*:", root_scope, re.M)
+        duplicates = set(aliases).intersection(set(raw_props))
+        self.assertEqual(duplicates, set(), f"Duplicate root property declarations found in MediaHub.qml: {duplicates}")
+
+    def test_controller_event_routing_is_wired(self):
+        """MediaHubDownloads.qml must wire every process and controller event
+        signal to its respective state handler."""
+        source = Path(ROOT / "components" / "MediaHubDownloads.qml").read_text()
+        required_connections = [
+            "onStatusFinished: (payload) => root.handleDownloadStatus(payload)",
+            "onInspectSucceeded: (payload, requestId) => root.handleDownloadInspection(payload, requestId)",
+            "onInspectFailed: (message, code, requestId) => root.handleDownloadInspectFailure(message, code, requestId)",
+            "onDownloadStarted: (jobId) => root.handleDownloadStarted(jobId)",
+            "onDownloadProgress: (payload, jobId) => root.handleDownloadProgress(payload, jobId)",
+            "onDownloadPostprocess: (payload, jobId) => root.handleDownloadPostprocess(payload, jobId)",
+            "onDownloadFile: (path, jobId) => root.handleDownloadFile(path, jobId)",
+            "onDownloadFinished: (payload, jobId) => root.handleDownloadFinished(payload, jobId)",
+            "onDownloadFailed: (message, code, jobId) => root.handleDownloadFailure(message, code, jobId)",
+            "onDownloadCancelled: (jobId) => root.handleDownloadCancelled(jobId)",
+            "onUtilitySucceeded: (payload, action) => root.handleDownloadUtilitySuccess(payload, action)",
+            "onUtilityFailed: (message, code, action) => root.handleDownloadUtilityFailure(message, code, action)",
+        ]
+        for conn in required_connections:
+            self.assertIn(conn, source, f"Missing event routing connection in MediaHubDownloads.qml: {conn}")
 
     def test_controller_does_not_reference_itself_as_downloadsBackend(self):
         """MediaHubDownloads.qml must not reference `downloadsBackend` from

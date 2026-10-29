@@ -188,6 +188,19 @@ Item {
     signal utilitySucceeded(var payload, string action)
     signal utilityFailed(string message, string code, string action)
 
+    onStatusFinished: (payload) => root.handleDownloadStatus(payload)
+    onInspectSucceeded: (payload, requestId) => root.handleDownloadInspection(payload, requestId)
+    onInspectFailed: (message, code, requestId) => root.handleDownloadInspectFailure(message, code, requestId)
+    onDownloadStarted: (jobId) => root.handleDownloadStarted(jobId)
+    onDownloadProgress: (payload, jobId) => root.handleDownloadProgress(payload, jobId)
+    onDownloadPostprocess: (payload, jobId) => root.handleDownloadPostprocess(payload, jobId)
+    onDownloadFile: (path, jobId) => root.handleDownloadFile(path, jobId)
+    onDownloadFinished: (payload, jobId) => root.handleDownloadFinished(payload, jobId)
+    onDownloadFailed: (message, code, jobId) => root.handleDownloadFailure(message, code, jobId)
+    onDownloadCancelled: (jobId) => root.handleDownloadCancelled(jobId)
+    onUtilitySucceeded: (payload, action) => root.handleDownloadUtilitySuccess(payload, action)
+    onUtilityFailed: (message, code, action) => root.handleDownloadUtilityFailure(message, code, action)
+
     // UI-level side effects handled by MediaHub.qml
     signal notify(string text, string kind)
     signal logActivity(string message)
@@ -472,7 +485,7 @@ Item {
         root.dlError = "Cancelling inspection\u2026"
     }
     function handleDownloadInspection(payload, requestId) {
-        if (requestId !== root.dlInspectRequestId) return
+        if (requestId !== "" && root.dlInspectRequestId !== "" && requestId !== root.dlInspectRequestId) return
         root.dlInspection = payload
         root.dlInspectedUrl = DownloadsQueue.cleanUrl(payload.url)
         root.dlFormatId = ""
