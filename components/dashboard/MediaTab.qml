@@ -82,6 +82,9 @@ Item {
             root.syncPos()
             root.checkLyricsTrack()
         }
+        function onTrackArtistChanged() { root.checkLyricsTrack() }
+        function onTrackAlbumChanged() { root.checkLyricsTrack() }
+        function onLengthChanged() { root.checkLyricsTrack() }
     }
 
     Timer {
@@ -370,10 +373,19 @@ Item {
     property string lyricsMessage: ""
     property string lyricsTrackKey: ""
     property string lyricsRequestKey: ""
+    readonly property string lyricsServiceKey: root.hasPlayer
+        ? MediaLyrics.keyFor(
+            root.player.trackArtist,
+            root.player.trackTitle,
+            root.player.trackAlbum,
+            root.player.lengthSupported ? root.player.length : 0
+        )
+        : ""
     property bool lyricsFollow: true
 
     readonly property string trackKey: root.hasPlayer
-        ? (root.player.uniqueId + "|" + root.player.trackTitle + "|" + root.player.trackArtist)
+        ? (root.player.uniqueId + "|" + root.player.trackTitle + "|" + root.player.trackArtist + "|"
+            + root.player.trackAlbum + "|" + Math.round(root.player.length))
         : ""
 
     function resetLyrics() {
@@ -393,61 +405,56 @@ Item {
     }
 
     function lookupLyrics() {
-        if (!root.hasPlayer || root.player.trackTitle.length === 0 || lyricsProc.running) return
+        if (!root.hasPlayer || root.player.trackTitle.length === 0) return
         root.lyricsState = "loading"
         root.lyricsMessage = ""
         root.lyricsFollow = true
         root.lyricsRequestKey = root.trackKey
-        const dur = root.player.lengthSupported && root.player.length > 0 ? String(root.player.length) : ""
-        lyricsProc.command = [
-            "python3",
-            Qt.resolvedUrl("../../scripts/lyrics.py").toString().replace(/^file:\/\//, ""),
+        MediaLyrics.lookup(
             root.player.trackArtist,
             root.player.trackTitle,
             root.player.trackAlbum,
-            dur
-        ]
-        lyricsProc.running = true
+            root.player.lengthSupported ? root.player.length : 0
+        )
+        root.syncLyricsFromService()
     }
 
-    Process {
-        id: lyricsProc
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (root.lyricsRequestKey !== root.trackKey)
-                    return // track changed mid-flight; keep the fresh state
-                let data = null
-                try { data = JSON.parse(text.trim()) } catch (e) { data = null }
-                if (!data) {
-                    root.lyricsState = "error"
-                    root.lyricsMessage = "unreadable lookup response"
-                    return
-                }
-                root.lyricsTrackKey = root.lyricsRequestKey
-                if (data.status === "ok" && data.synced === true && Array.isArray(data.lines)) {
-                    root.lyricsState = "ok"
-                    root.lyricsSynced = true
-                    root.lyricsLines = data.lines
-                    root.lyricsPlain = ""
-                } else if (data.status === "ok" && typeof data.plain === "string") {
-                    root.lyricsState = "ok"
-                    root.lyricsSynced = false
-                    root.lyricsLines = []
-                    root.lyricsPlain = data.plain
-                } else if (data.status === "none") {
-                    root.lyricsState = "none"
-                } else {
-                    root.lyricsState = "error"
-                    root.lyricsMessage = data.message || "lookup failed"
-                }
+    function syncLyricsFromService() {
+        if (root.lyricsRequestKey !== root.trackKey || root.lyricsServiceKey === "") return
+        if (MediaLyrics.resultKey === root.lyricsServiceKey) {
+            const data = MediaLyrics.result
+            root.lyricsTrackKey = root.lyricsRequestKey
+            root.lyricsMessage = ""
+            if (data.status === "synced") {
+                root.lyricsState = "ok"
+                root.lyricsSynced = true
+                root.lyricsLines = data.lines
+                root.lyricsPlain = ""
+            } else if (data.status === "plain") {
+                root.lyricsState = "ok"
+                root.lyricsSynced = false
+                root.lyricsLines = []
+                root.lyricsPlain = data.plain
+            } else {
+                root.lyricsState = "none"
+                root.lyricsSynced = false
+                root.lyricsLines = []
+                root.lyricsPlain = ""
             }
+        } else if (MediaLyrics.errorKey === root.lyricsServiceKey) {
+            root.lyricsState = "error"
+            root.lyricsMessage = MediaLyrics.error ? MediaLyrics.error.message : "lyrics lookup failed"
+        } else if (MediaLyrics.loading && MediaLyrics.requestKey === root.lyricsServiceKey) {
+            root.lyricsState = "loading"
         }
-        onExited: (code, status) => {
-            if (root.lyricsState === "loading") {
-                root.lyricsState = "error"
-                root.lyricsMessage = code === 0 ? "empty lookup response" : ("lookup process exited " + code)
-            }
-        }
+    }
+
+    Connections {
+        target: MediaLyrics
+        function onResultKeyChanged() { root.syncLyricsFromService() }
+        function onRequestKeyChanged() { root.syncLyricsFromService() }
+        function onErrorKeyChanged() { root.syncLyricsFromService() }
+        function onLoadingChanged() { root.syncLyricsFromService() }
     }
 
     readonly property int currentLineIndex: {

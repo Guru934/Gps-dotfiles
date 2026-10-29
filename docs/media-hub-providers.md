@@ -55,6 +55,29 @@ may be included.
 `sourceUrl` may be empty or omitted. `dur` is a non-negative integer in
 seconds; streaming URLs may use HTTP or HTTPS where the provider requires it.
 
+### Lyrics
+
+The LRCLIB provider returns a normalized lyrics object inside the standard
+`{"ok": true, "lyrics": ...}` success envelope. Synced lines use seconds from
+the start of the track and are sorted by timestamp:
+
+```json
+{
+  "status": "synced",
+  "lines": [
+    {"t": 12.3, "s": "A lyric line"},
+    {"t": 15.0, "s": "The next line"}
+  ]
+}
+```
+
+When LRCLIB has no timed lyrics, `status` is `plain` with a non-empty `plain`
+string, or `none` when it has no usable lyrics. Lookup uses
+`GET /api/get` with track, artist, album and duration metadata, then falls back
+to `GET /api/search` when there is no exact match. Requests use the shared
+`GPS-Desktop/<version>` User-Agent and normalized results, including no-match
+results, are cached for 24 hours under the shared media cache.
+
 ### Anime and Manga
 
 ```json
@@ -119,6 +142,8 @@ matching `media-hub-*.py`, without a shell. A newer request or `cancel()` stops
 the previous process and ignores stale output. It exposes `loading`, `error`,
 and `succeeded`, `failed`, and `cancelled` signals; callers should supply
 arguments as a string array and use the emitted request ID to correlate results.
+`qs.config.MediaLyrics` applies the same cancellation and stale-response rules
+while adapting LRCLIB results for Hub, Dashboard, and Island consumers.
 
 ## Reuse in the existing Hub
 

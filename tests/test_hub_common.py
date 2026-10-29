@@ -213,6 +213,11 @@ class HubCommonTests(unittest.TestCase):
         hub_common.validate_contract("PageList", {
             "title": "Chapter", "pageCount": 1, "pages": ["https://images.example/1.png"],
         })
+        hub_common.validate_contract("Lyrics", {
+            "status": "synced", "lines": [{"t": 1.25, "s": "Line"}],
+        })
+        hub_common.validate_contract("Lyrics", {"status": "plain", "plain": "Words"})
+        hub_common.validate_contract("Lyrics", {"status": "none"})
         hub_common.validate_contract("Error", hub_common.error_payload("network", "Offline"))
         with self.assertRaises(ValueError):
             hub_common.validate_contract("Track", {**valid, "dur": True})
@@ -223,6 +228,10 @@ class HubCommonTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hub_common.validate_contract("Error", {
                 "ok": False, "error": {"kind": "other", "message": "bad"},
+            })
+        with self.assertRaises(ValueError):
+            hub_common.validate_contract("Lyrics", {
+                "status": "synced", "lines": [{"t": -1, "s": "Line"}],
             })
 
 

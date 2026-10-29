@@ -512,4 +512,25 @@ def validate_contract(shape: str, value: Any) -> None:
             if parsed.scheme not in ("https", "http", "file"):
                 raise ValueError("PageList pages must use HTTP, HTTPS, or file URLs")
         return
+    if shape == "Lyrics":
+        status = value.get("status")
+        if status == "synced":
+            lines = value.get("lines")
+            if not isinstance(lines, list) or not lines:
+                raise ValueError("Lyrics.lines must be a non-empty array")
+            for line in lines:
+                if not isinstance(line, dict):
+                    raise ValueError("Lyrics lines must be objects")
+                timestamp = line.get("t")
+                if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp) or timestamp < 0:
+                    raise ValueError("Lyrics line timestamps must be non-negative numbers")
+                if not isinstance(line.get("s"), str) or not line["s"].strip():
+                    raise ValueError("Lyrics line text must be non-empty")
+            return
+        if status == "plain":
+            text("plain")
+            return
+        if status == "none":
+            return
+        raise ValueError("Lyrics.status must be 'synced', 'plain', or 'none'")
     raise ValueError(f"Unknown normalized shape: {shape}")

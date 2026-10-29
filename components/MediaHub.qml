@@ -1697,6 +1697,27 @@ Item {
     property real mprisPositionBase: 0
     property real mprisPositionStamp: 0
     property real mprisTick: 0
+    property bool mprisLyricsOpen: false
+    readonly property string mprisLyricsKey: mprisPlayer
+        ? MediaLyrics.keyFor(
+            mprisPlayer.trackArtist,
+            mprisPlayer.trackTitle,
+            mprisPlayer.trackAlbum,
+            mprisPlayer.length
+        )
+        : ""
+    readonly property var mprisLyricsResult: mprisLyricsKey !== ""
+        && MediaLyrics.resultKey === mprisLyricsKey ? MediaLyrics.result : null
+    readonly property int mprisLyricsLineIndex: {
+        const lyrics = mprisLyricsResult
+        if (!lyrics || lyrics.status !== "synced") return -1
+        let current = -1
+        for (let i = 0; i < lyrics.lines.length; i++) {
+            if (lyrics.lines[i].t <= mprisPosition) current = i
+            else break
+        }
+        return current
+    }
     readonly property real mprisPosition: mprisPlayer
         ? Math.max(0, mprisPositionBase + (mprisPlayer.isPlaying ? (mprisTick - mprisPositionStamp) / 1000 : 0))
         : 0
@@ -1708,12 +1729,38 @@ Item {
         mprisTick = mprisPositionStamp
     }
 
-    onMprisPlayerChanged: root.syncMprisPosition()
+    function lookupMprisLyrics() {
+        if (!mprisPlayer || !mprisPlayer.trackTitle) return false
+        MediaLyrics.lookup(
+            mprisPlayer.trackArtist,
+            mprisPlayer.trackTitle,
+            mprisPlayer.trackAlbum,
+            mprisPlayer.length
+        )
+        return true
+    }
+
+    onMprisPlayerChanged: {
+        root.syncMprisPosition()
+        if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+    }
 
     Connections {
         target: root.mprisPlayer
         function onPositionChanged() { root.syncMprisPosition() }
-        function onTrackTitleChanged() { root.syncMprisPosition() }
+        function onTrackTitleChanged() {
+            root.syncMprisPosition()
+            if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+        }
+        function onTrackArtistChanged() {
+            if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+        }
+        function onTrackAlbumChanged() {
+            if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+        }
+        function onLengthChanged() {
+            if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+        }
     }
 
     Timer {
@@ -4070,6 +4117,90 @@ Item {
                                 active: root.mprisPlayer && root.mprisPlayer.canGoNext
                                 onClicked: if (active) root.mprisPlayer.next()
                             }
+                        }
+                    }
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Btn {
+                                compact: true
+                                icon: root.mprisLyricsOpen ? "close" : "lyrics"
+                                label: root.mprisLyricsOpen ? "Hide lyrics" : "Lyrics"
+                                onClicked: {
+                                    root.mprisLyricsOpen = !root.mprisLyricsOpen
+                                    if (root.mprisLyricsOpen) root.lookupMprisLyrics()
+                                }
+                            }
+                            Lbl {
+                                Layout.fillWidth: true
+                                text: root.mprisLyricsResult
+                                    ? (root.mprisLyricsResult.status === "synced" ? "Synced lyrics"
+                                        : (root.mprisLyricsResult.status === "plain" ? "Plain lyrics" : "No lyrics found"))
+                                    : (MediaLyrics.loading && MediaLyrics.requestKey === root.mprisLyricsKey
+                                        ? "Looking up lyrics\u2026"
+                                        : (MediaLyrics.errorKey === root.mprisLyricsKey ? "Lyrics unavailable"
+                                            : "LRCLIB lyrics"))
+                                mono: true
+                                faint: true
+                                font.pixelSize: 10
+                            }
+                        }
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: visible ? 154 : 0
+                            visible: root.mprisLyricsOpen && root.mprisLyricsResult
+                                && root.mprisLyricsResult.status === "synced"
+                            clip: true
+                            spacing: 4
+                            model: visible ? root.mprisLyricsResult.lines : []
+                            delegate: Lbl {
+                                required property var modelData
+                                required property int index
+                                width: ListView.view.width
+                                text: modelData.s
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 12
+                                color: index === root.mprisLyricsLineIndex ? root.accent : pal.dim
+                                font.weight: index === root.mprisLyricsLineIndex ? Font.DemiBold : Font.Normal
+                            }
+                        }
+                        Flickable {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: visible ? Math.min(154, plainLyricsText.implicitHeight) : 0
+                            visible: root.mprisLyricsOpen && root.mprisLyricsResult
+                                && root.mprisLyricsResult.status === "plain"
+                            contentWidth: width
+                            contentHeight: plainLyricsText.implicitHeight
+                            clip: true
+                            Text {
+                                id: plainLyricsText
+                                width: parent.width
+                                text: root.mprisLyricsResult ? root.mprisLyricsResult.plain : ""
+                                color: pal.dim
+                                font.family: Theme.fontUi
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        Lbl {
+                            Layout.fillWidth: true
+                            visible: root.mprisLyricsOpen && root.mprisLyricsResult
+                                && root.mprisLyricsResult.status === "none"
+                            text: "No lyrics found for this track."
+                            wrapMode: Text.WordWrap
+                            dim: true
+                            font.pixelSize: 12
+                        }
+                        Lbl {
+                            Layout.fillWidth: true
+                            visible: root.mprisLyricsOpen && MediaLyrics.errorKey === root.mprisLyricsKey
+                            text: MediaLyrics.error ? MediaLyrics.error.message : "The lyrics provider could not be reached."
+                            wrapMode: Text.WordWrap
+                            dim: true
+                            font.pixelSize: 12
                         }
                     }
 

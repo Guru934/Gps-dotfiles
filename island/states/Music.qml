@@ -1,12 +1,12 @@
 // Island state: music — compact (326×40) · deck (420×150, on hover) · lyrics (420×190) · paused look
 // Everything is live: MPRIS title / artist / cover / position, PipeWire volume, spectrum from core,
-// lyrics from LRCLIB (search by cleaned title, picked by closest track length).
+// lyrics from the shared, cached LRCLIB provider.
 // Nothing is hard-coded; a field with no data hides. No "FLAC/96K" badge: MPRIS doesn't expose it.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
 import QtQuick.Shapes
-import Quickshell.Io
+import qs.config
 import "PetSprites.js" as S
 
 Item {
@@ -32,66 +32,38 @@ Item {
     property string lstatus: "idle"     // idle · loading · synced · plain · none · error
     property string loadedKey: ""
     property int idx: -1
-    readonly property string trackKey: core.title + "|" + Math.round(core.length)
+    readonly property string trackKey: core.artist + "|" + core.title + "|"
+        + (core.player ? core.player.trackAlbum : "") + "|" + Math.round(core.length)
     readonly property bool want: lyricsView && core.hasMedia
 
     onWantChanged: { maybeFetch(); updateIdx() }
     onTrackKeyChanged: { lines = []; plain = ""; lstatus = "idle"; idx = -1; loadedKey = ""; maybeFetch() }
 
-    function cleanTitle(t) {
-        let s = String(t).split("|")[0]
-        s = s.replace(/[\(\[][^\)\]]*[\)\]]/g, " ")
-        s = s.replace(/\b(official|lyrical|lyrics|video|audio|full version|full song|hd|4k|remastered|music video)\b/gi, " ")
-        return s.replace(/\s+/g, " ").replace(/^[\s\-–—]+|[\s\-–—]+$/g, "")
-    }
     function maybeFetch() {
-        if (!want || loadedKey === trackKey || lyrProc.running) return
-        const q = cleanTitle(core.title)
+        if (!want || loadedKey === trackKey) return
+        const album = core.player ? core.player.trackAlbum : ""
+        const key = MediaLyrics.keyFor(core.artist, core.title, album, core.length)
         loadedKey = trackKey
-        if (q === "") { lstatus = "none"; return }
+        if (core.title.trim() === "") { lstatus = "none"; return }
+        if (MediaLyrics.resultKey === key) { syncLyrics(); return }
         lstatus = "loading"
-        lyrProc.key = trackKey
-        lyrProc.query = q
-        lyrProc.running = true
+        MediaLyrics.lookup(core.artist, core.title, album, core.length)
+        syncLyrics()
     }
-    function pick(arr) {
-        if (!Array.isArray(arr) || arr.length === 0) return null
-        const L = core.length, q = cleanTitle(core.title).toLowerCase()
-        let best = null, bestScore = -1e9
-        for (const r of arr) {
-            let sc = 0
-            if (r.syncedLyrics) sc += 50
-            if (L > 0 && r.duration) sc -= Math.min(60, Math.abs(r.duration - L)) * 2
-            if (q !== "" && String(r.trackName || "").toLowerCase().indexOf(q) >= 0) sc += 20
-            if (sc > bestScore) { best = r; bestScore = sc }
+    function syncLyrics() {
+        const album = core.player ? core.player.trackAlbum : ""
+        const key = MediaLyrics.keyFor(core.artist, core.title, album, core.length)
+        if (MediaLyrics.resultKey === key) {
+            const result = MediaLyrics.result
+            lines = result.status === "synced" ? result.lines : []
+            plain = result.status === "plain" ? result.plain : ""
+            lstatus = result.status
+            updateIdx()
+        } else if (MediaLyrics.errorKey === key) {
+            lstatus = "error"
+        } else if (MediaLyrics.loading && MediaLyrics.requestKey === key) {
+            lstatus = "loading"
         }
-        if (best && L > 0 && best.duration && Math.abs(best.duration - L) > 15) return null
-        return best
-    }
-    function parseLrc(txt) {
-        const out = []
-        for (const l of txt.split("\n")) {
-            const m = /^\s*((?:\[\d+:\d+(?:\.\d+)?\])+)\s*(.*)$/.exec(l)
-            if (!m) continue
-            const s = m[2].trim()
-            for (const ts of m[1].match(/\[\d+:\d+(?:\.\d+)?\]/g)) {
-                const p = /\[(\d+):(\d+(?:\.\d+)?)\]/.exec(ts)
-                out.push({ t: parseInt(p[1]) * 60 + parseFloat(p[2]), s: s })
-            }
-        }
-        out.sort((a, b) => a.t - b.t)
-        return out
-    }
-    function onLyrics(text, forKey) {
-        if (forKey !== trackKey) { loadedKey = ""; maybeFetch(); return }   // track changed while fetching
-        let arr
-        try { arr = JSON.parse(text) } catch (e) { lstatus = text.trim() === "" ? "error" : "none"; return }
-        const best = pick(arr)
-        if (!best) { lstatus = "none"; return }
-        if (best.syncedLyrics) { lines = parseLrc(best.syncedLyrics); lstatus = lines.length > 0 ? "synced" : "none" }
-        else if (best.plainLyrics) { plain = best.plainLyrics; lstatus = "plain" }
-        else lstatus = "none"
-        updateIdx()
     }
     function updateIdx() {
         if (lstatus !== "synced") { idx = -1; return }
@@ -100,24 +72,21 @@ Item {
         for (let k = 0; k < lines.length; k++) { if (lines[k].t <= p) i = k; else break }
         if (i !== idx) idx = i
     }
-    Process {
-        id: lyrProc
-        property string query: ""
-        property string key: ""
-        command: ["curl", "-sS", "-m", "8", "-G", "--data-urlencode", "q=" + query,
-                  "-H", "User-Agent: island-qml (quickshell)", "https://lrclib.net/api/search"]
-        stdout: StdioCollector { onStreamFinished: st.onLyrics(text, lyrProc.key) }
-        onExited: code => { if (code !== 0 && st.lstatus === "loading") st.lstatus = "error" }
+    Connections {
+        target: MediaLyrics
+        function onResultKeyChanged() { st.syncLyrics() }
+        function onRequestKeyChanged() { st.syncLyrics() }
+        function onErrorKeyChanged() { st.syncLyrics() }
+        function onLoadingChanged() { st.syncLyrics() }
     }
     Timer {
         interval: 250; repeat: true
         running: st.want && st.core.playing && st.lstatus === "synced" && st.core.player !== null
-        onTriggered: st.core.player.positionChanged()
+        onTriggered: st.updateIdx()
     }
-    Connections { target: st.core; function onPositionChanged() { st.updateIdx() } }
 
     readonly property string curText: lstatus === "synced" ? (idx >= 0 ? (lines[idx].s || "♪") : "♪")
-                                    : lstatus === "plain" ? "Lyrics found, but without timing"
+                                    : lstatus === "plain" ? plain
                                     : lstatus === "loading" ? "Searching lyrics…"
                                     : lstatus === "none" ? "No lyrics found for this track"
                                     : lstatus === "error" ? "Lyrics unavailable (offline?)" : ""
@@ -351,8 +320,25 @@ Item {
         }
         Item {
             Layout.fillWidth: true; Layout.fillHeight: true
+            Flickable {
+                anchors.fill: parent
+                visible: st.lstatus === "plain"
+                contentWidth: width
+                contentHeight: plainLyrics.implicitHeight
+                clip: true
+                Text {
+                    id: plainLyrics
+                    width: parent.width
+                    text: st.plain
+                    color: st.core.dim
+                    font.family: st.core.uiFont
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+            }
             ColumnLayout {
                 anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 6
+                visible: st.lstatus !== "plain"
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
                     Rectangle { Layout.alignment: Qt.AlignTop; Layout.topMargin: 5; width: 6; height: 6; radius: 3; color: st.core.teal
