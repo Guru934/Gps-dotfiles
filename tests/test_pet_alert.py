@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 
 
-HELPER = Path.home() / ".local/bin/pet-alert"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HELPER = REPO_ROOT / "scripts" / "pet-alert"
+if not HELPER.exists():
+    HELPER = Path.home() / ".local/bin/pet-alert"
 
 
 class PetAlertHelperTests(unittest.TestCase):
@@ -27,10 +30,11 @@ class PetAlertHelperTests(unittest.TestCase):
             self.assertEqual(records, [])
 
     def test_codex_permission_request_uses_documented_fields(self):
+        repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         payload = json.dumps({
             "hook_event_name": "PermissionRequest",
             "session_id": "s1",
-            "cwd": "/home/rice/Projects/my-rice",
+            "cwd": repo_dir,
             "tool_name": "Bash",
             "tool_input": {"command": "printf '%s' \"quoted\"", "description": "safe test"},
         })
@@ -38,7 +42,7 @@ class PetAlertHelperTests(unittest.TestCase):
         self.assertEqual(records[0]["tool"], "codex")
         self.assertEqual(records[0]["session"], "s1")
         self.assertIn("printf", records[0]["detail"])
-        self.assertEqual(records[0]["cwd"], "/home/rice/Projects/my-rice")
+        self.assertEqual(records[0]["cwd"], repo_dir)
         self.assertEqual(records[0]["schema"], "pet-alert/v1")
         self.assertTrue(records[0]["respondable"])
 

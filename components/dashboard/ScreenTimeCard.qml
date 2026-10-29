@@ -61,7 +61,7 @@ DashSurface {
         id: fetchProc
         command: [
             "python3",
-            "/home/rice/Projects/my-rice/scripts/screen-time.py",
+            Qt.resolvedUrl("../../scripts/screen-time.py").toString().replace(/^file:\/\//, ""),
             "5"
         ]
         stdout: SplitParser {

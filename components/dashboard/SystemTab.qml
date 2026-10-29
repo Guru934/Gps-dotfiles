@@ -175,90 +175,33 @@ Item {
     // ------------------------------------------------------------------
     // Display brightness (brightnessctl; graceful when no backlight exists)
     // ------------------------------------------------------------------
-    property int brightPct: -1
-    property string brightDevice: ""
-    property bool brightAvailable: true
-    property real brightStamp: 0
+    readonly property int brightPct: Brightness.percent
+    readonly property string brightDevice: Brightness.device
+    readonly property bool brightAvailable: Brightness.available
+    readonly property bool brightnessReady: Brightness.available && Brightness.percent >= 0
 
-    readonly property bool brightnessReady: root.brightAvailable && root.brightPct >= 0
+    property int pendingBrightPct: -1
 
-    function parseBrightness(raw) {
-        const line = raw.trim().split("\n")[0]
-        if (!line) return
-        const parts = line.split(",")
-        if (parts.length >= 4) {
-            const parsed = parseInt(parts[3].replace("%", ""), 10)
-            if (!isNaN(parsed)) {
-                root.brightAvailable = true
-                root.brightDevice = parts[0]
-                if (Date.now() - root.brightStamp > 300) {
-                    root.brightPct = parsed
-                    brightSlider.value = parsed
-                }
-            }
+    Timer {
+        id: brightDebounce
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (pendingBrightPct >= 0) Brightness.setPercent(pendingBrightPct)
         }
     }
 
     function applyBrightness(pct) {
-        const clamped = Math.max(5, Math.min(100, Math.round(pct)))
-        root.brightStamp = Date.now()
-        root.brightPct = clamped
-        brightSlider.value = clamped
-        if (root.hub && typeof root.hub.setBrightnessPct === "function")
-            root.hub.setBrightnessPct(clamped)
-        else
-            Quickshell.execDetached(["brightnessctl", "-q", "set", clamped + "%"])
-        brightConfirmTimer.restart()
+        Brightness.setPercent(Math.round(pct))
     }
 
     function brightMoved(v) {
-        root.brightStamp = Date.now()
-        root.brightPct = Math.round(v)
+        pendingBrightPct = Math.round(v)
         brightDebounce.restart()
     }
 
     function stepBrightness(delta) {
-        applyBrightness((root.brightPct >= 0 ? root.brightPct : 50) + delta)
-    }
-
-    Process {
-        id: brightReadProc
-        command: ["brightnessctl", "-m"]
-        stdout: StdioCollector {
-            onStreamFinished: root.parseBrightness(text)
-        }
-        onExited: (code, status) => {
-            if (code !== 0) root.brightAvailable = false
-        }
-    }
-
-    Timer {
-        id: brightTimer
-        interval: 3000
-        repeat: true
-        running: root.isOpen
-        triggeredOnStart: true
-        onTriggered: {
-            if (!brightReadProc.running) brightReadProc.running = true
-        }
-    }
-
-    Timer {
-        id: brightDebounce
-        interval: 130
-        repeat: false
-        onTriggered: {
-            if (root.brightPct >= 0) root.applyBrightness(root.brightPct)
-        }
-    }
-
-    Timer {
-        id: brightConfirmTimer
-        interval: 450
-        repeat: false
-        onTriggered: {
-            if (!brightReadProc.running) brightReadProc.running = true
-        }
+        Brightness.step(delta)
     }
 
     // ------------------------------------------------------------------
@@ -803,7 +746,7 @@ Item {
                             from: 5
                             to: 100
                             interactive: brightnessReady
-                            value: root.brightPct >= 0 ? root.brightPct : 5
+                            value: Brightness.percent
                             accent: Theme.accentTertiary
                             onMoved: (v) => root.brightMoved(v)
                         }

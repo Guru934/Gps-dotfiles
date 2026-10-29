@@ -444,8 +444,81 @@ def ensure_awww_daemon() -> None:
     raise BridgeError("wallpaper_unavailable", "awww-daemon did not become ready.")
 
 
+def wallpaper_library_dir() -> Path:
+    override = os.environ.get("GPS_WALLPAPER_DIR", "")
+    if override:
+        return Path(override)
+    home = os.environ.get("HOME")
+    if not home:
+        home = os.path.expanduser("~")
+    return Path(home) / "Pictures" / "Wallpapers"
+
+
+def save_to_library(wallpaper_id: str, full_url: str) -> tuple[Path, bool]:
+    wallpaper_id = safe_id(wallpaper_id)
+    full_url = https_url(full_url, FULL_HOSTS)
+    if not full_url:
+        raise BridgeError("invalid_url", "The image URL is not a Wallhaven full-size URL.")
+    parsed = urllib.parse.urlsplit(full_url)
+    filename = Path(parsed.path).name
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".jpeg":
+        suffix = ".jpg"
+    if suffix not in IMAGE_EXTENSIONS:
+        raise BridgeError("invalid_url", "Unsupported image type.")
+    if Path(filename).stem.lower() != f"wallhaven-{wallpaper_id}".lower():
+        raise BridgeError("invalid_url", "The image URL does not match the wallpaper id.")
+
+    lib_dir = wallpaper_library_dir()
+    if lib_dir.is_symlink():
+        raise BridgeError("library_error", "Refusing a symlinked wallpaper library directory.")
+    try:
+        lib_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    except (OSError, ValueError) as error:
+        raise BridgeError("library_error", f"Could not create the wallpaper library: {error}") from error
+
+    target = lib_dir / f"wallhaven-{wallpaper_id}{suffix}"
+    if target.is_symlink():
+        raise BridgeError("library_error", "Refusing a symlinked wallpaper library entry.")
+    if target.is_file() and target.stat().st_size > 0 and validate_image(target):
+        return target, True
+
+    source_path, cached = ensure_image(wallpaper_id, full_url)
+    if not source_path.is_file() or source_path.stat().st_size == 0 or not validate_image(source_path):
+        raise BridgeError("invalid_image", "The source wallpaper is not a supported image.")
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=f".wallhaven-{wallpaper_id}-", suffix=".part",
+                                         dir=lib_dir, delete=False) as handle:
+            temp_path = Path(handle.name)
+            with source_path.open("rb") as src:
+                shutil.copyfileobj(src, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if temp_path.stat().st_size == 0 or not validate_image(temp_path):
+            raise BridgeError("invalid_image", "The saved wallpaper is not a supported image.")
+        os.replace(temp_path, target)
+        temp_path = None
+    except OSError as error:
+        raise BridgeError("library_error", f"Could not store the wallpaper in the library: {error}") from error
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+    return target, cached
+
+
+def last_wall_path() -> Path:
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "quickshell"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "gps-last-wall.txt"
+
+
 def apply_wallpaper(args: argparse.Namespace) -> dict:
-    path, cached = ensure_image(args.id, args.path)
+    path, cached = save_to_library(args.id, args.path)
     ensure_awww_daemon()
     try:
         result = subprocess.run([
@@ -462,8 +535,16 @@ def apply_wallpaper(args: argparse.Namespace) -> dict:
         detail = message[-1] if message else "unknown error"
         raise BridgeError("wallpaper_failed", f"awww rejected the wallpaper: {detail}")
     try:
-        (Path(tempfile.gettempdir()) / "gps-last-wall.txt").write_text(str(path), encoding="utf-8")
+        last_wall_path().write_text(str(path), encoding="utf-8")
     except OSError:
+        pass
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        import set_wallpaper
+        set_wallpaper.apply_wallpaper(str(path), skip_awww=True)
+    except Exception:
         pass
     return {"ok": True, "path": str(path), "cached": cached, "title": args.title}
 

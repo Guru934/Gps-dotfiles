@@ -254,37 +254,108 @@ class WallhavenDownloadTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "invalid_cache")
 
 
+class WallhavenLibraryTests(unittest.TestCase):
+    URL = "https://w.wallhaven.cc/full/3q/wallhaven-3q7mry.jpg"
+    VALID_JPG = b"\xff\xd8\xff\xe0" + b"valid-jpeg-body" * 4
+
+    def image_response(self, body, declared_length=None):
+        return FakeResponse(body, headers={
+            "Content-Type": "image/jpeg",
+            "Content-Length": str(len(body) if declared_length is None else declared_length),
+        }, url=self.URL)
+
+    def test_new_save_creates_permanent_copy_in_library(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib_dir = Path(tmp) / "library"
+            cache_dir = Path(tmp) / "cache"
+            response = self.image_response(self.VALID_JPG)
+            with patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir), "XDG_CACHE_HOME": str(cache_dir)}), \
+                 patch.object(wallhaven.urllib.request, "urlopen", return_value=response):
+                path, cached = wallhaven.save_to_library("3q7mry", self.URL)
+            self.assertEqual(path, lib_dir / "wallhaven-3q7mry.jpg")
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_bytes(), self.VALID_JPG)
+            self.assertFalse(cached)
+
+    def test_duplicate_save_reuses_existing_library_file_without_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib_dir = Path(tmp) / "library"
+            lib_dir.mkdir(parents=True)
+            existing = lib_dir / "wallhaven-3q7mry.jpg"
+            existing.write_bytes(self.VALID_JPG)
+            with patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir)}), \
+                 patch.object(wallhaven.urllib.request, "urlopen") as mock_url:
+                path, cached = wallhaven.save_to_library("3q7mry", self.URL)
+            self.assertEqual(path, existing)
+            self.assertTrue(cached)
+            self.assertEqual(mock_url.call_count, 0)
+
+    def test_invalid_file_is_rejected_and_never_leaves_partial_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib_dir = Path(tmp) / "library"
+            cache_dir = Path(tmp) / "cache"
+            response = self.image_response(b"<html>error</html>")
+            with patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir), "XDG_CACHE_HOME": str(cache_dir)}), \
+                 patch.object(wallhaven.urllib.request, "urlopen", return_value=response):
+                with self.assertRaises(wallhaven.BridgeError) as raised:
+                    wallhaven.save_to_library("3q7mry", self.URL)
+            self.assertEqual(raised.exception.code, "invalid_image")
+            self.assertFalse((lib_dir / "wallhaven-3q7mry.jpg").exists())
+            self.assertEqual(list(lib_dir.glob("*.part")), [])
+
+    def test_missing_directory_is_created_automatically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib_dir = Path(tmp) / "nested" / "Pictures" / "Wallpapers"
+            cache_dir = Path(tmp) / "cache"
+            self.assertFalse(lib_dir.exists())
+            response = self.image_response(self.VALID_JPG)
+            with patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir), "XDG_CACHE_HOME": str(cache_dir)}), \
+                 patch.object(wallhaven.urllib.request, "urlopen", return_value=response):
+                path, _ = wallhaven.save_to_library("3q7mry", self.URL)
+            self.assertTrue(lib_dir.is_dir())
+            self.assertTrue(path.is_file())
+            self.assertEqual(path, lib_dir / "wallhaven-3q7mry.jpg")
+            self.assertEqual(path.read_bytes(), self.VALID_JPG)
+
+
 class WallhavenApplyTests(unittest.TestCase):
     def test_apply_uses_fixed_awww_command_and_records_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             image = Path(tmp) / "3q7mry.jpg"
             image.write_bytes(b"\xff\xd8\xfftest")
+            lib_dir = Path(tmp) / "Wallpapers"
             args = Namespace(id="3q7mry", path="https://w.wallhaven.cc/full/3q/wallhaven-3q7mry.jpg",
                              title="Example")
             run = unittest.mock.MagicMock(return_value=SimpleNamespace(returncode=0, stdout="", stderr=""))
             with patch.object(wallhaven, "ensure_image", return_value=(image, True)), \
+                 patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir)}), \
                  patch.object(wallhaven, "ensure_awww_daemon"), \
                  patch.object(wallhaven.subprocess, "run", run), \
-                 patch.object(wallhaven.tempfile, "gettempdir", return_value=tmp):
+                 patch.object(wallhaven, "last_wall_path", return_value=Path(tmp) / "gps-last-wall.txt"):
                 result = wallhaven.apply_wallpaper(args)
-            command = run.call_args.args[0]
-            self.assertEqual(command[:2], ["awww", "img"])
+            commands = [call.args[0] for call in run.call_args_list]
+            command = next((candidate for candidate in commands
+                            if candidate[:2] == ["awww", "img"]), None)
+            self.assertIsNotNone(command)
             self.assertIn("--transition-type", command)
-            self.assertEqual(result["path"], str(image))
+            expected_target = str(lib_dir / "wallhaven-3q7mry.jpg")
+            self.assertEqual(result["path"], expected_target)
             self.assertTrue(result["cached"])
-            self.assertEqual((Path(tmp) / "gps-last-wall.txt").read_text(), str(image))
+            self.assertEqual((Path(tmp) / "gps-last-wall.txt").read_text(), expected_target)
 
     def test_apply_failure_does_not_record_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             image = Path(tmp) / "3q7mry.jpg"
             image.write_bytes(b"\xff\xd8\xfftest")
+            lib_dir = Path(tmp) / "Wallpapers"
             args = Namespace(id="3q7mry", path="https://w.wallhaven.cc/full/3q/wallhaven-3q7mry.jpg",
                              title="Example")
             run = unittest.mock.MagicMock(return_value=SimpleNamespace(returncode=1, stdout="", stderr="rejected"))
             with patch.object(wallhaven, "ensure_image", return_value=(image, True)), \
+                 patch.dict(os.environ, {"GPS_WALLPAPER_DIR": str(lib_dir)}), \
                  patch.object(wallhaven, "ensure_awww_daemon"), \
                  patch.object(wallhaven.subprocess, "run", run), \
-                 patch.object(wallhaven.tempfile, "gettempdir", return_value=tmp):
+                 patch.object(wallhaven, "last_wall_path", return_value=Path(tmp) / "gps-last-wall.txt"):
                 with self.assertRaises(wallhaven.BridgeError):
                     wallhaven.apply_wallpaper(args)
             self.assertFalse((Path(tmp) / "gps-last-wall.txt").exists())
@@ -300,7 +371,7 @@ class MediaHubContractTests(unittest.TestCase):
         self.assertIn("function open()", window)
         self.assertIn("function close()", window)
         self.assertIn("function toggle()", window)
-        self.assertIn("hl.dsp.window.float", window)
+        self.assertNotIn("hl.dsp.window.float", window)
 
     def test_wallpaper_browser_keeps_sfw_locked(self):
         hub = (ROOT / "components/MediaHub.qml").read_text()

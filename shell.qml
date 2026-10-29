@@ -11,6 +11,8 @@ import "pet"
 Scope {
     id: root
 
+    readonly property string repoRoot: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+
     // UI Popup Routing: "wifi", "bt", "battery", "clock", or "settings"
     property bool dashboardOpen: false
     property string activePopup: "settings"
@@ -19,7 +21,11 @@ Scope {
     property bool edgeHotspotEnabled: true
     property int dashboardAutoHideMs: 400
     property int telemetryTickMs: 1000
-    // Wall-clock ms of the last Dashboard close; the bottom-right sensor
+    // Right-edge activation strip configuration
+    property int edgeSensorWidth: 5
+    property int edgeSensorMarginTop: 60      // Clears top-center island zone / corner
+    property int edgeSensorMarginBottom: 40   // Clears bottom corner widgets
+    // Wall-clock ms of the last Dashboard close; the edge sensor
     // ignores hover until a short cooldown has passed so closing the drawer
     // can never be immediately undone by the surface that appears under the
     // pointer as the panel unmaps.
@@ -99,21 +105,31 @@ Scope {
     property int btStatusGen: 0
 
     // Brightness, Power Profile, and Media State
-    property int brightnessPct: 10
+    readonly property int brightnessPct: Brightness.percent
     property string powerProfile: "balanced"
     property string mediaStatus: "Stopped"
     property string mediaArtist: ""
     property string mediaTitle: ""
 
+    function toHyprRgba(col, alphaHex) {
+        const c = Qt.color(col)
+        const toHex = v => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0")
+        const a = alphaHex !== undefined ? alphaHex : toHex(c.a)
+        return "rgba(" + toHex(c.r) + toHex(c.g) + toHex(c.b) + a + ")"
+    }
+
     Component.onCompleted: {
         root.rebuildCalendar()
+        const b1 = root.toHyprRgba(Theme.brandAccent, "ee")
+        const b2 = root.toHyprRgba(Theme.accentSecondary, "ee")
+        const inact = root.toHyprRgba(Theme.border, "aa")
         Quickshell.execDetached([
             "hyprctl", "--batch",
             "keyword misc:disable_hyprland_logo true ; "
             + "keyword misc:disable_splash_rendering true ; "
             + "keyword misc:background_color 0x0e121d ; "
-            + "keyword general:col.active_border rgba(eeb7d8ee) rgba(9ce5c0ee) 45deg ; "
-            + "keyword general:col.inactive_border rgba(3a3a54aa) ; "
+            + "keyword general:col.active_border " + b1 + " " + b2 + " 45deg ; "
+            + "keyword general:col.inactive_border " + inact + " ; "
             + "keyword decoration:rounding 12"
         ])
     }
@@ -123,7 +139,7 @@ Scope {
     IpcHandler {
         target: "dashboard"
         function toggle() { root.toggleDashboard() }
-        function open() { root.openDashboard() }
+        function open() { root.openDashboard(true) }
         function close() { root.closeDashboard() }
     }
 
@@ -158,6 +174,20 @@ Scope {
         function close() { root.closePopup() }
         function powerProfiles(): string { return batteryPopup.powerProfilesJson() }
         function setPowerProfile(id: string) { batteryPopup.setProfile(id) }
+    }
+
+    IpcHandler {
+        target: "mediahub"
+        function toggle() { root.toggleMediaHub() }
+        function open() { root.openMediaHub() }
+        function close() { root.closeMediaHub() }
+    }
+
+    IpcHandler {
+        target: "toolbox"
+        function toggle() { root.toggleToolbox() }
+        function open() { root.openToolbox() }
+        function close() { root.closeToolbox() }
     }
 
     PwObjectTracker {
@@ -396,14 +426,7 @@ Scope {
         }
     }
 
-    Process {
-        id: brightReadProc
-        command: ["brightnessctl", "-m"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: root.parseBrightness(this.text)
-        }
-    }
+
 
     Process {
         id: profileReadProc
@@ -635,7 +658,7 @@ Scope {
         } else if (kind === "clock") {
             root.rebuildCalendar()
         } else if (kind === "settings") {
-            if (!brightReadProc.running) brightReadProc.running = true
+            Brightness.refresh()
             if (!mediaReadProc.running) mediaReadProc.running = true
         }
     }
@@ -646,9 +669,9 @@ Scope {
 
     // Dashboard dispatchers: every entry point (IPC, edge sensor, popup
     // router) routes through these to the single DashboardHost instance.
-    function openDashboard() {
+    function openDashboard(pinned) {
         aiChat.close()
-        dashboardHost.open()
+        dashboardHost.open(pinned)
     }
 
     function closeDashboard() {
@@ -686,6 +709,18 @@ Scope {
         mediaHubWindow.toggle()
     }
 
+    function openToolbox() {
+        toolboxWindow.open()
+    }
+
+    function closeToolbox() {
+        toolboxWindow.close()
+    }
+
+    function toggleToolbox() {
+        toolboxWindow.toggle()
+    }
+
     function closeWallpaperCarousel() {
         wallpaperCarousel.isOpen = false
     }
@@ -696,13 +731,13 @@ Scope {
     // toggleNotificationCenter is the real, verified function.
     function runCenterAction(action) {
         if (action === "wall") cycleWallpaper()
-        else if (action === "clip") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "openClipboard"])
+        else if (action === "clip") Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "clipboard", "toggle"])
         else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "toggleNotificationCenter"])
     }
 
     function cycleWallpaper() {
         root.wallpaperMode = (root.wallpaperMode + 1) % 3
-        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/cycle-wall.fish"])
+        Quickshell.execDetached([root.repoRoot + "/scripts/cycle-wall.fish"])
     }
 
     function toggleWallpaperCarousel() {
@@ -791,7 +826,7 @@ Scope {
         // Secured networks need a secret: delegate the password prompt to the
         // helper script (rofi -password). The password never enters QML state.
         if (secured) {
-            Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+            Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
             root.wifiNotice = "Connecting to " + ssid + "… (password prompt if required)"
             wifiVerifyTimer.restart()
             return
@@ -802,7 +837,7 @@ Scope {
 
     // Called when a direct connect fails, most likely for a missing secret.
     function connectWifiWithPrompt(ssid) {
-        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/wifi-connect.sh", ssid])
+        Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
         root.wifiNotice = "Password required — answer the prompt for " + ssid + "…"
         root.wifiVerifyTries = 0
         wifiVerifyTimer.restart()
@@ -1022,7 +1057,8 @@ Scope {
         const lines = raw.trim().split("\n")
         let foundType = "disconnected"
         let foundName = "Offline"
-        let foundDev = "wlan0"
+        let foundDev = root.netDevice || "wlan0"
+        let firstWifiDev = ""
 
         for (let i = 0; i < lines.length; i++) {
             const parts = lines[i].split(":")
@@ -1032,6 +1068,10 @@ Scope {
             const state = parts[2]
             const conn = parts.slice(3).join(":")
 
+            if (type === "wifi" && !firstWifiDev) {
+                firstWifiDev = dev
+            }
+
             if ((type === "wifi" || type === "ethernet") && state === "connected") {
                 foundDev = dev
                 foundType = type
@@ -1039,20 +1079,13 @@ Scope {
                 break
             }
         }
+        if (foundType === "disconnected" && firstWifiDev) {
+            foundDev = firstWifiDev
+        }
         root.netDevice = foundDev
         root.netType = foundType
         root.netName = foundName
         root.checkWifiPending()
-    }
-
-    function parseBrightness(raw) {
-        const line = raw.trim().split("\n")[0]
-        if (!line) return
-        const parts = line.split(",")
-        if (parts.length >= 4) {
-            const parsed = parseInt(parts[3].replace("%", ""), 10)
-            if (!isNaN(parsed)) root.brightnessPct = parsed
-        }
     }
 
     function parseMedia(raw) {
@@ -1070,14 +1103,15 @@ Scope {
     }
 
     function setBrightnessPct(targetPct) {
-        const clamped = Math.max(5, Math.min(100, Math.round(targetPct)))
-        root.brightnessPct = clamped
-        Quickshell.execDetached(["brightnessctl", "-q", "set", clamped + "%"])
-        root.showOsd("󰖨", clamped)
+        const target = Math.max(1, Math.min(100, Math.round(targetPct)))
+        Brightness.setPercent(target)
+        root.showOsd("󰖨", target)
     }
 
     function stepBrightness(deltaPct) {
-        setBrightnessPct(root.brightnessPct + deltaPct)
+        const target = Math.max(1, Math.min(100, Math.round(Brightness.percent + deltaPct)))
+        Brightness.step(deltaPct)
+        root.showOsd("󰖨", target)
     }
 
     function setVolumeRatio(ratio) {
@@ -1119,15 +1153,28 @@ Scope {
     }
 
     // Active shell surfaces. Tide Island remains the notification D-Bus owner.
-    // Bottom-right hot zone: a 22x22 transparent layer surface that only opens
-    // the existing DashboardHost. It sits above the island's own corner sensor
-    // so the requested surface is the System Console, not the top-center pill.
+    // Right-edge activation strip: thin vertical overlay sensor that opens
+    // DashboardHost on hover.
     PanelWindow {
         id: dashboardEdgeSensor
         screen: root.popupScreen
-        anchors { bottom: true; right: true }
-        implicitWidth: 22
-        implicitHeight: 22
+
+        // Activation strip configuration
+        property int stripWidth: root.edgeSensorWidth
+        property int stripMarginTop: root.edgeSensorMarginTop
+        property int stripMarginBottom: root.edgeSensorMarginBottom
+
+        anchors {
+            top: true
+            bottom: true
+            right: true
+        }
+        margins {
+            top: stripMarginTop
+            bottom: stripMarginBottom
+            right: 0
+        }
+        implicitWidth: stripWidth
         color: "transparent"
         // While the hotspot is disabled the surface is unmapped, so it cannot
         // capture pointer input at all (a real off, not visual-only).
@@ -1142,7 +1189,7 @@ Scope {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            acceptedButtons: Qt.NoButton
+            acceptedButtons: Qt.LeftButton
             onEntered: {
                 dashboardHost.triggerHovered = true
                 if (!root.edgeHotspotEnabled) return
@@ -1151,6 +1198,13 @@ Scope {
                     root.openDashboard()
             }
             onExited: dashboardHost.triggerHovered = false
+            onClicked: {
+                if (!dashboardHost.isOpen) {
+                    root.openDashboard(true)
+                } else {
+                    root.closeDashboard()
+                }
+            }
         }
     }
 
@@ -1171,6 +1225,7 @@ Scope {
     WallpaperCarousel  { id: wallpaperCarousel; hub: root }
     AIChat             { id: aiChat; hub: root }
     MediaHubWindow     { id: mediaHubWindow; hub: root }
+    ToolboxWindow      { id: toolboxWindow; hub: root }
     WifiPopup          { hub: root }
     BluetoothPopup     { hub: root }
     BatteryPopup       { id: batteryPopup; hub: root }

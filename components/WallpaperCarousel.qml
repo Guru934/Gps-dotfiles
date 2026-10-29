@@ -11,7 +11,8 @@ PanelWindow {
     property bool isOpen: false
     property int currentIndex: 0
     readonly property int visibleRadius: 2
-    readonly property string wallpaperDirectory: "file:///home/rice/Pictures/Wallpapers"
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string wallpaperDirectory: "file://" + Quickshell.env("HOME") + "/Pictures/Wallpapers"
 
     function toggle() { root.isOpen = !root.isOpen }
     function close() { root.isOpen = false }
@@ -23,8 +24,7 @@ PanelWindow {
         if (wallpapers.count === 0) return
         const path = wallpapers.get(root.currentIndex, "filePath")
         if (!path) return
-        Quickshell.execDetached(["awww", "img", path, "--transition-type", "outer", "--transition-pos", "0.92,0.06", "--transition-fps", "165", "--transition-duration", "1.1"])
-        Quickshell.execDetached(["/home/rice/Projects/my-rice/scripts/extract-theme.py"])
+        Quickshell.execDetached([root.repoRoot + "/scripts/set-wallpaper", path])
         root.close()
     }
 
@@ -52,7 +52,7 @@ PanelWindow {
     Rectangle {
         anchors.fill: parent
         radius: 22
-        color: "#F20F131C"
+        color: Qt.alpha(Theme.surfaceDeep, 0.95)
         border.width: 1
         border.color: Theme.brandAccent
 

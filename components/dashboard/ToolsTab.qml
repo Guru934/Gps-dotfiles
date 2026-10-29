@@ -11,7 +11,7 @@ import qs.components.dashboard
 // Every action is explicit: nothing runs on tab creation or render. Capture
 // and picker actions are launched detached (scripts/toolkit.sh) so a drawer
 // auto-hide can never kill a running slurp/swappy/hyprpicker; their real
-// outcome is read back from /tmp/gps-tools-last on the next open. Short
+// outcome is read back from tools-last on the next open. Short
 // actions run as one-shot Process children so success is only reported after
 // the command really exits. Destructive actions (suspend, poweroff, shell
 // reload, wine kill, cliphist wipe) need two deliberate taps; merely opening
@@ -122,7 +122,7 @@ Item {
     Process {
         id: statusReadProc
         // Lines: status-file mtime, status text, theme-json mtime.
-        command: ["sh", "-c", "f=/tmp/gps-tools-last; if [ -f \"$f\" ]; then stat -c %Y \"$f\"; cat \"$f\"; else echo 0; echo; fi; stat -c %Y /tmp/gps-theme.json 2>/dev/null || echo 0"]
+        command: ["sh", "-c", "f=\"$HOME/.config/quickshell/tools-last\"; if [ -f \"$f\" ]; then stat -c %Y \"$f\"; cat \"$f\"; else echo 0; echo; fi; stat -c %Y \"$HOME/.config/quickshell/gps-theme.json\" 2>/dev/null || echo 0"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const lines = text.split("\n")
@@ -238,7 +238,7 @@ Item {
 
     Process {
         id: themeProc
-        command: ["sh", "-c", "python3 " + root.projectPath + "/scripts/extract-theme.py; stat -c %Y /tmp/gps-theme.json 2>/dev/null || echo 0"]
+        command: ["sh", "-c", "python3 " + root.projectPath + "/scripts/extract-theme.py; stat -c %Y \"$HOME/.config/quickshell/gps-theme.json\" 2>/dev/null || echo 0"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const epoch = parseFloat(text.trim().split("\n").pop()) || 0
@@ -329,7 +329,7 @@ Item {
     }
 
     function openClipHist() {
-        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", root.tidePath, "call", "tide", "openClipboard"])
+        Quickshell.execDetached([root.projectPath + "/scripts/gps-ipc", "clipboard", "toggle"])
         if (root.hub) root.hub.closeDashboard()
     }
 

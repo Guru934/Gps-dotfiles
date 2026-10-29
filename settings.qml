@@ -23,6 +23,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Services.Pipewire
 import Quickshell.Bluetooth
+import qs.config
 
 ShellRoot {
     id: root
@@ -302,7 +303,6 @@ echo "profile=$(powerprofilesctl get 2>/dev/null)"
 echo "profiles=$(powerprofilesctl list 2>/dev/null | grep -E '^[* ] [a-z-]+:' | tr -d '*: ' | tr '\\n' ',')"
 for z in /sys/class/thermal/thermal_zone*; do [ "$(cat $z/type 2>/dev/null)" = x86_pkg_temp ] && echo "cputemp=$(( $(cat $z/temp) / 1000 ))"; done
 for b in /sys/class/power_supply/BAT*; do [ -d "$b" ] || continue; echo "bat=$(cat $b/capacity)"; echo "batstatus=$(cat $b/status)"; echo "batlimit=$(cat $b/charge_control_end_threshold 2>/dev/null)"; break; done
-echo "bright=$(brightnessctl -m 2>/dev/null | cut -d, -f4 | tr -d %)"
 echo "ollama_svc=$(systemctl --user is-active ollama 2>/dev/null)"
 { grep -q rice-settings "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || grep -q rice-settings "$HOME/.config/hypr/hyprland.conf" 2>/dev/null; } && echo "inc=1" || echo "inc=0"
 echo "gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,driver_version --format=csv,noheader,nounits 2>/dev/null | head -1)"
@@ -379,7 +379,7 @@ for o in ${keys}; do echo "##opt $o"; hyprctl getoption $o -j 2>/dev/null | tr -
     }
     Cmd {
         id: cmdPal
-        script: `for f in "/tmp/gps-theme.json" "$HOME/.cache/wal/colors.json" "$HOME/.local/state/caelestia/scheme.json"; do [ -f "$f" ] && { echo "$f"; break; }; done`
+        script: `for f in "$HOME/.config/quickshell/gps-theme.json" "$HOME/.cache/wal/colors.json" "$HOME/.local/state/caelestia/scheme.json"; do [ -f "$f" ] && { echo "$f"; break; }; done`
         onDone: text => { if (text.trim() !== "") root.palettePath = text.trim() }
     }
 
@@ -871,10 +871,10 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                 Tgl { on: root.opt["animations:enabled"] === true; onFlipped: v => root.commitOpt(root.schema.find(d => d.key === "animations:enabled"), v) } }
                             SRow { label: "Background blur"; visible: root.opt["decoration:blur:enabled"] !== undefined
                                 Tgl { on: root.opt["decoration:blur:enabled"] === true; onFlipped: v => root.commitOpt(root.schema.find(d => d.key === "decoration:blur:enabled"), v) } }
-                            SRow { label: "Brightness"; visible: !!root.sys.bright
-                                Dim { text: root.sys.bright + "%"; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight }
-                                Sld { Layout.preferredWidth: 220; from: 1; to: 100; value: +root.sys.bright || 0
-                                    onCommitted: v => { root.sh("brightnessctl set " + Math.round(v) + "%"); root.after(300, cmdSys.go) } } }
+                            SRow { label: "Brightness"; visible: Brightness.available
+                                Dim { text: Brightness.percent + "%"; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 220; from: 1; to: 100; value: Brightness.percent
+                                    onCommitted: v => Brightness.setPercent(Math.round(v)) } }
                         }
                     }
 
@@ -901,11 +901,11 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                 text: root.mon ? "Pick a resolution, then a refresh rate to apply it. Current: " + root.mon.width + "×" + root.mon.height + " @ " + Number(root.mon.refreshRate).toFixed(2) + " Hz, logical " + Math.round(root.mon.width / root.mon.scale) + "×" + Math.round(root.mon.height / root.mon.scale) : "" }
                         }
                         Card { title: "Brightness & colour"; icon: "brightness_6"
-                            SRow { label: "Screen brightness"; visible: !!root.sys.bright
-                                Dim { text: root.sys.bright + "%"; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight }
-                                Sld { Layout.preferredWidth: 240; from: 1; to: 100; value: +root.sys.bright || 0
-                                    onCommitted: v => { root.sh("brightnessctl set " + Math.round(v) + "%"); root.after(300, cmdSys.go) } } }
-                            Dim { visible: !root.sys.bright; text: "brightnessctl not found — install it to control brightness." }
+                            SRow { label: "Screen brightness"; visible: Brightness.available
+                                Dim { text: Brightness.percent + "%"; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 240; from: 1; to: 100; value: Brightness.percent
+                                    onCommitted: v => Brightness.setPercent(Math.round(v)) } }
+                            Dim { visible: !Brightness.available; text: "No adjustable backlight device found." }
                             SRow { label: "Night light"; desc: "Warm colour temperature via hyprsunset"; visible: root.sys["has_hyprsunset"] === "1"
                                 Tgl { on: root.sys.run_hyprsunset === "1"; onFlipped: v => root.nightLight(v, 4500) } }
                         }
@@ -920,7 +920,7 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                     delegate: Rectangle { required property var modelData; width: 34; height: 34; radius: 17; color: modelData; border.width: 1; border.color: pal.line } }
                                 Item { Layout.fillWidth: true } }
                             Dim { Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone
-                                text: root.palettePath !== "" ? "Following " + root.palettePath + " — colours update the moment your wallpaper tool rewrites it." : "No palette file found (looked for /tmp/gps-theme.json, pywal colors.json and Caelestia scheme.json). Using the built-in fallback." } }
+                                text: root.palettePath !== "" ? "Following " + root.palettePath + " — colours update the moment your wallpaper tool rewrites it." : "No palette file found (looked for ~/.config/quickshell/gps-theme.json, pywal colors.json and Caelestia scheme.json). Using the built-in fallback." } }
                         OptCard { group: "Layout & Gaps"; ic: "grid_view" }
                         OptCard { group: "Decoration"; ic: "rounded_corner" }
                         OptCard { group: "Effects"; ic: "blur_on" }

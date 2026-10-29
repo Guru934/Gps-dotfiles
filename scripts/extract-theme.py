@@ -1,135 +1,23 @@
 #!/usr/bin/env python3
-import colorsys, json, os, subprocess
+"""Compatibility wrapper for extract-theme.py pointing to set_wallpaper pipeline."""
+import sys
+from pathlib import Path
 
-STATE_JSON = "/tmp/gps-theme.json"
-LAST_WALL = "/tmp/gps-last-wall.txt"
+scripts_dir = Path(__file__).resolve().parent
+if str(scripts_dir) not in sys.path:
+    sys.path.insert(0, str(scripts_dir))
 
-def get_current_wallpaper():
-    try:
-        out = subprocess.check_output(["awww", "query"], text=True, stderr=subprocess.DEVNULL)
-        for line in out.splitlines():
-            if "image:" in line:
-                return line.split("image:", 1)[1].strip()
-    except Exception:
-        pass
-    return ""
+import set_wallpaper
 
-def extract_dominant_hsv(img_path):
-    from PIL import Image
-    img = Image.open(img_path).convert("RGB").resize((64, 64))
-    buckets = [0.0] * 36
-    r_sum = [0.0] * 36
-    g_sum = [0.0] * 36
-    b_sum = [0.0] * 36
 
-    try:
-        pixels = img.get_flattened_data()
-    except AttributeError:
-        pixels = img.getdata()
-    for r, g, b in pixels:
-        rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
-        h, s, v = colorsys.rgb_to_hsv(rf, gf, bf)
-        if v < 0.15 or s < 0.18:
-            continue
-        idx = int(h * 36) % 36
-        weight = (s ** 1.4) * (v ** 1.1)
-        buckets[idx] += weight
-        r_sum[idx] += rf * weight
-        g_sum[idx] += gf * weight
-        b_sum[idx] += bf * weight
+def main() -> int:
+    image = sys.argv[1] if len(sys.argv) > 1 else None
+    res = set_wallpaper.apply_wallpaper(image_path=image, skip_awww=True)
+    if not res.get("ok"):
+        print(f"extract-theme error: {res.get('error')}", file=sys.stderr)
+        return 1
+    return 0
 
-    best = max(range(36), key=lambda i: buckets[i])
-    if buckets[best] <= 0:
-        return 0.92, 0.45, 0.90
-    w = buckets[best]
-    return colorsys.rgb_to_hsv(r_sum[best] / w, g_sum[best] / w, b_sum[best] / w)
-
-def hsv_hex(h, s, v, alpha=""):
-    r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
-    return f"#{alpha}{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}"
-
-def hsv_rgba_hex(h, s, v, alpha_hex="FF"):
-    r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
-    return f"#{int(r*255):02X}{int(g*255):02X}{int(b*255):02X}{alpha_hex}"
-
-def main():
-    wall = get_current_wallpaper()
-    if not wall or not os.path.exists(wall):
-        return
-
-    # Remember the active wallpaper so run-gps.fish can re-apply it after it
-    # restarts awww-daemon (the daemon itself does not persist its image).
-    try:
-        with open(LAST_WALL, "w", encoding="utf-8") as f:
-            f.write(wall)
-    except OSError:
-        pass
-
-    h, s, _ = extract_dominant_hsv(wall)
-    acc_s = max(0.55, min(0.82, s * 0.95))
-    acc_v = 0.96
-
-    r, g, b = colorsys.hsv_to_rgb(h, acc_s, acc_v)
-    lum = 0.299 * r + 0.587 * g + 0.114 * b
-    accent_fg = "#140E14" if lum > 0.48 else "#FFFFFF"
-
-    theme = {
-        "wallpaper": wall,
-        "surface": hsv_hex(h, 0.48, 0.13, "F2"),
-        "card": hsv_hex(h, 0.44, 0.20),
-        "cardHover": hsv_hex(h, 0.46, 0.28),
-        "track": hsv_hex(h, 0.50, 0.09),
-        "border": hsv_hex(h, 0.45, 0.36),
-        "brandAccent": hsv_hex(h, acc_s, acc_v),
-        "brandAccentFg": accent_fg,
-        "textMain": "#FFFFFF",
-        "textMuted": hsv_hex(h, 0.14, 0.86)
-    }
-
-    with open(STATE_JSON, "w", encoding="utf-8") as f:
-        json.dump(theme, f)
-
-    # Update Hyprland active border to match wallpaper. Legacy (hyprlang)
-    # configs accept `hyprctl keyword`; Hyprland 0.55+ Lua parser rejects it
-    # ("keyword can't work with non-legacy parsers") and needs `hyprctl eval`.
-    b1 = hsv_hex(h, acc_s, acc_v)[1:].lower()
-    b2 = hsv_hex((h + 0.08) % 1.0, acc_s, 0.92)[1:].lower()
-    inact = hsv_hex(h, 0.40, 0.32)[1:].lower()
-    kw = subprocess.run([
-        "hyprctl", "--batch",
-        f"keyword general:col.active_border rgba({b1}ee) rgba({b2}ee) 45deg ; "
-        f"keyword general:col.inactive_border rgba({inact}aa)"
-    ], capture_output=True, text=True)
-    if kw.returncode != 0 or "can't work" in (kw.stdout + kw.stderr):
-        # Lua gradients use a colors list + angle, not a single string.
-        lua = (
-            "hl.config({ general = { col = { "
-            'active_border = { colors = { "rgba(%see)", "rgba(%see)" }, angle = 45 }, '
-            'inactive_border = "rgba(%saa)"'
-            " } } })"
-        ) % (b1, b2, inact)
-        subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    # Regenerate the rofi palette file. The rofi config imports this once
-    # (@import "colors.rasi"), so rofi picks the new colours on next launch
-    # and the user's config.rasi is never rewritten in place.
-    rofi_dir = os.path.expanduser("~/.config/rofi")
-    if os.path.isdir(rofi_dir):
-        colors_rasi = (
-            "/* Generated by scripts/extract-theme.py — do not edit by hand. */\n"
-            "* {\n"
-            f"    bg: {hsv_rgba_hex(h, 0.48, 0.13, 'F0')};\n"
-            f"    card: {hsv_rgba_hex(h, 0.44, 0.20)};\n"
-            f"    hover: {hsv_rgba_hex(h, 0.46, 0.28)};\n"
-            f"    accent: {hsv_rgba_hex(h, acc_s, acc_v)};\n"
-            f"    accent-fg: {accent_fg}FF;\n"
-            f"    text: {theme['textMain']}FF;\n"
-            f"    muted: {theme['textMuted']}FF;\n"
-            f"    border-col: {hsv_rgba_hex(h, 0.45, 0.36)};\n"
-            "}\n"
-        )
-        with open(os.path.join(rofi_dir, "colors.rasi"), "w", encoding="utf-8") as f:
-            f.write(colors_rasi)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

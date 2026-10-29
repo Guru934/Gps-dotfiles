@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Write Codex/OpenCode permission events to the GPS Pet Alert JSONL feed."""
+import json
+import hashlib
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+
+
+def alert_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    directory = os.path.join(runtime, "pet")
+    if os.path.islink(runtime) or os.path.islink(directory):
+        return None
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    stat = os.stat(directory)
+    if stat.st_uid != os.getuid() or stat.st_mode & 0o077:
+        return None
+    return os.path.join(directory, "alerts.jsonl")
+
+
+def response_dir():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    directory = os.path.join(runtime, "pet")
+    if os.path.islink(runtime) or os.path.islink(directory):
+        return None
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    stat = os.stat(directory)
+    if stat.st_uid != os.getuid() or stat.st_mode & 0o077:
+        return None
+    path = os.path.join(directory, "responses")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    stat = os.stat(path)
+    if stat.st_uid != os.getuid() or stat.st_mode & 0o077:
+        return None
+    return path
+
+
+def response_path(token):
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{20,128}", token):
+        return None
+    directory = response_dir()
+    if not directory:
+        return None
+    digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    return os.path.join(directory, digest + ".json")
+
+
+def short(value, limit=220):
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def ancestors(pid):
+    chain = []
+    while isinstance(pid, int) and pid > 1 and len(chain) < 40:
+        chain.append(pid)
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:
+                pid = int(stream.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return chain
+
+
+def find_window(pid):
+    try:
+        result = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True,
+                                text=True, timeout=1.5, check=False)
+        clients = json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "", 0
+    for ancestor in ancestors(pid):
+        for client in clients if isinstance(clients, list) else []:
+            if client.get("pid") == ancestor:
+                workspace = client.get("workspace") or {}
+                return str(client.get("address") or ""), workspace.get("id", 0)
+    return "", 0
+
+
+def describe_input(value):
+    if isinstance(value, dict):
+        command = value.get("command") or value.get("cmd")
+        if isinstance(command, list):
+            command = " ".join(map(str, command))
+        for candidate in (command, value.get("description"), value.get("file_path"), value.get("path")):
+            if candidate:
+                return short(candidate)
+        return short(json.dumps(value, ensure_ascii=False, sort_keys=True))
+    return short(value)
+
+
+def emit(record):
+    path = alert_path()
+    if not path:
+        return
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except (OSError, ValueError):
+        return
+
+
+def new_token():
+    return secrets.token_urlsafe(24)
+
+
+def ask(tool, session, ident, title, detail, cwd, pid, token=None):
+    address, workspace = find_window(pid)
+    request_id = ident or f"{tool}:{session}:{time.time_ns()}"
+    emit({"schema": "pet-alert/v1", "type": "ask", "id": request_id,
+          "request_id": request_id, "source": tool, "tool": tool,
+          "session": session or "", "title": short(title, 60),
+          "detail": short(detail), "cwd": cwd or "", "addr": address,
+          "ws": workspace, "ts": time.time(),
+          "token": token or "", "respondable": bool(token), "state": "pending"})
+
+
+def wait_response(token, timeout):
+    path = response_path(token)
+    if not path:
+        return ""
+    try:
+        timeout = max(0.0, min(float(timeout), 60.0))
+    except (TypeError, ValueError):
+        return ""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() <= deadline:
+        try:
+            if os.path.islink(path):
+                return ""
+            with open(path, encoding="utf-8") as stream:
+                record = json.load(stream)
+            if record.get("token") != token:
+                return ""
+            decision = record.get("decision")
+            if decision not in {"allow", "deny"}:
+                return ""
+            os.unlink(path)
+            return decision
+        except FileNotFoundError:
+            time.sleep(0.05)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return ""
+    return ""
+
+
+def write_response(token, decision):
+    if decision not in {"allow", "deny"}:
+        return False
+    path = response_path(token)
+    if not path:
+        return False
+    payload = json.dumps({"token": token, "decision": decision}, separators=(",", ":"))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+        return True
+    except (FileExistsError, OSError, ValueError):
+        return False
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "agent"
+    raw = "" if sys.stdin.isatty() else sys.stdin.read()
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        return
+    if mode == "test":
+        ask("codex", "test", "test-alert", "Bash", "echo pet-alert test", os.getcwd(), os.getppid())
+    elif mode == "codex":
+        event = data.get("hook_event_name") or data.get("event")
+        session = data.get("session_id") or ""
+        if event == "PermissionRequest":
+            token = new_token()
+            request_id = data.get("turn_id") or ""
+            ask("codex", session, request_id, data.get("tool_name") or "permission",
+                describe_input(data.get("tool_input")), data.get("cwd"), os.getppid(), token)
+            decision = wait_response(token, os.environ.get("PET_ALERT_WAIT_SECONDS", 25))
+            if decision:
+                # Denial has no subsequent PostToolUse event.  For an allow,
+                # keep the pending alert until PostToolUse supplies the
+                # genuine resolution event so the island can show its flash.
+                if decision == "deny":
+                    emit({"schema": "pet-alert/v1", "type": "clear", "tool": "codex",
+                          "session": session, "id": request_id, "resolved": False,
+                          "event": "PermissionDecision", "decision": decision})
+                result = {"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+                                                   "decision": {"behavior": decision}}}
+                print(json.dumps(result, separators=(",", ":")))
+        elif event == "PostToolUse":
+            emit({"type": "clear", "tool": "codex", "session": session,
+                  "id": data.get("turn_id") or "", "resolved": True,
+                  "event": "PostToolUse"})
+        elif event in {"Stop", "Interrupt", "SessionEnd", "SubagentStop"}:
+            emit({"type": "clear", "tool": "codex", "session": session, "id": ""})
+    elif mode == "opencode":
+        if data.get("kind") == "ask":
+            ask("opencode", data.get("session"), data.get("id"), data.get("title") or "permission",
+                data.get("detail"), data.get("cwd"), int(data.get("pid") or os.getppid()),
+                data.get("token"))
+        elif data.get("kind") == "clear":
+            emit({"type": "clear", "tool": "opencode", "session": data.get("session") or "",
+                  "id": data.get("id") or "", "resolved": data.get("resolved", True) is True})
+    elif mode == "respond" and len(sys.argv) >= 4:
+        token, decision = sys.argv[2], sys.argv[3]
+        if write_response(token, decision):
+            return
+    elif mode == "wait" and len(sys.argv) >= 3:
+        decision = wait_response(sys.argv[2], sys.argv[3] if len(sys.argv) >= 4 else 25)
+        if decision:
+            print(decision)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        pass

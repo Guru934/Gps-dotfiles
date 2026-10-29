@@ -35,20 +35,20 @@ PanelWindow {
     property real temperature: 0.7
     property string persona: defaultPersona
 
-    // Design palette (design_refs/ai-chat.html, dark theme tokens)
-    readonly property color cSurface: "#0F131C"
+    // Design palette: binds to Theme tokens with design defaults as fallback
+    readonly property color cSurface: Theme.surfaceDeep !== undefined ? Theme.surfaceDeep : "#0F131C"
     readonly property color cLowest: "#0A0E17"
-    readonly property color cLow: "#181B25"
-    readonly property color cContainer: "#1C1F29"
-    readonly property color cHigh: "#262A34"
-    readonly property color cVariant: "#31353F"
-    readonly property color cPri: "#57F1DB"
-    readonly property color cSec: "#DDB8FF"
-    readonly property color cTer: "#FFD47B"
-    readonly property color cText: "#DFE2EF"
-    readonly property color cMuted: "#BACAC5"
-    readonly property color cOnPri: "#003731"
-    readonly property color cErr: "#FFB4AB"
+    readonly property color cLow: Theme.surfaceBase !== undefined ? Theme.surfaceBase : "#181B25"
+    readonly property color cContainer: Theme.card !== undefined ? Theme.card : "#1C1F29"
+    readonly property color cHigh: Theme.surfaceHigh !== undefined ? Theme.surfaceHigh : "#262A34"
+    readonly property color cVariant: Theme.surfaceVariant !== undefined ? Theme.surfaceVariant : "#31353F"
+    readonly property color cPri: Theme.brandAccent !== undefined ? Theme.brandAccent : "#57F1DB"
+    readonly property color cSec: Theme.accentSecondary !== undefined ? Theme.accentSecondary : "#DDB8FF"
+    readonly property color cTer: Theme.accentTertiary !== undefined ? Theme.accentTertiary : "#FFD47B"
+    readonly property color cText: Theme.textMain !== undefined ? Theme.textMain : "#DFE2EF"
+    readonly property color cMuted: Theme.textMuted !== undefined ? Theme.textMuted : "#BACAC5"
+    readonly property color cOnPri: Theme.brandAccentFg !== undefined ? Theme.brandAccentFg : "#003731"
+    readonly property color cErr: Theme.statusDanger !== undefined ? Theme.statusDanger : "#FFB4AB"
     readonly property color cErrBg: "#93000A"
 
     // Backend state

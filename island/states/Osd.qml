@@ -3,6 +3,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import qs.config
 
 Item {
     id: st
@@ -21,9 +22,9 @@ Item {
     readonly property int volPct: Math.max(0, Math.round(core.volume * 100))
     readonly property real volNorm: Math.max(0, Math.min(1, core.volume))
 
-    readonly property bool hasBri: Boolean(core.hasBrightness)
-    readonly property int briPct: Math.max(0, Math.min(100, Math.round((core.brightness || 0) * 100)))
-    readonly property real briNorm: Math.max(0, Math.min(1, core.brightness || 0))
+    readonly property bool hasBri: Brightness.available
+    readonly property int briPct: Brightness.percent
+    readonly property real briNorm: Math.max(0, Math.min(1, Brightness.percent / 100.0))
     readonly property string briIcon: briPct < 35 ? "brightness_low" : briPct < 75 ? "brightness_medium" : "light_mode"
 
     readonly property bool micIsMuted: Boolean(core.micMuted)
@@ -76,7 +77,7 @@ Item {
     Timer {
         interval: 800
         repeat: true
-        running: st.active && st.core.hovered && Boolean(st.core.osdOn)
+        running: false
         onTriggered: st.core.pokeOsd(st.kind)
     }
 

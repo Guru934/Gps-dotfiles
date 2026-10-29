@@ -248,7 +248,7 @@ Item {
     Timer {
         interval: 1500
         repeat: true
-        running: st.active && (st.core.hovered || Boolean(st.core.clipHistoryOn))
+        running: false
         onTriggered: {
             st.core.now = Date.now() / 1000
             if (typeof st.core.holdClip === "function") st.core.holdClip()

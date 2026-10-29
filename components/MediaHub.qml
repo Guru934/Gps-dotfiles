@@ -20,6 +20,7 @@ import QtMultimedia
 import QtQuick.Dialogs
 import Quickshell
 import Quickshell.Io
+import qs.config
 import "MusicQueue.js" as MusicQueue
 import "MediaCatalogue.js" as MediaCatalogue
 
@@ -58,15 +59,15 @@ Item {
     // 0 Home · 1 Wallpapers · 2 Anime · 3 Manga & Manhwa · 4 Music · 5 Downloads · 6 My Library
     property int page: 0
 
-    readonly property bool compact: width < 940
+    readonly property bool compact: width < 1000
     readonly property int sidebarW: compact ? 68 : 208
 
     // ================================================================
     //  STATE (catalogue lists, music favorites/queue and mood are persisted)
     // ================================================================
-    property string moodId: "midnight"
+    property string moodId: "system"
     readonly property var mood: findIn(moods, moodId) || moods[0]
-    property color accent: mood.accent
+    property color accent: mood ? mood.accent : Theme.brandAccent
     Behavior on accent { ColorAnimation { duration: 300 } }
 
     property var favorites: ({ wp1: true, wp3: true })
@@ -242,7 +243,7 @@ Item {
     // ================================================================
     // Stitch artwork (remote). Any failure falls back to the gradient + glyph.
     // >>> BACKEND: replace with Wallhaven thumbnails / local cache paths.
-    readonly property string artBase: "https://lh3.googleusercontent.com/aida-public/"
+    readonly property string artBase: ""
     readonly property var artIds: ({
         hero: "AB6AXuBFNmDHNGkY69HacDDeP4jD9L57JQ0i88karW2a4r2qMOh6ofHR9xKPYc1enF0R3Si51aZnEVaciwvnGtqFseMSWG5bLkJGloDggaGhWSxUwgS63V2xPwCpT_lFEw9p_dTcm49Zu3PsyQpiyEOVClqDzvlag823aSw8qd3zHzhH_IyidJITRgvm5Ml1qOp0-Pdj0Kt5GvEFxCOrcNEOMkw-BxRHqEcbXj5fsp1qXTs",
         anime1: "AB6AXuAWVwdToEd5uMivBa8MeqJ8zeWUNjpl6ity0e6VDq32HRn-KyV8zop7b2FJyoUz0RhZNi3d1iEcJX0m9rK9KeHunnu09wN5ujdZn1xBWalBZzRwWuhUG18OBlCKm5NBEtiBhp5G-s6uHzDetEfZH229_0ZXPxtuTH9pqz16Ra5mIPX3I7laRYR-OD4lJaqRG8055n7siE-Ifm73_bZrgUlyHEpiiTt9RjlHQ9T5li4",
@@ -258,7 +259,8 @@ Item {
     function artUrl(id) {
         if (!loadRemoteArt || !id) return ""
         if (typeof id === "string" && /^(https:\/\/|file:\/\/)/.test(id)) return id
-        return artBase + id
+        if (artBase !== "") return artBase + id
+        return ""
     }
 
     readonly property var gradients: ({
@@ -273,6 +275,8 @@ Item {
     })
 
     readonly property var moods: [
+        { id: "system", name: "System Theme", desc: "Dynamic desktop wallpaper palette with live theme sync.",
+          accent: Theme.brandAccent, palette: [Theme.surfaceDeep, Theme.track, Theme.surfaceBase, Theme.brandAccent], grad: ["#0b1030", "#2a1b5e", "#0e4a6b"], art: "", cat: "All" },
         { id: "midnight", name: "Midnight City", desc: "Neon, rainy streets in deep blue and violet.",
           accent: "#a78bfa", palette: ["#0f172a", "#38bdf8", "#818cf8", "#c084fc"], grad: gradients.violet, art: artIds.wp1, cat: "Cyberpunk" },
         { id: "soft", name: "Soft Escape", desc: "Pastel colours, peaceful scenery and warm light.",
@@ -1121,22 +1125,24 @@ Item {
     //  (inline components can't see root ids, so they only use properties)
     // ================================================================
     component Pal: QtObject {
-        readonly property color bg: "#0d131e"
-        readonly property color lowest: "#080e19"
-        readonly property color low: "#161c27"
-        readonly property color cont: "#1a202b"
-        readonly property color high: "#242a36"
-        readonly property color highest: "#2f3541"
-        readonly property color line: "#2a303c"
-        readonly property color text: "#dde2f2"
-        readonly property color dim: "#cac4d4"
-        readonly property color faint: "#948e9d"
-        readonly property color err: "#ffb4ab"
-        readonly property color ok: "#86efac"
-        readonly property color warn: "#fde047"
+        readonly property color bg: Theme.surfaceDeep
+        readonly property color lowest: Theme.track
+        readonly property color low: Theme.surfaceBase
+        readonly property color cont: Theme.card
+        readonly property color high: Theme.cardHover
+        readonly property color highest: Theme.surfaceHigh
+        readonly property color line: Theme.outlineSoft
+        readonly property color border: Theme.border
+        readonly property color text: Theme.textMain
+        readonly property color dim: Theme.textDim
+        readonly property color faint: Theme.textMuted
+        readonly property color err: Theme.statusDanger
+        readonly property color ok: Theme.statusGood
+        readonly property color warn: Theme.statusWarn
         readonly property color cyan: "#7bd0ff"
-        readonly property color orchid: "#ddb8ff"
-        readonly property color onAcc: "#15112b"
+        readonly property color orchid: Theme.accentSecondary
+        readonly property color onAcc: Theme.onAccent
+        readonly property color accent: root.accent
     }
     Pal { id: pal }
 
@@ -1145,16 +1151,16 @@ Item {
         property bool dim: false
         property bool faint: false
         // font.family takes one name; Qt falls back to a similar installed font if it is missing.
-        font.family: mono ? "JetBrains Mono" : "Plus Jakarta Sans"
+        font.family: mono ? Theme.fontMono : Theme.fontUi
         font.pixelSize: 13
-        color: faint ? "#948e9d" : (dim ? "#cac4d4" : "#dde2f2")
+        color: faint ? Theme.textMuted : (dim ? Theme.textDim : Theme.textMain)
     }
 
     // Icon strategy: plain Unicode glyphs (no icon font needed).
     // To use Material Symbols / Nerd Font instead, change `g()` and `font.family` here only.
     component Ico: Text {
         property string name: ""
-        property color tint: "#cac4d4"
+        property color tint: Theme.textDim
         property int size: 16
         function g(n) {
             switch (n) {
@@ -1210,20 +1216,20 @@ Item {
         property string label: ""
         property string icon: ""
         property string kind: "secondary"   // primary | secondary | ghost | danger
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         property bool compact: false
         property bool muted: false
         signal clicked()
-        readonly property color fg: kind === "primary" ? "#15112b" : (kind === "danger" ? "#ffb4ab" : "#dde2f2")
+        readonly property color fg: kind === "primary" ? Theme.onAccent : (kind === "danger" ? Theme.statusDanger : Theme.textMain)
         implicitHeight: compact ? 30 : 38
         implicitWidth: brow.implicitWidth + (compact ? 22 : 30)
         radius: compact ? 9 : 11
         color: kind === "primary" ? (bma.containsMouse ? Qt.lighter(accent, 1.12) : accent)
-             : kind === "ghost" ? (bma.containsMouse ? "#242a36" : "transparent")
+             : kind === "ghost" ? (bma.containsMouse ? Theme.cardHover : "transparent")
              : kind === "danger" ? (bma.containsMouse ? "#5a1a1d" : "#3b1417")
-             : (bma.containsMouse ? "#2f3541" : "#242a36")
+             : (bma.containsMouse ? Theme.surfaceHigh : Theme.card)
         border.width: kind === "secondary" ? 1 : 0
-        border.color: "#363d4b"
+        border.color: Theme.outlineSoft
         opacity: muted ? 0.55 : 1
         scale: bma.pressed ? 0.97 : 1
         Behavior on color { ColorAnimation { duration: 150 } }
@@ -1243,14 +1249,14 @@ Item {
         property string icon: ""
         property string tip: ""
         property bool active: false
-        property color tint: "#cac4d4"
-        property color activeTint: "#ffb4ab"
+        property color tint: Theme.textDim
+        property color activeTint: Theme.statusDanger
         property int box: 32
         signal clicked()
         implicitWidth: box
         implicitHeight: box
         radius: box / 2
-        color: ima.containsMouse ? "#333945" : "#d9242a36"
+        color: ima.containsMouse ? Theme.surfaceHigh : Qt.alpha(Theme.card, 0.85)
         scale: ima.pressed ? 0.92 : 1
         Behavior on color { ColorAnimation { duration: 140 } }
         Behavior on scale { NumberAnimation { duration: 90 } }
@@ -1267,15 +1273,15 @@ Item {
         property string icon: ""
         property string badge: ""
         property bool active: false
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         property color dot: "transparent"
         signal clicked()
         implicitHeight: 30
         implicitWidth: crow.implicitWidth + 24
         radius: 15
-        color: active ? Qt.alpha(accent, 0.20) : (cma.containsMouse ? "#242a36" : "#1a202b")
+        color: active ? Qt.alpha(accent, 0.20) : (cma.containsMouse ? Theme.surfaceHigh : Theme.surfaceBase)
         border.width: 1
-        border.color: active ? Qt.alpha(accent, 0.75) : "#2a303c"
+        border.color: active ? Qt.alpha(accent, 0.75) : Theme.outlineSoft
         Behavior on color { ColorAnimation { duration: 150 } }
         Behavior on border.color { ColorAnimation { duration: 150 } }
         Row {
@@ -1283,8 +1289,8 @@ Item {
             anchors.centerIn: parent
             spacing: 6
             Rectangle { visible: ch.dot.a > 0; width: 9; height: 9; radius: 4.5; color: ch.dot; anchors.verticalCenter: parent.verticalCenter }
-            Ico { visible: ch.icon !== ""; name: ch.icon; size: 12; tint: ch.active ? ch.accent : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
-            Lbl { text: ch.label; font.pixelSize: 12; font.weight: ch.active ? Font.DemiBold : Font.Medium; color: ch.active ? "#f4efff" : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
+            Ico { visible: ch.icon !== ""; name: ch.icon; size: 12; tint: ch.active ? ch.accent : Theme.textDim; anchors.verticalCenter: parent.verticalCenter }
+            Lbl { text: ch.label; font.pixelSize: 12; font.weight: ch.active ? Font.DemiBold : Font.Medium; color: ch.active ? "#f4efff" : Theme.textDim; anchors.verticalCenter: parent.verticalCenter }
             Rectangle {
                 visible: ch.badge !== ""
                 height: 16; width: bdg.implicitWidth + 10; radius: 8
@@ -1299,7 +1305,7 @@ Item {
     component Tag: Rectangle {
         id: tg
         property string text: ""
-        property color tint: "#cac4d4"
+        property color tint: Theme.textDim
         property int px: 10
         implicitHeight: px + 10
         implicitWidth: tgl.implicitWidth + 14
@@ -1310,10 +1316,10 @@ Item {
 
     component Bar: Rectangle {
         property real value: 0
-        property color tint: "#a78bfa"
+        property color tint: Theme.brandAccent
         implicitHeight: 6
         radius: height / 2
-        color: "#080e19"
+        color: Theme.track
         Rectangle {
             width: parent.width * Math.max(0, Math.min(1, parent.value))
             height: parent.height
@@ -1326,17 +1332,17 @@ Item {
     component Toggle: Rectangle {
         id: tgl2
         property bool checked: false
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         signal toggled()
         implicitWidth: 38
         implicitHeight: 22
         radius: 11
-        color: checked ? accent : "#2f3541"
+        color: checked ? accent : Theme.surfaceHigh
         Behavior on color { ColorAnimation { duration: 160 } }
         Rectangle {
             width: 16; height: 16; radius: 8; y: 3
             x: tgl2.checked ? 19 : 3
-            color: tgl2.checked ? "#15112b" : "#cac4d4"
+            color: tgl2.checked ? Theme.onAccent : Theme.textDim
             Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: tgl2.toggled() }
@@ -1349,7 +1355,7 @@ Item {
         contentItem: Rectangle {
             implicitWidth: 5
             radius: 3
-            color: "#5b5568"
+            color: Theme.cardHover
             opacity: sb.pressed ? 0.95 : (sb.active || sb.hovered ? 0.7 : 0.0)
             Behavior on opacity { NumberAnimation { duration: 180 } }
         }
@@ -1370,10 +1376,10 @@ Item {
         property int gap: 12
         property color tint: "transparent"
         default property alias content: inner.data
-        color: tint.a > 0 ? Qt.alpha(tint, 0.07) : "#161c27"
+        color: tint.a > 0 ? Qt.alpha(tint, 0.07) : Theme.surfaceBase
         radius: 16
         border.width: 1
-        border.color: tint.a > 0 ? Qt.alpha(tint, 0.28) : "#232a37"
+        border.color: tint.a > 0 ? Qt.alpha(tint, 0.28) : Theme.outlineSoft
         implicitHeight: inner.implicitHeight + pad * 2
         ColumnLayout { id: inner; x: cd.pad; y: cd.pad; width: cd.width - cd.pad * 2; spacing: cd.gap }
     }
@@ -1383,7 +1389,7 @@ Item {
         property alias text: input.text
         property string placeholder: ""
         property string icon: "search"
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         signal edited()
         signal submitted()
         readonly property bool focused: input.activeFocus
@@ -1391,20 +1397,20 @@ Item {
         function focusField() { input.forceActiveFocus() }
         implicitHeight: 38
         radius: 12
-        color: input.activeFocus ? "#242a36" : "#1a202b"
+        color: input.activeFocus ? Theme.cardHover : Theme.surfaceBase
         border.width: 1
-        border.color: input.activeFocus ? sf.accent : "#2c3340"
+        border.color: input.activeFocus ? sf.accent : Theme.outlineSoft
         Behavior on color { ColorAnimation { duration: 150 } }
         Behavior on border.color { ColorAnimation { duration: 150 } }
-        Ico { id: sfIcon; x: 12; anchors.verticalCenter: parent.verticalCenter; name: sf.icon; size: 15; tint: "#948e9d" }
+        Ico { id: sfIcon; x: 12; anchors.verticalCenter: parent.verticalCenter; name: sf.icon; size: 15; tint: Theme.textMuted }
         TextInput {
             id: input
             anchors { left: sfIcon.right; leftMargin: 8; right: sfClear.left; rightMargin: 6; verticalCenter: parent.verticalCenter }
-            color: "#dde2f2"
+            color: Theme.textMain
             selectionColor: Qt.alpha(sf.accent, 0.45)
-            selectedTextColor: "#ffffff"
+            selectedTextColor: Theme.onAccent
             font.pixelSize: 13
-            font.family: "Plus Jakarta Sans"
+            font.family: Theme.fontUi
             clip: true
             selectByMouse: true
             onTextEdited: sf.edited()
@@ -1416,7 +1422,8 @@ Item {
             verticalAlignment: Text.AlignVCenter
             visible: input.text.length === 0
             text: sf.placeholder
-            color: "#6f6a78"
+            color: Theme.textMuted
+            opacity: 0.7
             elide: Text.ElideRight
         }
         Item {
@@ -1424,7 +1431,7 @@ Item {
             width: 22; height: 22
             anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
             visible: input.text.length > 0
-            Ico { anchors.centerIn: parent; name: "close"; size: 11; tint: "#948e9d" }
+            Ico { anchors.centerIn: parent; name: "close"; size: 11; tint: Theme.textMuted }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { input.text = ""; sf.edited(); input.forceActiveFocus() } }
         }
     }
@@ -1433,10 +1440,10 @@ Item {
     component Art: Item {
         id: art
         property string src: ""
-        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property var grad: [Theme.surfaceBase, "#2a1b5e", "#0e4a6b"]
         property string glyph: ""
         property real radiusPx: 0
-        property color frameColor: "#161c27"
+        property color frameColor: Theme.surfaceBase
         property real zoom: 1
         clip: true
         Item {
@@ -1511,7 +1518,7 @@ Item {
         property string v: ""
         implicitHeight: 28
         radius: 7
-        color: "#1a202b"
+        color: Theme.card
         Lbl { x: 10; anchors.verticalCenter: parent.verticalCenter; text: parent.k; mono: true; faint: true; font.pixelSize: 11 }
         Lbl { anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter } width: parent.width * 0.62
               horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; text: parent.v; mono: true; font.pixelSize: 11 }
@@ -1527,7 +1534,7 @@ Item {
         property string corner: ""
         property string userStatus: ""
         property string src: ""
-        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property var grad: [Theme.surfaceBase, "#2a1b5e", "#0e4a6b"]
         property string glyph: ""
         property real aspect: 1.6
         property bool selected: false
@@ -1541,7 +1548,7 @@ Item {
         property string previewTip: "Preview"
         property string primaryLabel: ""
         property string primaryIcon: "play"
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         signal activated()
         signal primary()
         signal previewed()
@@ -1553,9 +1560,9 @@ Item {
         implicitHeight: artH + 12 + 64
         height: implicitHeight
         radius: 14
-        color: hh.hovered ? "#1f2631" : "#1a202b"
+        color: hh.hovered ? Theme.surfaceHigh : Theme.card
         border.width: selected ? 2 : 1
-        border.color: selected ? accent : (hh.hovered ? Qt.alpha(accent, 0.5) : "#262d3a")
+        border.color: selected ? accent : (hh.hovered ? Qt.alpha(accent, 0.5) : Theme.outlineSoft)
         scale: hh.hovered ? 1.012 : 1
         Behavior on color { ColorAnimation { duration: 160 } }
         Behavior on border.color { ColorAnimation { duration: 160 } }
@@ -1587,7 +1594,7 @@ Item {
             Behavior on opacity { NumberAnimation { duration: 180 } }
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 1.0; color: "#e6080e19" }
+                GradientStop { position: 1.0; color: Qt.alpha(Theme.track, 0.9) }
             }
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mc.activated() }
@@ -1618,13 +1625,13 @@ Item {
         property string sub: ""
         property string badge: ""
         property string src: ""
-        property var grad: ["#161c27", "#2a1b5e", "#0e4a6b"]
+        property var grad: [Theme.surfaceBase, "#2a1b5e", "#0e4a6b"]
         property string glyph: ""
         property real value: 0
         property string valueLabel: ""
         property string btnLabel: "Continue"
         property string btnIcon: "play"
-        property color accent: "#a78bfa"
+        property color accent: Theme.brandAccent
         signal activated()
         signal cont()
         readonly property real artW: width - 12
@@ -1632,9 +1639,9 @@ Item {
         implicitHeight: artH + 6 + 78 + 30 + 10
         height: implicitHeight
         radius: 14
-        color: shh.hovered ? "#1f2631" : "#1a202b"
+        color: shh.hovered ? Theme.surfaceHigh : Theme.card
         border.width: 1
-        border.color: shh.hovered ? Qt.alpha(accent, 0.5) : "#262d3a"
+        border.color: shh.hovered ? Qt.alpha(accent, 0.5) : Theme.outlineSoft
         Behavior on color { ColorAnimation { duration: 160 } }
         Behavior on border.color { ColorAnimation { duration: 160 } }
         HoverHandler { id: shh }
@@ -2219,7 +2226,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#0d131e"
+        color: pal.bg
         Rectangle {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             height: 280
@@ -2235,7 +2242,7 @@ Item {
         id: sidebar
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         width: root.sidebarW
-        color: "#080e19"
+        color: pal.lowest
         z: 10
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
@@ -2245,7 +2252,7 @@ Item {
             spacing: 10
             Rectangle {
                 width: 30; height: 30; radius: 9; color: root.accent
-                Ico { anchors.centerIn: parent; name: "surprise"; size: 15; tint: "#15112b" }
+                Ico { anchors.centerIn: parent; name: "surprise"; size: 15; tint: pal.onAcc }
             }
             Column {
                 visible: !root.compact
@@ -2281,7 +2288,7 @@ Item {
                     readonly property bool cur: root.page === index
                     HoverHandler { id: nh }
                     Rectangle {
-                        anchors.fill: parent; radius: 11; color: "#1a202b"
+                        anchors.fill: parent; radius: 11; color: pal.cont
                         opacity: (!ni.cur && nh.hovered) ? 1 : 0
                         Behavior on opacity { NumberAnimation { duration: 140 } }
                     }
@@ -2289,12 +2296,12 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         x: root.compact ? (ni.width - 18) / 2 : 14
                         spacing: 12
-                        Ico { width: 18; name: modelData.icon; size: 15; tint: ni.cur ? root.accent : "#cac4d4"; anchors.verticalCenter: parent.verticalCenter }
+                        Ico { width: 18; name: modelData.icon; size: 15; tint: ni.cur ? root.accent : pal.dim; anchors.verticalCenter: parent.verticalCenter }
                         Lbl {
                             visible: !root.compact
                             text: modelData.name
                             font.weight: ni.cur ? Font.DemiBold : Font.Medium
-                            color: ni.cur ? "#ffffff" : "#cac4d4"
+                            color: ni.cur ? pal.text : pal.dim
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -2305,7 +2312,16 @@ Item {
                         color: Qt.alpha("#7bd0ff", 0.2)
                         Lbl { anchors.centerIn: parent; text: root.dlCount("downloading"); mono: true; font.pixelSize: 10; color: "#7bd0ff" }
                     }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.go(index) }
+                    MouseArea {
+                        id: nma
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.go(index)
+                    }
+                    ToolTip.visible: root.compact && nma.containsMouse
+                    ToolTip.text: modelData.name
+                    ToolTip.delay: 350
                 }
             }
         }
@@ -2321,7 +2337,7 @@ Item {
             }
             Rectangle {
                 visible: !root.compact
-                width: parent.width; height: 100; radius: 12; color: "#161c27"
+                width: parent.width; height: 100; radius: 12; color: pal.low
                 Lbl { x: 12; y: 10; text: "VIBE STUDIO"; mono: true; faint: true; font.pixelSize: 10; font.letterSpacing: 1 }
                 Grid {
                     x: 8; y: 32
@@ -2332,13 +2348,13 @@ Item {
                         delegate: Rectangle {
                             width: 82; height: 28; radius: 8
                             readonly property bool sel: root.moodId === modelData.id
-                            color: sel ? Qt.alpha(modelData.accent, 0.18) : (mh.containsMouse ? "#242a36" : "#1a202b")
+                            color: sel ? Qt.alpha(modelData.accent, 0.18) : (mh.containsMouse ? pal.high : pal.cont)
                             Behavior on color { ColorAnimation { duration: 140 } }
                             Row {
                                 anchors.verticalCenter: parent.verticalCenter
                                 x: 8; spacing: 6
                                 Rectangle { width: 7; height: 7; radius: 3.5; color: modelData.accent; anchors.verticalCenter: parent.verticalCenter }
-                                Lbl { text: modelData.name.split(" ")[0]; mono: true; font.pixelSize: 10; color: sel ? "#ffffff" : "#cac4d4" }
+                                Lbl { text: modelData.name.split(" ")[0]; mono: true; font.pixelSize: 10; color: sel ? pal.text : pal.dim }
                             }
                             MouseArea { id: mh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMood(modelData.id) }
                         }
@@ -2378,10 +2394,11 @@ Item {
                 SearchField {
                     id: gsearch
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 120
                     Layout.maximumWidth: 520
                     Layout.preferredHeight: 38
                     accent: root.accent
-                    placeholder: "Search wallpapers, anime, manga \u2014 or paste a URL"
+                    placeholder: root.width < 700 ? "Search… or paste URL" : "Search wallpapers, anime, manga \u2014 or paste a URL"
                     onEdited: root.gq = text
                     onSubmitted: {
                         var r = root.globalResults(root.gq)
@@ -2402,9 +2419,9 @@ Item {
                     implicitHeight: 30
                     implicitWidth: strow.implicitWidth + 22
                     radius: 15
-                    color: "#161c27"
+                    color: pal.low
                     border.width: 1
-                    border.color: "#262d3a"
+                    border.color: pal.line
                     Row {
                         id: strow
                         anchors.centerIn: parent
@@ -2458,9 +2475,9 @@ Item {
         height: Math.min(items.length, 7) * 46 + 12
         z: 40
         radius: 14
-        color: "#f2161c27"
+        color: Qt.alpha(pal.low, 0.96)
         border.width: 1
-        border.color: "#2f3646"
+        border.color: pal.line
         opacity: (root.gq.trim() !== "" && gsearch.focused) ? 1 : 0
         visible: opacity > 0.01 && items.length > 0
         Behavior on opacity { NumberAnimation { duration: 150 } }
@@ -2471,7 +2488,7 @@ Item {
                 model: results.items
                 delegate: Rectangle {
                     width: parent.width; height: 46; radius: 10
-                    color: rh.containsMouse ? "#242a36" : "transparent"
+                    color: rh.containsMouse ? pal.high : "transparent"
                     Rectangle {
                         x: 8; anchors.verticalCenter: parent.verticalCenter
                         width: 28; height: 28; radius: 8; color: Qt.alpha(root.accent, 0.16)
@@ -2505,9 +2522,9 @@ Item {
             width: Math.min(400, parent.width - 32)
             height: Math.min(parent.height - 80, vcol.implicitHeight + 36)
             radius: 18
-            color: "#f4161c27"
+            color: Qt.alpha(pal.low, 0.96)
             border.width: 1
-            border.color: "#2f3646"
+            border.color: pal.line
             transform: Translate { y: root.vibeOpen ? 0 : -10; Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } } }
             MouseArea { anchors.fill: parent }
             ColumnLayout {
@@ -2531,9 +2548,9 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 84
                         radius: 12
-                        color: vrh.containsMouse ? "#1f2631" : "#1a202b"
+                        color: vrh.containsMouse ? pal.high : pal.cont
                         border.width: sel ? 2 : 1
-                        border.color: sel ? modelData.accent : "#262d3a"
+                        border.color: sel ? modelData.accent : pal.line
                         Art { x: 8; y: 8; width: 104; height: 68; radiusPx: 8; frameColor: vrow.color; src: root.artUrl(modelData.art); grad: modelData.grad; glyph: "vibe" }
                         MouseArea { id: vrh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.setMood(modelData.id) }
                         Lbl { x: 124; y: 10; text: modelData.name; font.pixelSize: 14; font.weight: Font.DemiBold }
@@ -2559,16 +2576,16 @@ Item {
         opacity: root.detailShown ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 180 } }
-        Rectangle { anchors.fill: parent; color: "#d905070d"; MouseArea { anchors.fill: parent; onClicked: root.closeDetail() } }
+        Rectangle { anchors.fill: parent; color: Qt.alpha(pal.bg, 0.85); MouseArea { anchors.fill: parent; onClicked: root.closeDetail() } }
         Rectangle {
             id: dpanel
             anchors.centerIn: parent
             width: Math.min(860, parent.width - 64)
             height: Math.min(580, parent.height - 64)
             radius: 20
-            color: "#161c27"
+            color: pal.low
             border.width: 1
-            border.color: "#2f3646"
+            border.color: pal.line
             scale: root.detailShown ? 1 : 0.97
             Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             MouseArea { anchors.fill: parent }
@@ -2596,15 +2613,15 @@ Item {
         width: Math.min(580, root.width - 48)
         height: Math.max(46, toastLbl.implicitHeight + 24)
         radius: 13
-        color: "#f5161c27"
+        color: Qt.alpha(pal.low, 0.96)
         border.width: 1
-        border.color: root.toastKind === "warn" ? Qt.alpha("#fde047", 0.45) : (root.toastKind === "ok" ? Qt.alpha("#86efac", 0.45) : "#363d4b")
+        border.color: root.toastKind === "warn" ? Qt.alpha(pal.warn, 0.45) : (root.toastKind === "ok" ? Qt.alpha(pal.ok, 0.45) : pal.line)
         opacity: root.toastShown ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 200 } }
         transform: Translate { y: root.toastShown ? 0 : 12; Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } } }
         Rectangle { x: 16; anchors.verticalCenter: parent.verticalCenter; width: 8; height: 8; radius: 4
-                    color: root.toastKind === "warn" ? "#fde047" : (root.toastKind === "ok" ? "#86efac" : "#7bd0ff") }
+                    color: root.toastKind === "warn" ? pal.warn : (root.toastKind === "ok" ? pal.ok : "#7bd0ff") }
         Lbl { id: toastLbl; x: 36; y: 12; width: parent.width - 52; wrapMode: Text.WordWrap; text: root.toastText; font.pixelSize: 13 }
     }
 
@@ -2635,7 +2652,7 @@ Item {
                     Layout.preferredHeight: 330
                     Layout.alignment: Qt.AlignTop
                     radiusPx: 14
-                    frameColor: "#161c27"
+                    frameColor: pal.low
                     src: root.artUrl(db.d.cover)
                     grad: db.d.g
                     glyph: db.isA ? "anime" : "manga"
@@ -2658,7 +2675,7 @@ Item {
                             Layout.preferredHeight: 110
                             visible: db.d.banner !== ""
                             radiusPx: 12
-                            frameColor: "#161c27"
+                            frameColor: pal.low
                             src: root.artUrl(db.d.banner)
                             grad: db.d.g
                             glyph: db.isA ? "anime" : "manga"
@@ -2711,9 +2728,9 @@ Item {
                                 model: db.total > 0 && db.total <= 26 ? db.total : 0
                                 delegate: Rectangle {
                                     width: 34; height: 26; radius: 7
-                                    color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.28) : (eh.containsMouse ? "#2f3541" : "#1a202b")
+                                    color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.28) : (eh.containsMouse ? pal.highest : pal.cont)
                                     border.width: 1
-                                    border.color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.6) : "#262d3a"
+                                    border.color: (index + 1) <= db.cur ? Qt.alpha(db.tint, 0.6) : pal.line
                                     Lbl { anchors.centerIn: parent; text: index + 1; mono: true; font.pixelSize: 11; dim: true }
                                     MouseArea { id: eh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                                 onClicked: root.setProgress(db.d.id, index + 1, db.total) }
@@ -2838,15 +2855,15 @@ Item {
                     // ---- A. hero
                     Rectangle {
                         width: parent.width; height: 224; radius: 18
-                        color: "#161c27"
+                        color: pal.low
                         border.width: 1
-                        border.color: "#232a37"
+                        border.color: pal.line
                         Art {
                             id: heroArt
                             anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
                             width: Math.max(260, parent.width * 0.52)
                             radiusPx: 18
-                            frameColor: "#0d131e"
+                            frameColor: pal.bg
                             src: root.artUrl(root.mood.art)
                             grad: root.mood.grad
                             glyph: "wallpaper"
@@ -2855,9 +2872,9 @@ Item {
                             anchors.fill: heroArt
                             gradient: Gradient {
                                 orientation: Gradient.Horizontal
-                                GradientStop { position: 0.0; color: "#161c27" }
-                                GradientStop { position: 0.55; color: "#c0161c27" }
-                                GradientStop { position: 1.0; color: "#26161c27" }
+                                GradientStop { position: 0.0; color: pal.low }
+                                GradientStop { position: 0.55; color: Qt.alpha(pal.low, 0.75) }
+                                GradientStop { position: 1.0; color: Qt.alpha(pal.low, 0.15) }
                             }
                         }
                         Column {
@@ -2923,9 +2940,9 @@ Item {
                                     Layout.preferredWidth: 100
                                     Layout.preferredHeight: 200
                                     radius: 14
-                                    color: "#1a202b"
+                                    color: pal.cont
                                     border.width: sel ? 2 : 1
-                                    border.color: sel ? modelData.accent : "#262d3a"
+                                    border.color: sel ? modelData.accent : pal.line
                                     Behavior on border.color { ColorAnimation { duration: 180 } }
                                     HoverHandler { id: vh }
                                     scale: vh.hovered ? 1.01 : 1
@@ -2956,9 +2973,9 @@ Item {
                                 Layout.preferredHeight: hp.fwW / 1.6
                                 Layout.alignment: Qt.AlignTop
                                 radiusPx: 12
-                                frameColor: "#161c27"
+                                frameColor: pal.low
                                 src: hp.fw ? root.artUrl(hp.fw.art) : ""
-                                grad: hp.fw ? hp.fw.g : ["#161c27", "#2a1b5e", "#0e4a6b"]
+                                grad: hp.fw ? hp.fw.g : [pal.low, "#2a1b5e", "#0e4a6b"]
                                 glyph: "wallpaper"
                             }
                             ColumnLayout {
@@ -3052,9 +3069,9 @@ Item {
                                         width: (qaWrap.width - 20) / 3
                                         height: 68
                                         radius: 12
-                                        color: qh.containsMouse ? "#242a36" : "#1a202b"
+                                        color: qh.containsMouse ? pal.high : pal.cont
                                         border.width: 1
-                                        border.color: qh.containsMouse ? Qt.alpha(root.accent, 0.5) : "#262d3a"
+                                        border.color: qh.containsMouse ? Qt.alpha(root.accent, 0.5) : pal.line
                                         Behavior on color { ColorAnimation { duration: 140 } }
                                         Rectangle { x: 12; anchors.verticalCenter: parent.verticalCenter; width: 36; height: 36; radius: 10; color: Qt.alpha(root.accent, 0.16)
                                                     Ico { anchors.centerIn: parent; name: modelData.icon; size: 16; tint: root.accent } }
@@ -3077,13 +3094,13 @@ Item {
                                 delegate: RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
-                                    Art { Layout.preferredWidth: 52; Layout.preferredHeight: 34; radiusPx: 6; frameColor: "#161c27"; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "library" }
+                                    Art { Layout.preferredWidth: 52; Layout.preferredHeight: 34; radiusPx: 6; frameColor: pal.low; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "library" }
                                     Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13 }
                                     Tag { text: root.kindLabel(modelData.kind).toUpperCase(); px: 9 }
                                 }
                             }
                             Lbl { visible: hp.recent.length === 0; text: "Nothing opened yet."; faint: true; font.pixelSize: 12 }
-                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#262d3a" }
+                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: pal.line }
                             Lbl { text: "This session"; font.pixelSize: 13; font.weight: Font.DemiBold }
                             Repeater {
                                 model: root.activity
@@ -3387,14 +3404,14 @@ Item {
                 visible: !wp.wide && opacity > 0.01
                 opacity: wp.hasSel ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 200 } }
-                Rectangle { anchors.fill: parent; color: "#99080e19"; MouseArea { anchors.fill: parent; onClicked: root.wpSelectedId = "" } }
+                Rectangle { anchors.fill: parent; color: Qt.alpha(pal.lowest, 0.6); MouseArea { anchors.fill: parent; onClicked: root.wpSelectedId = "" } }
                 Rectangle {
                     anchors { top: parent.top; bottom: parent.bottom; right: parent.right; margins: 8 }
                     width: Math.min(380, parent.width - 24)
                     radius: 16
-                    color: "#161c27"
+                    color: pal.low
                     border.width: 1
-                    border.color: "#2f3646"
+                    border.color: pal.line
                     clip: true
                     MouseArea { anchors.fill: parent }
                     Loader { anchors.fill: parent; anchors.margins: 0; active: !wp.wide && root.wpShownId !== ""; sourceComponent: wpInspectorC }
@@ -3408,11 +3425,11 @@ Item {
         Rectangle {
             id: ins
             readonly property var w: root.wallpaperById(root.wpShownId)
-            color: wallPageIsWide ? "#161c27" : "transparent"
+            color: wallPageIsWide ? pal.low : "transparent"
             readonly property bool wallPageIsWide: root.width - root.sidebarW >= 1020
             radius: 16
             border.width: wallPageIsWide ? 1 : 0
-            border.color: "#232a37"
+            border.color: pal.line
             Flickable {
                 id: inf
                 anchors { fill: parent; margins: 16 }
@@ -3437,9 +3454,9 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: width / 1.6
                         radiusPx: 12
-                        frameColor: ins.color.a > 0 ? "#161c27" : "#161c27"
+                        frameColor: ins.color.a > 0 ? pal.low : pal.bg
                         src: ins.w ? root.artUrl(ins.w.art) : ""
-                        grad: ins.w ? ins.w.g : ["#161c27", "#2a1b5e", "#0e4a6b"]
+                        grad: ins.w ? ins.w.g : [pal.low, "#2a1b5e", "#0e4a6b"]
                         glyph: "wallpaper"
                     }
                     RowLayout {
@@ -3871,9 +3888,9 @@ Item {
                                 width: (srcWrap.width - 24) / 3 < 220 ? srcWrap.width : (srcWrap.width - 24) / 3
                                 height: 84
                                 radius: 14
-                                color: sh.containsMouse ? "#1f2631" : "#1a202b"
+                                color: sh.containsMouse ? pal.high : pal.cont
                                 border.width: sel ? 2 : 1
-                                border.color: sel ? modelData.accent : "#262d3a"
+                                border.color: sel ? modelData.accent : pal.line
                                 Behavior on color { ColorAnimation { duration: 150 } }
                                 Behavior on border.color { ColorAnimation { duration: 150 } }
                                 Rectangle { x: 14; anchors.verticalCenter: parent.verticalCenter; width: 44; height: 44; radius: 12; color: Qt.alpha(modelData.accent, 0.16)
@@ -3950,9 +3967,9 @@ Item {
                                     width: mp.moodW
                                     height: 84
                                     radius: 14
-                                    color: "#1a202b"
+                                    color: pal.cont
                                     border.width: sel ? 2 : 1
-                                    border.color: sel ? modelData.accent : "#262d3a"
+                                    border.color: sel ? modelData.accent : pal.line
                                     Behavior on border.color { ColorAnimation { duration: 150 } }
                                     HoverHandler { id: mh2 }
                                     scale: mh2.hovered ? 1.02 : 1
@@ -3981,7 +3998,7 @@ Item {
                             spacing: 18
                             Art {
                                 Layout.preferredWidth: 150; Layout.preferredHeight: 94
-                                radiusPx: 12; frameColor: "#161c27"
+                                radiusPx: 12; frameColor: pal.low
                                 grad: (root.moodInfo(mp.activeMood) ? root.moodInfo(mp.activeMood).g : root.mood.grad)
                                 glyph: "music"
                             }
@@ -4066,21 +4083,21 @@ Item {
                                 width: parent.width
                                 height: 58
                                 radius: 12
-                                color: rh2.containsMouse ? "#1f2631" : (cur ? Qt.alpha(root.accent, 0.10) : "#161c27")
+                                color: rh2.containsMouse ? pal.high : (cur ? Qt.alpha(root.accent, 0.10) : pal.low)
                                 border.width: 1
-                                border.color: cur ? Qt.alpha(root.accent, 0.45) : "#232a37"
+                                border.color: cur ? Qt.alpha(root.accent, 0.45) : pal.line
                                 Behavior on color { ColorAnimation { duration: 140 } }
                                 MouseArea { id: rh2; anchors.fill: parent; hoverEnabled: true; onDoubleClicked: root.playNow(modelData, mp.trackList) }
                                 RowLayout {
                                     anchors { fill: parent; leftMargin: 12; rightMargin: 10 }
                                     spacing: 12
                                     Lbl { Layout.preferredWidth: 22; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 11
-                                          text: row.cur ? (root.playing ? "\u25B6" : "\u2016") : (index + 1); color: row.cur ? root.accent : "#948e9d" }
+                                          text: row.cur ? (root.playing ? "\u25B6" : "\u2016") : (index + 1); color: row.cur ? root.accent : pal.faint }
                                     Art { Layout.preferredWidth: 40; Layout.preferredHeight: 40; radiusPx: 8; frameColor: row.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: "music" }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 1
-                                        Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: row.cur ? root.accent : "#dde2f2" }
+                                        Lbl { Layout.fillWidth: true; text: modelData.title; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold; color: row.cur ? root.accent : pal.text }
                                         Lbl { Layout.fillWidth: true; text: root.musicSub(modelData); elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
                                     }
                                     Tag { visible: mp.cw > 760 && modelData.genre !== ""; text: modelData.genre.toUpperCase(); px: 9 }
@@ -4199,10 +4216,10 @@ Item {
         Rectangle {
             id: qp
             readonly property var np: root.nowPlaying
-            color: "#161c27"
+            color: pal.low
             radius: 16
             border.width: 1
-            border.color: "#232a37"
+            border.color: pal.line
             implicitHeight: Math.min(560, qcol.implicitHeight + 32)
             Flickable {
                 id: qf
@@ -4232,7 +4249,7 @@ Item {
                         border.width: 1
                         border.color: Qt.alpha(root.accent, 0.4)
                         visible: qp.np !== null
-                        Art { x: 8; y: 8; width: 46; height: 46; radiusPx: 8; frameColor: "#1b2030"; src: qp.np ? root.artUrl(qp.np.art) : ""; grad: qp.np ? qp.np.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+                        Art { x: 8; y: 8; width: 46; height: 46; radiusPx: 8; frameColor: pal.cont; src: qp.np ? root.artUrl(qp.np.art) : ""; grad: qp.np ? qp.np.g : [pal.low, "#2a1b5e", "#0e4a6b"]; glyph: "music" }
                         Column {
                             x: 64; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 76; spacing: 2
                             Lbl { width: parent.width; text: qp.np ? qp.np.title : ""; elide: Text.ElideRight; font.pixelSize: 13; font.weight: Font.DemiBold }
@@ -4250,18 +4267,18 @@ Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 52
                             radius: 10
-                            color: qrh.containsMouse ? "#242a36" : (cur ? Qt.alpha(root.accent, 0.08) : "#1a202b")
+                            color: qrh.containsMouse ? pal.high : (cur ? Qt.alpha(root.accent, 0.08) : pal.cont)
                             Behavior on color { ColorAnimation { duration: 130 } }
                             MouseArea { id: qrh; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.jumpQueue(index) }
                             RowLayout {
                                 anchors { fill: parent; leftMargin: 8; rightMargin: 6 }
                                 spacing: 8
-                                Lbl { Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 10; text: qr.cur ? "\u25B6" : (index + 1); color: qr.cur ? root.accent : "#948e9d" }
-                                Art { Layout.preferredWidth: 34; Layout.preferredHeight: 34; radiusPx: 6; frameColor: qr.color; src: qr.it ? root.artUrl(qr.it.art) : ""; grad: qr.it ? qr.it.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+                                Lbl { Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter; mono: true; font.pixelSize: 10; text: qr.cur ? "\u25B6" : (index + 1); color: qr.cur ? root.accent : pal.faint }
+                                Art { Layout.preferredWidth: 34; Layout.preferredHeight: 34; radiusPx: 6; frameColor: qr.color; src: qr.it ? root.artUrl(qr.it.art) : ""; grad: qr.it ? qr.it.g : [pal.low, "#2a1b5e", "#0e4a6b"]; glyph: "music" }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 0
-                                    Lbl { Layout.fillWidth: true; text: qr.it ? qr.it.title : ""; elide: Text.ElideRight; font.pixelSize: 12; font.weight: Font.DemiBold; color: qr.cur ? root.accent : "#dde2f2" }
+                                    Lbl { Layout.fillWidth: true; text: qr.it ? qr.it.title : ""; elide: Text.ElideRight; font.pixelSize: 12; font.weight: Font.DemiBold; color: qr.cur ? root.accent : pal.text }
                                     Lbl { Layout.fillWidth: true; text: qr.it ? (qr.it.kind === "station" ? "Live station" : qr.it.artist) : ""; elide: Text.ElideRight; dim: true; font.pixelSize: 11 }
                                 }
                                 IconBtn { box: 24; icon: "chev"; tip: "Move down"; onClicked: root.moveQueue(index, 1) }
@@ -4288,7 +4305,7 @@ Item {
         visible: height > 1
         clip: true
         z: 30
-        color: "#f5080e19"
+        color: Qt.alpha(pal.lowest, 0.96)
         readonly property var np: root.nowPlaying
         readonly property bool live: np !== null && np.kind === "station"
         readonly property bool compactPlayer: (root.width - root.sidebarW) < 760
@@ -4301,12 +4318,12 @@ Item {
             return (root.playing ? "Playing" : "Paused") + " \u00b7 " + root.fmtTime(root.playPos)
                    + " / " + root.fmtTime(root.currentDuration)
         }
-        Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: 1; color: "#232a37" }
+        Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: 1; color: pal.line }
         RowLayout {
             anchors { fill: parent; leftMargin: miniPlayer.compactPlayer ? 12 : 20; rightMargin: miniPlayer.compactPlayer ? 12 : 20; topMargin: 6; bottomMargin: 6 }
             spacing: miniPlayer.compactPlayer ? 10 : 14
-            Art { Layout.preferredWidth: miniPlayer.compactPlayer ? 46 : 54; Layout.preferredHeight: miniPlayer.compactPlayer ? 46 : 54; radiusPx: 9; frameColor: "#080e19"
-                  src: miniPlayer.np ? root.artUrl(miniPlayer.np.art) : ""; grad: miniPlayer.np ? miniPlayer.np.g : ["#161c27", "#2a1b5e", "#0e4a6b"]; glyph: "music" }
+            Art { Layout.preferredWidth: miniPlayer.compactPlayer ? 46 : 54; Layout.preferredHeight: miniPlayer.compactPlayer ? 46 : 54; radiusPx: 9; frameColor: pal.lowest
+                  src: miniPlayer.np ? root.artUrl(miniPlayer.np.art) : ""; grad: miniPlayer.np ? miniPlayer.np.g : [pal.low, "#2a1b5e", "#0e4a6b"]; glyph: "music" }
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.preferredWidth: root.width < 1150 ? 150 : 230
@@ -4543,9 +4560,9 @@ Item {
                                 width: parent.width
                                 height: failed ? 98 : 80
                                 radius: 12
-                                color: "#1a202b"
+                                color: pal.cont
                                 border.width: 1
-                                border.color: failed ? Qt.alpha("#ffb4ab", 0.35) : "#262d3a"
+                                border.color: failed ? Qt.alpha(pal.err, 0.35) : pal.line
                                 RowLayout {
                                     anchors { fill: parent; leftMargin: 14; rightMargin: 12 }
                                     spacing: 14
@@ -4702,9 +4719,9 @@ Item {
                                     width: Math.min(260, (lp.gw - 14) / 2)
                                     height: 66
                                     radius: 12
-                                    color: rrh.containsMouse ? "#1f2631" : "#1a202b"
+                                    color: rrh.containsMouse ? pal.high : pal.cont
                                     border.width: 1
-                                    border.color: "#262d3a"
+                                    border.color: pal.line
                                     Art { x: 8; y: 8; width: 76; height: 50; radiusPx: 8; frameColor: parent.color; src: root.artUrl(modelData.art); grad: modelData.g; glyph: lp.glyphFor(modelData.kind) }
                                     Column {
                                         x: 94; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 104; spacing: 2
@@ -4757,9 +4774,9 @@ Item {
                                 width: parent.width
                                 height: 64
                                 radius: 12
-                                color: lrh.containsMouse ? "#1f2631" : "#1a202b"
+                                color: lrh.containsMouse ? pal.high : pal.cont
                                 border.width: 1
-                                border.color: "#262d3a"
+                                border.color: pal.line
                                 MouseArea { id: lrh; anchors.fill: parent; hoverEnabled: true; onClicked: root.libraryActivate(modelData) }
                                 RowLayout {
                                     anchors { fill: parent; leftMargin: 8; rightMargin: 12 }

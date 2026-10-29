@@ -1,7 +1,9 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import "../../config"
 
 Item {
     id: st
@@ -50,7 +52,7 @@ Item {
     readonly property bool brightAvailable: core.hasBrightness || fallbackBrightPct >= 0
     readonly property real liveBright: dragBright >= 0
         ? dragBright
-        : (fallbackBrightPct >= 0 ? fallbackBrightPct / 100 : (core.hasBrightness ? core.brightness : 0))
+        : (core.hasBrightness ? core.brightness : (fallbackBrightPct >= 0 ? fallbackBrightPct / 100 : 0))
 
     property real dragVol: -1
     readonly property real liveVol: dragVol >= 0 ? dragVol : (core.muted ? 0 : Math.max(0, Math.min(1.5, core.volume)))
@@ -61,26 +63,6 @@ Item {
     property bool hasSystemctl: false
     property bool hasLocker: false
     property bool confirmPower: false
-
-    // Focus setup is intentionally local to this in-memory control surface.
-    // The running session itself remains owned by Island.qml.
-    property string focusWorkInput: "25"
-    property string focusBreakInput: "5"
-    property string focusCountInput: "4"
-    property string focusTitleInput: ""
-    property string focusPreset: "25/5"
-    property string focusError: ""
-
-    readonly property bool focusInputsValid:
-        validFocusMinutes(focusWorkInput, false)
-        && validFocusMinutes(focusBreakInput, true)
-        && validFocusCount(focusCountInput)
-    readonly property real focusProgress:
-        core.focusOn && core.focusPhaseSeconds > 0
-        ? Math.max(0, Math.min(1,
-            1 - core.focusRemaining / core.focusPhaseSeconds))
-        : 0
-    readonly property color focusTone: core.focusBreak ? core.lav : core.teal
 
     readonly property bool flightMode: (hasNmcli || hasBt) && (!hasNmcli || !wifiEnabled) && (!hasBt || !btEnabled)
 
@@ -110,44 +92,6 @@ Item {
             return mins > 0 ? (mins + " min") : (idleTimeoutSec + " sec")
         }
         return "Active"
-    }
-
-    function validFocusMinutes(value, allowZero) {
-        if (typeof value !== "string" || !/^\d+$/.test(value)) return false
-        const n = Number(value)
-        return Number.isInteger(n) && n >= (allowZero ? 0 : 1) && n <= 10080
-    }
-
-    function validFocusCount(value) {
-        if (typeof value !== "string" || !/^\d+$/.test(value)) return false
-        const n = Number(value)
-        return Number.isInteger(n) && n >= 1 && n <= 1000
-    }
-
-    function applyFocusPreset(work, rest, name) {
-        focusWorkInput = String(work)
-        focusBreakInput = String(rest)
-        focusPreset = name
-        focusError = ""
-    }
-
-    function startFocusFromCard() {
-        focusError = ""
-        if (!focusInputsValid) {
-            focusError = "Enter valid minutes and a session count."
-            return
-        }
-        if (typeof core.startFocus !== "function") {
-            focusError = "Focus controls are unavailable."
-            return
-        }
-        const started = core.startFocus(
-            Number(focusWorkInput) * 60,
-            Number(focusBreakInput) * 60,
-            Number(focusCountInput),
-            focusTitleInput
-        )
-        if (!started) focusError = "Those Focus settings were rejected."
     }
 
     // ───────────── lifecycle & dismissal ─────────────
@@ -375,6 +319,28 @@ Item {
         if (typeof core.setControl === "function") core.setControl("close")
     }
 
+    function openMediaHub() {
+        if (core && typeof core.openMediaHub === "function") {
+            core.openMediaHub()
+        } else {
+            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "mediahub", "toggle"])
+        }
+        localExpanded = false
+        if (typeof core.setControl === "function") core.setControl("close")
+    }
+
+    function openToolbox() {
+        if (core && typeof core.openToolbox === "function") {
+            core.openToolbox()
+        } else {
+            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "toolbox", "toggle"])
+        }
+        localExpanded = false
+        if (typeof core.setControl === "function") core.setControl("close")
+    }
+
     function applyVolume(ratio) {
         if (!core.sinkAudio) return
         const clamped = Math.max(0, Math.min(1.5, ratio))
@@ -384,9 +350,9 @@ Item {
 
     function commitBrightness(ratio) {
         if (!brightAvailable) return
-        const pct = Math.max(5, Math.min(100, Math.round(ratio * 100)))
+        const pct = Math.max(1, Math.min(100, Math.round(ratio * 100)))
         fallbackBrightPct = pct
-        runCmd('brightnessctl -q set "$1"', [pct + "%"], 250)
+        Brightness.setPercent(pct)
     }
 
     function lockScreen() {
@@ -432,6 +398,47 @@ Item {
         color: st.core.text
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+    }
+
+    component HeaderButton: Rectangle {
+        id: hb
+        property string iconName: ""
+        property string iconAlt: ""
+        property string tooltipText: ""
+        signal triggered()
+
+        Layout.preferredWidth: 28
+        Layout.preferredHeight: 28
+        radius: 14
+        activeFocusOnTab: true
+        color: (hbMa.containsMouse || hb.activeFocus) ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
+        border.width: 1
+        border.color: hb.activeFocus ? st.core.teal : Qt.rgba(1, 1, 1, 0.06)
+        scale: hbMa.pressed ? 0.94 : 1.0
+        Behavior on scale { NumberAnimation { duration: 90 } }
+
+        ToolTip.visible: hbMa.containsMouse && tooltipText !== ""
+        ToolTip.text: tooltipText
+        ToolTip.delay: 400
+
+        Keys.onReturnPressed: hb.triggered()
+        Keys.onSpacePressed: hb.triggered()
+
+        Ico {
+            anchors.centerIn: parent
+            name: hb.iconName
+            alt: hb.iconAlt
+            font.pixelSize: 15
+            color: (hbMa.containsMouse || hb.activeFocus) ? st.core.text : st.core.dim
+        }
+
+        MouseArea {
+            id: hbMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: hb.triggered()
+        }
     }
 
     component ToggleTile: Rectangle {
@@ -671,98 +678,6 @@ Item {
         }
     }
 
-    component FocusInput: ColumnLayout {
-        id: focusInput
-        property string labelText: ""
-        property string valueText: ""
-        property bool numeric: true
-        signal valueEdited(string value)
-
-        Layout.fillWidth: true
-        spacing: 3
-
-        onValueTextChanged: {
-            if (input.text !== valueText) input.text = valueText
-        }
-
-        Text {
-            text: focusInput.labelText
-            color: st.core.dim
-            font.family: st.core.monoFont
-            font.pixelSize: 8
-            font.weight: Font.DemiBold
-            font.letterSpacing: 0.6
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            radius: 8
-            color: Qt.rgba(1, 1, 1, 0.07)
-            border.width: input.activeFocus ? 1 : 0
-            border.color: st.core.teal
-
-            TextInput {
-                id: input
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                verticalAlignment: TextInput.AlignVCenter
-                text: focusInput.valueText
-                color: st.core.text
-                selectionColor: Qt.rgba(st.core.teal.r, st.core.teal.g, st.core.teal.b, 0.35)
-                font.family: st.core.monoFont
-                font.pixelSize: 11
-                selectByMouse: true
-                inputMethodHints: focusInput.numeric ? Qt.ImhDigitsOnly : Qt.ImhNone
-                onTextChanged: focusInput.valueEdited(text)
-            }
-        }
-    }
-
-    component FocusButton: Rectangle {
-        id: focusButton
-        property string labelText: ""
-        property color tone: st.core.teal
-        property bool primary: false
-        signal triggered()
-
-        implicitWidth: buttonLabel.implicitWidth + 18
-        Layout.preferredHeight: 28
-        radius: 9
-        color: !enabled
-            ? Qt.rgba(1, 1, 1, 0.04)
-            : primary
-                ? (buttonMouse.containsMouse ? Qt.lighter(tone, 1.08) : tone)
-                : (buttonMouse.containsMouse ? Qt.rgba(tone.r, tone.g, tone.b, 0.18) : Qt.rgba(tone.r, tone.g, tone.b, 0.09))
-        border.width: primary ? 0 : 1
-        border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.30)
-        opacity: enabled ? 1 : 0.42
-        scale: buttonMouse.pressed ? 0.97 : 1
-
-        Behavior on color { ColorAnimation { duration: 120 } }
-        Behavior on scale { NumberAnimation { duration: 80 } }
-
-        Text {
-            id: buttonLabel
-            anchors.centerIn: parent
-            text: focusButton.labelText
-            color: focusButton.primary ? "#00201c" : st.core.text
-            font.family: st.core.monoFont
-            font.pixelSize: 9
-            font.weight: Font.DemiBold
-        }
-
-        MouseArea {
-            id: buttonMouse
-            anchors.fill: parent
-            enabled: focusButton.enabled
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: focusButton.triggered()
-        }
-    }
-
     // ───────────── STATE 01: Collapsed Pill (180x36) ─────────────
     Item {
         id: compactView
@@ -936,308 +851,25 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                Rectangle {
-                    Layout.preferredWidth: 28
-                    Layout.preferredHeight: 28
-                    radius: 14
-                    color: settingsMa.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
-                    border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.06)
-                    scale: settingsMa.pressed ? 0.94 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 90 } }
-
-                    Ico {
-                        anchors.centerIn: parent
-                        name: "settings"
-                        alt: "S"
-                        font.pixelSize: 15
-                        color: settingsMa.containsMouse ? st.core.text : st.core.dim
-                    }
-
-                    MouseArea {
-                        id: settingsMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: st.openSettings("")
-                    }
+                HeaderButton {
+                    iconName: "hub"
+                    iconAlt: "M"
+                    tooltipText: "Media Hub"
+                    onTriggered: st.openMediaHub()
                 }
-            }
 
-            // Focus is part of the existing Control Center. Its setup form is
-            // replaced by live session controls once the core starts a session.
-            Rectangle {
-                id: focusCard
-                Layout.fillWidth: true
-                implicitHeight: focusCardContent.implicitHeight + 24
-                radius: 14
-                color: Qt.rgba(1, 1, 1, 0.045)
-                border.width: 1
-                border.color: Qt.rgba(st.focusTone.r, st.focusTone.g, st.focusTone.b, 0.22)
+                HeaderButton {
+                    iconName: "construction"
+                    iconAlt: "T"
+                    tooltipText: "Toolbox"
+                    onTriggered: st.openToolbox()
+                }
 
-                ColumnLayout {
-                    id: focusCardContent
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 7
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 7
-
-                        Rectangle {
-                            Layout.preferredWidth: 26
-                            Layout.preferredHeight: 26
-                            radius: 8
-                            color: Qt.rgba(st.focusTone.r, st.focusTone.g, st.focusTone.b, 0.14)
-
-                            Ico {
-                                anchors.centerIn: parent
-                                name: "timer"
-                                alt: "F"
-                                font.pixelSize: 15
-                                color: st.focusTone
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 1
-
-                            Text {
-                                text: "FOCUS"
-                                color: st.core.text
-                                font.family: st.core.uiFont
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
-                            }
-
-                            Text {
-                                text: st.core.focusOn
-                                    ? (st.core.focusBreak ? "Break in progress" : "Work in progress")
-                                    : "Ready to start a session"
-                                color: st.core.dim
-                                font.family: st.core.monoFont
-                                font.pixelSize: 8
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.preferredWidth: focusStatus.implicitWidth + 16
-                            Layout.preferredHeight: 20
-                            radius: 10
-                            color: Qt.rgba(st.focusTone.r, st.focusTone.g, st.focusTone.b, 0.12)
-                            border.width: 1
-                            border.color: Qt.rgba(st.focusTone.r, st.focusTone.g, st.focusTone.b, 0.28)
-
-                            Text {
-                                id: focusStatus
-                                anchors.centerIn: parent
-                                text: !st.core.focusOn
-                                    ? "READY"
-                                    : st.core.focusPaused
-                                        ? "PAUSED"
-                                        : st.core.focusBreak ? "BREAK" : "RUNNING"
-                                color: st.focusTone
-                                font.family: st.core.monoFont
-                                font.pixelSize: 8
-                                font.weight: Font.DemiBold
-                            }
-                        }
-                    }
-
-                    ColumnLayout {
-                        visible: !st.core.focusOn
-                        Layout.fillWidth: true
-                        spacing: 7
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 5
-
-                            Text {
-                                text: "PRESETS"
-                                color: st.core.dim
-                                font.family: st.core.monoFont
-                                font.pixelSize: 8
-                                font.weight: Font.DemiBold
-                                font.letterSpacing: 0.6
-                            }
-
-                            FocusButton {
-                                labelText: "25 / 5"
-                                primary: st.focusPreset === "25/5"
-                                tone: st.core.teal
-                                onTriggered: st.applyFocusPreset(25, 5, "25/5")
-                            }
-
-                            FocusButton {
-                                labelText: "50 / 10"
-                                primary: st.focusPreset === "50/10"
-                                tone: st.core.teal
-                                onTriggered: st.applyFocusPreset(50, 10, "50/10")
-                            }
-
-                            FocusButton {
-                                labelText: "90 / 15"
-                                primary: st.focusPreset === "90/15"
-                                tone: st.core.teal
-                                onTriggered: st.applyFocusPreset(90, 15, "90/15")
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 7
-
-                            FocusInput {
-                                labelText: "WORK MIN"
-                                valueText: st.focusWorkInput
-                                onValueEdited: value => {
-                                    st.focusWorkInput = value
-                                    st.focusPreset = ""
-                                    st.focusError = ""
-                                }
-                            }
-
-                            FocusInput {
-                                labelText: "BREAK MIN"
-                                valueText: st.focusBreakInput
-                                onValueEdited: value => {
-                                    st.focusBreakInput = value
-                                    st.focusPreset = ""
-                                    st.focusError = ""
-                                }
-                            }
-
-                            FocusInput {
-                                labelText: "SESSIONS"
-                                valueText: st.focusCountInput
-                                onValueEdited: value => {
-                                    st.focusCountInput = value
-                                    st.focusError = ""
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 7
-
-                            FocusInput {
-                                Layout.fillWidth: true
-                                labelText: "TITLE (OPTIONAL)"
-                                numeric: false
-                                valueText: st.focusTitleInput
-                                onValueEdited: value => st.focusTitleInput = value
-                            }
-
-                            FocusButton {
-                                Layout.alignment: Qt.AlignBottom
-                                labelText: "START FOCUS"
-                                primary: true
-                                enabled: st.focusInputsValid
-                                tone: st.core.teal
-                                onTriggered: st.startFocusFromCard()
-                            }
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            visible: st.focusError !== ""
-                            text: st.focusError
-                            color: st.core.coral
-                            font.family: st.core.monoFont
-                            font.pixelSize: 8
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    ColumnLayout {
-                        visible: st.core.focusOn
-                        Layout.fillWidth: true
-                        spacing: 7
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            Text {
-                                text: st.core.focusBreak ? "BREAK" : "FOCUS"
-                                color: st.focusTone
-                                font.family: st.core.monoFont
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                                font.letterSpacing: 0.8
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: st.core.focusPaused ? "Paused" : "Session " + st.core.focusSessionIndex + " / " + st.core.focusSessionCount
-                                color: st.core.dim
-                                font.family: st.core.monoFont
-                                font.pixelSize: 9
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                text: st.core.fmt(st.core.focusRemaining)
-                                color: st.core.text
-                                font.family: st.core.monoFont
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 5
-                            radius: 3
-                            color: Qt.rgba(1, 1, 1, 0.09)
-
-                            Rectangle {
-                                width: parent.width * st.focusProgress
-                                height: parent.height
-                                radius: parent.radius
-                                color: st.focusTone
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: st.core.focusTitle !== "" ? st.core.focusTitle : "FOCUS SESSION"
-                                color: st.core.text
-                                font.family: st.core.uiFont
-                                font.pixelSize: 10
-                                elide: Text.ElideRight
-                            }
-
-                            FocusButton {
-                                labelText: st.core.focusPaused ? "RESUME" : "PAUSE"
-                                tone: st.core.teal
-                                onTriggered: st.core.focusPaused ? st.core.resumeFocus() : st.core.pauseFocus()
-                            }
-
-                            FocusButton {
-                                labelText: "SKIP"
-                                tone: st.core.text
-                                onTriggered: st.core.skipFocus()
-                            }
-
-                            FocusButton {
-                                labelText: "STOP"
-                                tone: st.core.coral
-                                onTriggered: st.core.stopFocus()
-                            }
-                        }
-                    }
+                HeaderButton {
+                    iconName: "settings"
+                    iconAlt: "S"
+                    tooltipText: "Settings"
+                    onTriggered: st.openSettings("")
                 }
             }
 

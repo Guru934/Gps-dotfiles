@@ -323,7 +323,7 @@ Item {
 
     Process {
         id: sinksProc
-        command: ["python3", "/home/rice/Projects/my-rice/scripts/audio-sinks.py"]
+        command: ["python3", Qt.resolvedUrl("../../scripts/audio-sinks.py").toString().replace(/^file:\/\//, "")]
         stdout: StdioCollector {
             onStreamFinished: {
                 let data = null
@@ -409,7 +409,7 @@ Item {
         const dur = root.player.lengthSupported && root.player.length > 0 ? String(root.player.length) : ""
         lyricsProc.command = [
             "python3",
-            "/home/rice/Projects/my-rice/scripts/lyrics.py",
+            Qt.resolvedUrl("../../scripts/lyrics.py").toString().replace(/^file:\/\//, ""),
             root.player.trackArtist,
             root.player.trackTitle,
             root.player.trackAlbum,

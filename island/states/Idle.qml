@@ -6,7 +6,7 @@ Item {
     id: st
     required property var core
     readonly property string key: "idle"
-    readonly property real w: 190
+    readonly property real w: Math.max(190, wsBadge.implicitWidth + 140)
     readonly property real h: 34
     readonly property color accent: core.teal
     anchors.fill: parent
@@ -43,19 +43,25 @@ Item {
     }
     Item {
         anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14
-        Row {
-            anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 4
-            Repeater {
-                model: st.core.wsList
-                delegate: Rectangle {
-                    required property int modelData
-                    readonly property bool act: modelData === st.core.wsId
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: act ? 14 : 5; height: 5; radius: 3
-                    color: act ? st.core.teal : Qt.rgba(1, 1, 1, 0.28)
-                    Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
-                    Behavior on color { ColorAnimation { duration: 180 } }
-                }
+        Rectangle {
+            id: wsBadge
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            height: 20
+            radius: 10
+            color: Qt.rgba(st.core.teal.r, st.core.teal.g, st.core.teal.b, 0.15)
+            border.width: 1
+            border.color: Qt.rgba(st.core.teal.r, st.core.teal.g, st.core.teal.b, 0.35)
+            implicitWidth: Math.max(20, wsLabel.implicitWidth + 12)
+
+            Txt {
+                id: wsLabel
+                anchors.centerIn: parent
+                text: st.core.currentWsLabel
+                color: st.core.teal
+                font.family: st.core.monoFont
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
             }
         }
         Txt { anchors.centerIn: parent; text: st.core.timeText; font.family: st.core.monoFont; font.pixelSize: 11; font.weight: Font.DemiBold }

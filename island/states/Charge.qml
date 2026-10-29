@@ -84,7 +84,7 @@ Item {
     Timer {
         interval: 2000
         repeat: true
-        running: st.active && st.expanded
+        running: false
         onTriggered: {
             if (st.core.chargeOn) st.core.flashCharge(st.core.chargeKind)
             if (!profRead.running) profRead.running = true
