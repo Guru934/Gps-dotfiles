@@ -18,6 +18,9 @@
   - Dashboard components (DashIcon, SysProbe, DashTabBar) updated and validated with qmllint.
   - Popup components (BatteryPopup, WifiPopup, BluetoothPopup, NotifCenter, NotifToast) unified with theme tokens.
   - Pet components (PetTheme, Pet.qml) and Settings Hub cleaned of QML syntax anomalies.
-- [ ] **P4.4 — Hyprland Visual Rules**: In Progress.
-- [ ] **P4.4 — Hyprland Visual Rules**: Pending.
-- [ ] **P4.5 — Final Visual Audit & Session Verification**: Pending.
+- [x] **P4.4 — Hyprland Visual Rules**: Completed.
+  - Lua configuration in `dots/hypr/hyprland.lua` coordinated with canonical tokens (teal/cyan borders, deep shadows, balanced blur).
+  - Explicit window rules and layer rules for GPS surfaces (`gps-rail-blur`, `gps-island-blur`, `gps-rofi-blur`).
+  - Terminal text crispness exception (`kitty` opaque), video playback exception (`mpv`/`vlc` opaque, idle inhibit), and floating dialogs (`Media Hub`, `Toolbox`, `Settings Hub`, `Pet Companion`).
+  - Automated tests in `tests/test_hyprland_rules.py`.
+- [ ] **P4.5 — Final Visual Audit & Session Verification**: In Progress.

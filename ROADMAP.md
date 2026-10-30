@@ -34,10 +34,10 @@
     - Control Center & Dashboard consolidation (DashIcon, SysProbe, DashTabBar, tile styling)
     - Popups (Battery, Wi-Fi, Bluetooth, NotifCenter, NotifToast)
     - Pet panels and Settings Hub IPC syntax fixes
-  - [ ] **P4.4 — Hyprland visual rules**
-    - Coordinate `dots/hypr/hyprland.lua` window/layer rules with GPS design tokens
-    - Enforce exceptions for terminals, video playback, overlays
-    - Validate performance and compositor harmony
+  - [x] **P4.4 — Hyprland visual rules**
+    - Coordinated `dots/hypr/hyprland.lua` window/layer rules with GPS design tokens
+    - Enforced crispness exceptions for terminals, video playback, overlays
+    - Validated performance and compositor harmony with regression tests (`test_hyprland_rules.py`)
   - [ ] **P4.5 — Final visual audit & verification**
     - Comprehensive review across all surfaces
     - Verify 1920x1200 / 1.5x scale (1280x800 logical coords)

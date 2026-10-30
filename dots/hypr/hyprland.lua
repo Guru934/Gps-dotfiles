@@ -101,8 +101,8 @@ hl.config({
         border_size = 2,
 
         col = {
-            active_border   = { colors = {"rgba(33ccffee)", "rgba(00ff99ee)"}, angle = 45 },
-            inactive_border = "rgba(595959aa)",
+            active_border   = { colors = {"rgba(2dd4bfee)", "rgba(57f1dbee)"}, angle = 45 },
+            inactive_border = "rgba(3c4a4688)",
         },
 
         -- Set to true to enable resizing windows by clicking and dragging on borders and gaps
@@ -120,19 +120,19 @@ hl.config({
 
         -- Change transparency of focused and unfocused windows
         active_opacity   = 1.0,
-        inactive_opacity = 1.0,
+        inactive_opacity = 0.98,
 
         shadow = {
             enabled      = true,
-            range        = 4,
+            range        = 12,
             render_power = 3,
-            color        = 0xee1a1a1a,
+            color        = 0x66000000,
         },
 
         blur = {
             enabled   = true,
-            size      = 3,
-            passes    = 1,
+            size      = 5,
+            passes    = 2,
             vibrancy  = 0.1696,
         },
     },
@@ -355,19 +355,27 @@ hl.window_rule({
     no_focus = true,
 })
 
--- Layer rules also return a handle.
+-- Layer rules for GPS Desktop QuickShell and overlays
 hl.layer_rule({
     name         = "gps-rail-blur",
     match        = { namespace = "^gps-rail$" },
     blur         = true,
     ignore_alpha = 0.25,
 })
--- local overlayLayerRule = hl.layer_rule({
---     name  = "no-anim-overlay",
---     match = { namespace = "^my-overlay$" },
---     no_anim = true,
--- })
--- overlayLayerRule:set_enabled(false)
+
+hl.layer_rule({
+    name         = "gps-island-blur",
+    match        = { namespace = "^island.*$" },
+    blur         = true,
+    ignore_alpha = 0.25,
+})
+
+hl.layer_rule({
+    name         = "gps-rofi-blur",
+    match        = { namespace = "^rofi$" },
+    blur         = true,
+    ignore_alpha = 0.15,
+})
 
 -- Hyprland-run windowrule
 hl.window_rule({
@@ -378,11 +386,55 @@ hl.window_rule({
     float = true,
 })
 
+-- GPS Companion and Floating Utility Rules
 hl.window_rule({
     name  = "gps-pet-companion-float",
     match = { title = "^(Pet Companion)$" },
 
     float = true,
+    pin   = true,
+})
+
+hl.window_rule({
+    name  = "gps-floating-dialogs",
+    match = { class = "^(xdg-desktop-portal.*|org.kde.polkit-kde-authentication-agent-1|pavucontrol|nm-connection-editor|blueman-manager)$" },
+
+    float  = true,
+    center = true,
+})
+
+hl.window_rule({
+    name  = "gps-hubs-float",
+    match = { title = "^(Media Hub|GPS Toolbox|Settings Hub)$" },
+
+    float  = true,
+    center = true,
+})
+
+-- Text Crispness Exception: Terminal windows stay fully opaque with no background distortion
+hl.window_rule({
+    name  = "gps-terminal-opaque",
+    match = { class = "^(kitty)$" },
+
+    opaque = true,
+})
+
+-- Media Playback Exception: Full opacity and prevent idle sleep during playback
+hl.window_rule({
+    name  = "gps-media-opaque",
+    match = { class = "^(mpv|vlc)$" },
+
+    opaque        = true,
+    idle_inhibit  = "focus",
+})
+
+hl.window_rule({
+    name  = "gps-pip-float",
+    match = { title = "^(Picture-in-Picture|Picture in picture)$" },
+
+    float  = true,
+    pin    = true,
+    opaque = true,
 })
 
 
