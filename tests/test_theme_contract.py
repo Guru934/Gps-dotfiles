@@ -103,6 +103,49 @@ class ThemeContractTests(unittest.TestCase):
                     f"{path.relative_to(ROOT)} uses Theme tokens not found in Theme.qml: {missing}",
                 )
 
+    def test_every_theme_token_used_in_qml_is_defined(self):
+        """Scans every QML file for Theme.<name> and checks each name is declared
+        in config/Theme.qml (and in island/config/Theme.qml), failing with file and line when not.
+        """
+        import re
+
+        config_theme_path = ROOT / "config/Theme.qml"
+        island_theme_path = ROOT / "island/config/Theme.qml"
+        self.assertTrue(config_theme_path.exists(), "config/Theme.qml must exist")
+        self.assertTrue(island_theme_path.exists(), "island/config/Theme.qml must exist")
+
+        def extract_declared(theme_text):
+            props = set(re.findall(
+                r"(?:readonly\s+)?property\s+(?:alias|[a-zA-Z0-9_<>]+)\s+([a-zA-Z0-9_]+)",
+                theme_text,
+            ))
+            funcs = set(re.findall(r"function\s+([a-zA-Z0-9_]+)", theme_text))
+            return props | funcs
+
+        declared_config = extract_declared(config_theme_path.read_text(encoding="utf-8"))
+        declared_island = extract_declared(island_theme_path.read_text(encoding="utf-8"))
+
+        violations = []
+        for qml_path in sorted(ROOT.rglob("*.qml")):
+            rel_path = qml_path.relative_to(ROOT)
+            if "tests" in rel_path.parts:
+                continue
+            content = qml_path.read_text(encoding="utf-8")
+            if re.search(r'import\s+["\'][^"\']*Theme\.js["\']\s+as\s+Theme', content):
+                continue
+
+            for line_no, line in enumerate(content.splitlines(), start=1):
+                clean_line = re.sub(r"//.*$", "", line)
+                for match in re.finditer(r"\bTheme\.([a-zA-Z0-9_]+)\b", clean_line):
+                    token = match.group(1)
+                    if token not in declared_config:
+                        violations.append(f"{rel_path}:{line_no}: Theme.{token} not declared in config/Theme.qml")
+                    if token not in declared_island:
+                        violations.append(f"{rel_path}:{line_no}: Theme.{token} not declared in island/config/Theme.qml")
+
+        if violations:
+            self.fail(f"Found {len(violations)} undeclared Theme token usage(s):\n" + "\n".join(violations))
+
 
 if __name__ == "__main__":
     unittest.main()
