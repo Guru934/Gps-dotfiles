@@ -26,6 +26,9 @@ Item {
     // ───────────── live state (populated only while active) ─────────────
     property bool localExpanded: false
     property bool dndExpanded: false
+    property bool audioOutputsExpanded: false
+    property var audioSinks: []
+    property int defaultSinkId: 0
 
     property bool hasNmcli: false
     property bool wifiEnabled: false
@@ -61,6 +64,9 @@ Item {
 
     property real dragVol: -1
     readonly property real liveVol: dragVol >= 0 ? dragVol : (core.muted ? 0 : Math.max(0, Math.min(1.5, core.volume)))
+
+    property real dragMicVol: -1
+    readonly property real liveMicVol: dragMicVol >= 0 ? dragMicVol : ((core.sourceAudio && core.micMuted) ? 0 : Math.max(0, Math.min(1.5, core.micVolume)))
 
     property int uptimeSec: 0
     property string kernelVer: ""
@@ -117,14 +123,19 @@ Item {
         if (active) {
             confirmPower = false
             dndExpanded = false
+            audioOutputsExpanded = false
             triggerProbe()
+            refreshSinks()
         } else {
             localExpanded = false
             confirmPower = false
             dndExpanded = false
+            audioOutputsExpanded = false
             dragBright = -1
             dragVol = -1
+            dragMicVol = -1
             if (sysProbe.running) sysProbe.running = false
+            if (sinksProc.running) sinksProc.running = false
         }
     }
 
@@ -132,6 +143,10 @@ Item {
     Keys.onEscapePressed: {
         if (dndExpanded) {
             dndExpanded = false
+            return
+        }
+        if (audioOutputsExpanded) {
+            audioOutputsExpanded = false
             return
         }
         localExpanded = false
@@ -238,6 +253,47 @@ Item {
                 st.hasLocker = map.has_locker === "1"
             }
         }
+    }
+
+    Process {
+        id: sinksProc
+        command: ["python3", (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/audio-sinks.py"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const data = JSON.parse(text.trim())
+                    if (data && Array.isArray(data.sinks)) {
+                        st.audioSinks = data.sinks
+                        st.defaultSinkId = typeof data.default_id === "number" ? data.default_id : 0
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: sinkSwitchProc
+        onExited: (code, status) => {
+            st.refreshSinks()
+        }
+    }
+
+    function refreshSinks() {
+        if (!sinksProc.running) sinksProc.running = true
+    }
+
+    function selectSink(id) {
+        if (!id || sinkSwitchProc.running) return
+        const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+        sinkSwitchProc.command = ["python3", rootPath + "/scripts/audio-sinks.py", "--switch", String(id)]
+        sinkSwitchProc.running = true
+    }
+
+    function applyMicVolume(ratio) {
+        if (!core.sourceAudio) return
+        const clamped = Math.max(0, Math.min(1.5, ratio))
+        if (core.sourceAudio.muted && clamped > 0) core.sourceAudio.muted = false
+        core.sourceAudio.volume = clamped
     }
 
     Timer {
@@ -628,7 +684,10 @@ Item {
         property real value: 0
         property real maxValue: 1.0
         property string labelText: ""
+        property string trailIcon: ""
+        property string trailAlt: ""
         signal iconClicked()
+        signal trailClicked()
         signal moved(real v)
         signal released(real v)
 
@@ -706,6 +765,28 @@ Item {
             font.weight: Font.Medium
             color: Theme.textMain
             elide: Text.ElideRight
+        }
+
+        Item {
+            visible: srow.trailIcon !== ""
+            Layout.preferredWidth: 20
+            Layout.preferredHeight: 20
+
+            Ico {
+                anchors.centerIn: parent
+                name: srow.trailIcon
+                alt: srow.trailAlt
+                font.pixelSize: 18
+                color: trailMa.containsMouse ? Theme.accentPrimary : Theme.textMuted
+            }
+
+            MouseArea {
+                id: trailMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: srow.trailClicked()
+            }
         }
     }
 
@@ -1194,7 +1275,13 @@ Item {
                             value: st.liveVol
                             maxValue: 1.5
                             labelText: st.core.muted ? "Mute" : (Math.round(st.liveVol * 100) + "%")
+                            trailIcon: st.audioOutputsExpanded ? "expand_less" : "expand_more"
+                            trailAlt: st.audioOutputsExpanded ? "^" : "v"
                             onIconClicked: if (st.core.sinkAudio) st.core.sinkAudio.muted = !st.core.sinkAudio.muted
+                            onTrailClicked: {
+                                st.audioOutputsExpanded = !st.audioOutputsExpanded
+                                if (st.audioOutputsExpanded) st.refreshSinks()
+                            }
                             onMoved: v => {
                                 st.dragVol = v
                                 st.applyVolume(v)
@@ -1202,6 +1289,85 @@ Item {
                             onReleased: v => {
                                 st.applyVolume(v)
                                 st.dragVol = -1
+                            }
+                        }
+
+                        // Inline expanded audio output sinks list
+                        ColumnLayout {
+                            visible: st.audioOutputsExpanded && st.audioSinks.length > 0
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Repeater {
+                                model: st.audioSinks
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 30
+                                    radius: 8
+                                    color: modelData.default
+                                        ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.16)
+                                        : (sinkMa.containsMouse ? Theme.cardHover : Qt.rgba(1, 1, 1, 0.04))
+                                    border.width: 1
+                                    border.color: modelData.default ? Theme.brandAccent : Theme.outlineSoft
+                                    opacity: modelData.available === false ? 0.45 : 1.0
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 8
+                                        spacing: 8
+
+                                        Ico {
+                                            name: modelData.default ? "check" : "speaker"
+                                            alt: modelData.default ? "✓" : "S"
+                                            font.pixelSize: 13
+                                            color: modelData.default ? Theme.brandAccent : Theme.textMuted
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.name + (modelData.available === false ? " · (unavailable)" : "")
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            font.weight: modelData.default ? Font.DemiBold : Font.Normal
+                                            color: modelData.default ? Theme.brandAccent : Theme.textMain
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: sinkMa
+                                        anchors.fill: parent
+                                        hoverEnabled: modelData.available !== false
+                                        cursorShape: modelData.available !== false ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: {
+                                            if (modelData.available !== false && !modelData.default) {
+                                                st.selectSink(modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mic volume slider (hidden if there is no input)
+                        SliderRow {
+                            visible: st.core.sourceAudio !== null
+                            iconName: (st.core.sourceAudio && st.core.micMuted) ? "mic_off" : "mic"
+                            iconAlt: "M"
+                            tone: (st.core.sourceAudio && st.core.micMuted) ? Theme.textMuted : Theme.brandAccent
+                            value: st.liveMicVol
+                            maxValue: 1.5
+                            labelText: (st.core.sourceAudio && st.core.micMuted) ? "Mute" : (Math.round(st.liveMicVol * 100) + "%")
+                            onIconClicked: if (st.core.sourceAudio) st.core.sourceAudio.muted = !st.core.sourceAudio.muted
+                            onMoved: v => {
+                                st.dragMicVol = v
+                                st.applyMicVolume(v)
+                            }
+                            onReleased: v => {
+                                st.applyMicVolume(v)
+                                st.dragMicVol = -1
                             }
                         }
 
