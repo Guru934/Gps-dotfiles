@@ -13,7 +13,7 @@ Scope {
 
     readonly property string repoRoot: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
 
-    // UI Popup Routing: "wifi", "bt", "battery", "clock", or "settings"
+    // UI Popup Routing: "wifi", "bt", "battery", "clock", "settings", or "tray"
     property bool dashboardOpen: false
     property string activePopup: "settings"
     // Dashboard behaviour settings (owned here, consumed by DashboardHost /
@@ -721,6 +721,8 @@ Scope {
             Brightness.refresh()
             if (!mediaReadProc.running) mediaReadProc.running = true
         }
+        // "tray" kind: no additional data loading needed;
+        // SystemTray.items is always live from the singleton.
     }
 
     function closePopup() {
@@ -1302,6 +1304,7 @@ Scope {
     WifiPopup          { hub: root }
     BluetoothPopup     { hub: root }
     BatteryPopup       { id: batteryPopup; hub: root }
+    TrayPopup          { hub: root }
     ClipboardPicker    { id: clipboardPicker; hub: root }
     Pet                { id: pet }
     onToastVisibleChanged: if (root.toastVisible) pet.wave()

@@ -4,6 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import Quickshell.Services.UPower
+import Quickshell.Services.SystemTray
 import QtQuick
 import qs.config
 
@@ -609,6 +610,21 @@ PanelWindow {
                         onClicked: {
                             if (root.hub) root.hub.openPopup("bt", btBtn.mapToItem(railBg, 16, 12).y)
                             fastRefreshTimer.restart()
+                        }
+                    }
+
+                    // System Tray Button (visible only when at least one item is registered)
+                    RailButton {
+                        id: trayBtn
+                        visible: SystemTray.items.count > 0
+                        readonly property int trayCount: SystemTray.items.count
+                        glyph: "󰠦"
+                        sublabel: trayBtn.trayCount > 9 ? "9+" : (trayBtn.trayCount > 1 ? "" + trayBtn.trayCount : "")
+                        accentColor: Theme.brandAccent
+                        iconColor: Theme.textMain
+                        tooltip: "System Tray (" + trayBtn.trayCount + " item" + (trayBtn.trayCount !== 1 ? "s" : "") + ")"
+                        onClicked: {
+                            if (root.hub) root.hub.openPopup("tray", trayBtn.mapToItem(railBg, 16, 12).y)
                         }
                     }
 
