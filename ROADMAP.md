@@ -43,7 +43,7 @@
     - Verified 1920x1200 / 1.5x scale (1280x800 logical coords)
     - 100% pass across Python test suite (310 tests), Node test suite (74 tests), qmllint, luac, and git diff --check
 
-- [ ] **P5 — GPS Daily-Driver Readiness & Reliability**
+- [x] **P5 — GPS Daily-Driver Readiness & Reliability**
   - [x] **P5.1 — Architecture and reliability audit**
     - Map runtime: main shell, island, IPC handlers, background processes, external dependencies
     - Prioritized reliability audit report (`docs/reliability-audit-p5.md`)
@@ -66,5 +66,8 @@
     - Verified clean UI fallbacks across all 9 subsystems (Audio, Network, Bluetooth, Battery, Notifications, Wallpapers, Media, Downloads, Pet)
     - Actionable error banners in popups and drawers when external daemons are missing
     - Automated external service dependency test suite (`tests/test_dependency_handling.py`)
-  - [ ] **P5.6 — Integrated reliability verification**
+  - [x] **P5.6 — Integrated reliability verification**
+    - Live-session soak test across both QuickShell instances with panel toggling and recovery
+    - Zero duplicate processes or orphan layers verified with Hyprland 0.57
+    - 100% pass across Python test suite (340 tests), Node test suite (74 tests), qmllint, luac, shell/fish checks, git diff --check
     - Real-session verification, panel toggle soak tests, automated regression runs
