@@ -74,5 +74,21 @@ if [ ! -f "$LOCK_COLORS" ]; then
     fi
 fi
 
+# 4b. Ensure lock background config exists or deploy fallback from repository
+LOCK_BG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-bg.conf"
+if [ ! -f "$LOCK_BG" ]; then
+    FALLBACK_BG="$(dirname "$(realpath "$0")")/../dots/hypr/lock-bg.conf"
+    if [ -f "$FALLBACK_BG" ]; then
+        mkdir -p "$(dirname "$LOCK_BG")"
+        cp -n "$FALLBACK_BG" "$LOCK_BG" 2>/dev/null || true
+    fi
+fi
+
+# 4c. Select rotating background if available
+BG_ROTATOR="$(dirname "$(realpath "$0")")/gps-lock-bg"
+if [ -x "$BG_ROTATOR" ]; then
+    "$BG_ROTATOR" >/dev/null 2>&1 || true
+fi
+
 # 5. Execute lock without shell concatenation
 exec "$LOCK_BIN" --config "$CONFIG_FILE" "$@"

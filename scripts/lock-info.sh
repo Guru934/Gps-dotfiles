@@ -7,6 +7,18 @@
 #        | user | host | auth | howdy-status
 set -u
 
+truncate_text() {
+    local text="$1"
+    local max_len="$2"
+    text=$(printf '%s' "$text" | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//')
+    if [ "${#text}" -le "$max_len" ]; then
+        printf '%s\n' "$text"
+    else
+        local cutoff=$((max_len - 1))
+        printf '%s…\n' "${text:0:$cutoff}"
+    fi
+}
+
 case "${1:-}" in
 bat)
     for f in /sys/class/power_supply/BAT*/capacity; do
@@ -69,19 +81,56 @@ clients)
     ;;
 media-title)
     st=$(playerctl status 2>/dev/null | head -1)
-    [ "$st" = "Playing" ] || { [ "${2:-}" = "--always" ] && echo 'Nothing playing'; exit 0; }
-    playerctl metadata --format '{{title}}' 2>/dev/null | head -1
+    if [ "$st" != "Playing" ] && [ "$st" != "Paused" ]; then
+        if [ "${2:-}" = "--always" ]; then
+            echo 'Nothing playing'
+        fi
+        exit 0
+    fi
+    raw_title=$(playerctl metadata --format '{{title}}' 2>/dev/null | head -1)
+    if [ -z "$raw_title" ]; then
+        raw_title="Unknown Title"
+    fi
+    if [ "$st" = "Paused" ]; then
+        truncate_text "⏸ $raw_title" 22
+    else
+        truncate_text "$raw_title" 22
+    fi
     ;;
 media-artist)
     st=$(playerctl status 2>/dev/null | head -1)
-    [ "$st" = "Playing" ] || exit 0
-    playerctl metadata --format '{{artist}}' 2>/dev/null | head -1
+    if [ "$st" != "Playing" ] && [ "$st" != "Paused" ]; then
+        exit 0
+    fi
+    raw_artist=$(playerctl metadata --format '{{artist}}' 2>/dev/null | head -1)
+    if [ -z "$raw_artist" ]; then
+        if [ "$st" = "Paused" ]; then
+            echo 'Paused'
+        fi
+        exit 0
+    fi
+    truncate_text "$raw_artist" 26
     ;;
-media-vol)
-    st=$(playerctl status 2>/dev/null | head -1)
-    [ "$st" = "Playing" ] || exit 0
-    v=$(playerctl volume 2>/dev/null | head -1)
-    [ -n "$v" ] && awk -v v="$v" 'BEGIN{printf "%d%% volume\n", v*100}'
+media-vol|vol)
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    vol_raw=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null || true)
+    if [ -z "$vol_raw" ]; then
+        exit 0
+    fi
+    is_muted=0
+    case "$vol_raw" in
+        *"[MUTED]"*) is_muted=1 ;;
+    esac
+    vol_num=$(printf '%s\n' "$vol_raw" | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
+    if [ -z "$vol_num" ]; then
+        exit 0
+    fi
+    pct=$(awk -v v="$vol_num" 'BEGIN{printf "%d", (v * 100) + 0.5}')
+    if [ "$is_muted" -eq 1 ]; then
+        printf '%s%% (muted)\n' "$pct"
+    else
+        printf '%s%% Volume\n' "$pct"
+    fi
     ;;
 user)
     whoami
