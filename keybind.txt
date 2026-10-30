@@ -106,6 +106,10 @@ Shift + Print .... Monitor screenshot: capture the active monitor to
 Alt + Print ...... Window screenshot: capture the focused window to
                    ~/Pictures/Screenshots, copy to clipboard, and notify.
                    gps-shot window
+Super + Shift + R  Toggle screen recording (hardware accelerated via
+                   gpu-screen-recorder). Saves to ~/Videos/Recordings.
+                   Ctrl + Print also toggles recording.
+                   gps-record toggle
 
 
 ------------------------------------------------------------------------

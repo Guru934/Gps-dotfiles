@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-record — GPS Native Screen Recording Utility
+# Commands: start | stop | toggle | status
+# Modes: --monitor (default) | --region
+# Audio: --no-audio (default) | --audio
+# ============================================================================
+set -euo pipefail
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/gps"
+STATE_FILE="${STATE_DIR}/record-state.json"
+PID_FILE="${STATE_DIR}/record.pid"
+LOG_FILE="${STATE_DIR}/record.log"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+write_state() {
+    local json="$1"
+    mkdir -m 0700 -p "$STATE_DIR" 2>/dev/null || true
+    local tmp="${STATE_FILE}.tmp.$$"
+    printf '%s\n' "$json" > "$tmp"
+    mv -f "$tmp" "$STATE_FILE"
+}
+
+verify_pid_identity() {
+    local pid="$1"
+    local expected_cmd="$2"
+    if [[ -z "$pid" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    if [[ ! -d "/proc/$pid" ]]; then
+        return 1
+    fi
+    local cmdline
+    if cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null); then
+        if [[ "$cmdline" == *"$expected_cmd"* ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+get_active_record() {
+    if [[ ! -f "$STATE_FILE" ]] && [[ ! -f "$PID_FILE" ]]; then
+        return 1
+    fi
+
+    local pid=""
+    local recorder=""
+    if [[ -f "$STATE_FILE" ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            pid=$(jq -r '.pid // empty' "$STATE_FILE" 2>/dev/null || true)
+            recorder=$(jq -r '.recorder // empty' "$STATE_FILE" 2>/dev/null || true)
+        elif command -v python3 >/dev/null 2>&1; then
+            pid=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('pid',''))" 2>/dev/null || true)
+            recorder=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('recorder',''))" 2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -z "$pid" ]] && [[ -f "$PID_FILE" ]]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        recorder="gpu-screen-recorder"
+    fi
+
+    if [[ -n "$pid" ]]; then
+        # Default recorder name if not specified
+        if [[ -z "$recorder" ]]; then
+            recorder="screen-recorder"
+        fi
+        if verify_pid_identity "$pid" "$recorder"; then
+            return 0
+        fi
+    fi
+
+    # Stale state detected: clean up
+    write_state '{"recording": false}'
+    rm -f "$PID_FILE"
+    return 1
+}
+
+play_sound() {
+    local event="$1"
+    if [[ -x "${SCRIPT_DIR}/gps-sound" ]]; then
+        "${SCRIPT_DIR}/gps-sound" play "$event" >/dev/null 2>&1 || true
+    fi
+}
+
+cmd_status() {
+    if get_active_record; then
+        if [[ -f "$STATE_FILE" ]]; then
+            cat "$STATE_FILE"
+        else
+            local pid
+            pid=$(cat "$PID_FILE" 2>/dev/null || true)
+            printf '{"recording": true, "pid": %s}\n' "$pid"
+        fi
+        exit 0
+    else
+        printf '{"recording": false}\n'
+        exit 0
+    fi
+}
+
+cmd_stop() {
+    if ! get_active_record; then
+        echo "No recording active."
+        exit 0
+    fi
+
+    local pid=""
+    local file=""
+    local recorder=""
+    if [[ -f "$STATE_FILE" ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            pid=$(jq -r '.pid // empty' "$STATE_FILE" 2>/dev/null || true)
+            file=$(jq -r '.file // empty' "$STATE_FILE" 2>/dev/null || true)
+            recorder=$(jq -r '.recorder // empty' "$STATE_FILE" 2>/dev/null || true)
+        elif command -v python3 >/dev/null 2>&1; then
+            pid=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('pid',''))" 2>/dev/null || true)
+            file=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('file',''))" 2>/dev/null || true)
+            recorder=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('recorder',''))" 2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -z "$pid" ]] && [[ -f "$PID_FILE" ]]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        recorder="gpu-screen-recorder"
+    fi
+
+    if [[ -z "$recorder" ]]; then
+        recorder="screen-recorder"
+    fi
+
+    if ! verify_pid_identity "$pid" "$recorder"; then
+        echo "Recorder process was already terminated."
+        write_state '{"recording": false}'
+        rm -f "$PID_FILE"
+        exit 0
+    fi
+
+    # Clean signal: SIGINT allows container finalization (e.g. MP4 moov atom)
+    kill -INT "$pid" 2>/dev/null || true
+
+    # Wait up to 10 seconds for clean shutdown
+    local waited=0
+    while [[ -d "/proc/$pid" ]] && [[ $waited -lt 50 ]]; do
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+
+    if [[ -d "/proc/$pid" ]]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        sleep 1
+        if [[ -d "/proc/$pid" ]]; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    fi
+
+    write_state '{"recording": false}'
+    rm -f "$PID_FILE"
+
+    play_sound "record-stop"
+
+    if [[ -n "$file" ]] && [[ -f "$file" ]] && [[ -s "$file" ]]; then
+        echo "Recording saved: $file"
+        if command -v notify-send >/dev/null 2>&1; then
+            (
+                local fname
+                fname="$(basename "$file")"
+                local fdir
+                fdir="$(dirname "$file")"
+                ACTION=$(notify-send \
+                    -a "GPS Record" \
+                    -i video-x-generic \
+                    "Screen Recording Saved" \
+                    "$fname" \
+                    --action="open=Open" \
+                    --action="folder=Show in Folder" 2>/dev/null || true)
+                case "$ACTION" in
+                    open) xdg-open "$file" >/dev/null 2>&1 & ;;
+                    folder) xdg-open "$fdir" >/dev/null 2>&1 & ;;
+                esac
+            ) >/dev/null 2>&1 &
+        fi
+        exit 0
+    elif [[ -n "$file" ]]; then
+        echo "Error: Output file is missing or zero bytes: $file" >&2
+        rm -f "$file"
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send -u critical -a "GPS Record" "Recording Failed" "Output file is empty or corrupted." 2>/dev/null || true
+        fi
+        exit 1
+    fi
+
+    exit 0
+}
+
+cmd_start() {
+    if get_active_record; then
+        echo "Error: Recording is already active." >&2
+        exit 1
+    fi
+
+    local mode="monitor"
+    local audio=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --region|-r)
+                mode="region"
+                shift
+                ;;
+            --monitor|-m)
+                mode="monitor"
+                shift
+                ;;
+            --audio|-a)
+                audio=true
+                shift
+                ;;
+            --no-audio)
+                audio=false
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Select recorder binary
+    local RECORDER_BIN=""
+    local RECORDER_NAME=""
+    if [[ -n "${GPS_RECORDER_BIN:-}" ]]; then
+        RECORDER_BIN="$GPS_RECORDER_BIN"
+        RECORDER_NAME="$(basename "$GPS_RECORDER_BIN")"
+    elif command -v gpu-screen-recorder >/dev/null 2>&1; then
+        RECORDER_BIN="gpu-screen-recorder"
+        RECORDER_NAME="gpu-screen-recorder"
+    elif command -v wf-recorder >/dev/null 2>&1; then
+        RECORDER_BIN="wf-recorder"
+        RECORDER_NAME="wf-recorder"
+    else
+        echo "Error: No supported screen recorder found. Please install gpu-screen-recorder: sudo pacman -S gpu-screen-recorder" >&2
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send -u critical -a "GPS Record" "Recorder Not Found" "Install with: sudo pacman -S gpu-screen-recorder" 2>/dev/null || true
+        fi
+        exit 1
+    fi
+
+    # Output destination
+    local VIDEOS_DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}/Recordings"
+    mkdir -p "$VIDEOS_DIR"
+    local BASE_NAME="recording_$(date +'%Y-%m-%d_%H-%M-%S')"
+    local DEST_FILE="${VIDEOS_DIR}/${BASE_NAME}.mp4"
+    local COUNTER=1
+    while [[ -e "$DEST_FILE" ]]; do
+        DEST_FILE="${VIDEOS_DIR}/${BASE_NAME}_${COUNTER}.mp4"
+        COUNTER=$((COUNTER + 1))
+    done
+
+    local CMD=()
+
+    if [[ "$RECORDER_NAME" == "gpu-screen-recorder" ]]; then
+        if [[ "$mode" == "region" ]]; then
+            if ! command -v slurp >/dev/null 2>&1; then
+                echo "Error: slurp is required for region recording." >&2
+                exit 1
+            fi
+            local REGION=""
+            if ! REGION=$(slurp -f "%wx%h+%x+%y" 2>/dev/null); then
+                # User cancelled selection cleanly
+                exit 0
+            fi
+            if [[ -z "${REGION// }" ]]; then
+                exit 0
+            fi
+            CMD=("$RECORDER_BIN" -w "$REGION" -f 30 -o "$DEST_FILE")
+        else
+            # Monitor mode: determine focused output or default screen
+            local MON="eDP-1"
+            if command -v hyprctl >/dev/null 2>&1; then
+                local DETECTED_MON=""
+                if command -v jq >/dev/null 2>&1; then
+                    DETECTED_MON=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | .name' 2>/dev/null || true)
+                fi
+                if [[ -z "$DETECTED_MON" ]] && command -v python3 >/dev/null 2>&1; then
+                    DETECTED_MON=$(hyprctl monitors -j 2>/dev/null | python3 -c "import sys, json; mons = json.load(sys.stdin); f = [m['name'] for m in mons if m.get('focused')]; print(f[0] if f else (mons[0]['name'] if mons else ''))" 2>/dev/null || true)
+                fi
+                if [[ -n "$DETECTED_MON" ]]; then
+                    MON="$DETECTED_MON"
+                fi
+            fi
+            CMD=("$RECORDER_BIN" -w "$MON" -f 30 -o "$DEST_FILE")
+        fi
+
+        if [[ "$audio" == true ]]; then
+            CMD+=(-a "default_output")
+        fi
+
+    elif [[ "$RECORDER_NAME" == "wf-recorder" ]]; then
+        CMD=("$RECORDER_BIN" -f "$DEST_FILE")
+        if [[ "$mode" == "region" ]]; then
+            if ! command -v slurp >/dev/null 2>&1; then
+                echo "Error: slurp is required for region recording." >&2
+                exit 1
+            fi
+            local REGION=""
+            if ! REGION=$(slurp 2>/dev/null); then
+                exit 0
+            fi
+            if [[ -z "${REGION// }" ]]; then
+                exit 0
+            fi
+            CMD+=(-g "$REGION")
+        fi
+        if [[ "$audio" == true ]]; then
+            CMD+=(--audio)
+        fi
+    fi
+
+    # Launch recorder in detached session
+    play_sound "record-start"
+
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "${CMD[@]}" >"$LOG_FILE" 2>&1 &
+    else
+        "${CMD[@]}" >"$LOG_FILE" 2>&1 &
+    fi
+    local REC_PID=$!
+    disown "$REC_PID" 2>/dev/null || true
+
+    # Store PID and state atomically
+    printf '%s\n' "$REC_PID" > "$PID_FILE"
+    local START_TS
+    START_TS=$(date +%s)
+    local STATE_JSON
+    STATE_JSON=$(printf '{"recording": true, "pid": %d, "file": "%s", "mode": "%s", "audio": %s, "startTime": %d, "recorder": "%s"}' \
+        "$REC_PID" "$DEST_FILE" "$mode" "$audio" "$START_TS" "$RECORDER_NAME")
+    write_state "$STATE_JSON"
+
+    # Brief sanity check: ensure recorder did not crash immediately
+    sleep 0.35
+    if ! kill -0 "$REC_PID" 2>/dev/null; then
+        echo "Error: Recorder process failed to start." >&2
+        cat "$LOG_FILE" >&2
+        write_state '{"recording": false, "error": "startup failed"}'
+        rm -f "$PID_FILE" "$DEST_FILE"
+        exit 1
+    fi
+
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send \
+            -a "GPS Record" \
+            -i media-record \
+            "Recording Started" \
+            "Capturing to $(basename "$DEST_FILE")" 2>/dev/null || true
+    fi
+
+    echo "Recording started: $DEST_FILE (PID $REC_PID)"
+    exit 0
+}
+
+cmd_toggle() {
+    if get_active_record; then
+        cmd_stop
+    else
+        cmd_start "$@"
+    fi
+}
+
+ACTION="${1:-status}"
+shift || true
+
+case "$ACTION" in
+    start)
+        cmd_start "$@"
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    toggle)
+        cmd_toggle "$@"
+        ;;
+    status)
+        cmd_status
+        ;;
+    *)
+        echo "Usage: $(basename "$0") <start|stop|toggle|status> [--region|--monitor] [--audio|--no-audio]" >&2
+        exit 1
+        ;;
+esac

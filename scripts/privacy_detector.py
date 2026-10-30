@@ -221,9 +221,39 @@ def apply_pipewire_value(graph: dict[int, dict[str, Any]], value: Any) -> None:
             graph[ident] = merged
 
 
-def privacy_items(graph: dict[int, dict[str, Any]], v4l2_items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def check_screen_recorder(runtime_dir: str | None = None, proc_root: str = "/proc") -> list[dict[str, Any]]:
+    r_dir = Path(runtime_dir or os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "gps"
+    state_file = r_dir / "record-state.json"
+    if not state_file.is_file():
+        return []
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not data.get("recording"):
+            return []
+        pid = int(data.get("pid") or 0)
+        if pid <= 0 or not Path(proc_root, str(pid)).is_dir():
+            return []
+        cmdline = Path(proc_root, str(pid), "cmdline").read_bytes()
+        rec_name = str(data.get("recorder") or "screen-recorder")
+        if rec_name.encode() not in cmdline and b"screen-recorder" not in cmdline and b"recorder" not in cmdline:
+            return []
+        mode = str(data.get("mode") or "monitor")
+        detail = "Region recording" if mode == "region" else "Screen recording"
+        return [{
+            "kind": "screen",
+            "app": "GPS Screen Recorder",
+            "detail": detail,
+            "pid": pid,
+            "id": f"rec:{pid}",
+        }]
+    except Exception:
+        return []
+
+
+def privacy_items(graph: dict[int, dict[str, Any]], v4l2_items: Iterable[dict[str, Any]],
+                  recorder_items: Iterable[dict[str, Any]] = ()) -> list[dict[str, Any]]:
     """Return one stable snapshot from both event-driven and polled sources."""
-    return merge_items(list(classify_pipewire(graph.values())) + list(v4l2_items))
+    return merge_items(list(classify_pipewire(graph.values())) + list(v4l2_items) + list(recorder_items))
 
 
 def _proc_name(pid: int) -> str:
@@ -372,14 +402,14 @@ def run() -> int:
                 break
             for value in decoder.feed(chunk.decode("utf-8", errors="replace")):
                 apply_pipewire_value(graph, value)
-                payload = json.dumps(privacy_items(graph, enumerate_v4l2()), separators=(",", ":"))
+                payload = json.dumps(privacy_items(graph, enumerate_v4l2(), check_screen_recorder()), separators=(",", ":"))
                 if payload != last_payload:
                     emit(json.loads(payload), True, "")
                     last_payload = payload
         now = time.monotonic()
         if now - last_poll >= POLL_SECONDS:
             last_poll = now
-            combined = privacy_items(graph, enumerate_v4l2())
+            combined = privacy_items(graph, enumerate_v4l2(), check_screen_recorder())
             payload = json.dumps(combined, separators=(",", ":"))
             if payload != last_payload:
                 emit(combined, pw is not None, "")

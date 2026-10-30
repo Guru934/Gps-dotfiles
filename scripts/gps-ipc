@@ -266,6 +266,23 @@ case "$cmd" in
         else
             echo "Lock: inactive"
         fi
+
+        if [[ -x "$REPO_DIR/scripts/gps-record" ]]; then
+            printf "Record: "
+            "$REPO_DIR/scripts/gps-record" status || true
+        fi
+        ;;
+
+    record)
+        exec "$REPO_DIR/scripts/gps-record" "$@"
+        ;;
+
+    shot|screenshot)
+        exec "$REPO_DIR/scripts/gps-shot" "$@"
+        ;;
+
+    picker|colorpicker|colourpicker)
+        exec "$REPO_DIR/scripts/gps-picker" "$@"
         ;;
 
     doctor|health)
@@ -273,7 +290,7 @@ case "$cmd" in
         ;;
 
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|check|status|doctor|health> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|record|shot|picker|check|status|doctor|health> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
         echo "  notify <history|clear|dismiss <id>|markread [id]|dnd [on|off|toggle]|status>" >&2
@@ -283,6 +300,9 @@ case "$cmd" in
         echo "  toolbox [action]" >&2
         echo "  pet [action]" >&2
         echo "  rail [action]" >&2
+        echo "  record <start|stop|toggle|status> [args...]" >&2
+        echo "  shot [region|window|monitor]" >&2
+        echo "  picker" >&2
         echo "  check [shell|island|settings|all]" >&2
         echo "  status" >&2
         echo "  doctor [--json]" >&2

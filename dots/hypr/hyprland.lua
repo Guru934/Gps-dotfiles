@@ -324,6 +324,10 @@ hl.bind("Print",         hl.dsp.exec_cmd(repo .. "/scripts/gps-shot region"))
 hl.bind("SHIFT + Print", hl.dsp.exec_cmd(repo .. "/scripts/gps-shot monitor"))
 hl.bind("ALT + Print",   hl.dsp.exec_cmd(repo .. "/scripts/gps-shot window"))
 
+-- Screen recorder toggle (Super+Shift+R or Ctrl+Print)
+hl.bind("CONTROL + Print",         hl.dsp.exec_cmd(repo .. "/scripts/gps-record toggle"))
+hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd(repo .. "/scripts/gps-record toggle"))
+
 
 --------------------------------
 ---- WINDOWS AND WORKSPACES ----
