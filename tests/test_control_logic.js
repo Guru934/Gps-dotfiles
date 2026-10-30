@@ -125,4 +125,38 @@ test("validateControlTiles validates order, merges defaults, and safely handles 
     assert.strictEqual(validated.length, ControlLogic.DEFAULT_TILES.length);
 });
 
+test("parseCpuUsage calculates diff delta correctly between ticks", () => {
+    const tick1 = [100, 0, 50, 850]; // idle = 850, total = 1000
+    const res1 = ControlLogic.parseCpuUsage(tick1, null);
+    assert.strictEqual(res1.usage, -1);
+    assert.deepStrictEqual(res1.prev, { total: 1000, idle: 850 });
+
+    const tick2 = [150, 0, 70, 880]; // idle = 880, total = 1100 -> dTotal = 100, dIdle = 30 -> 70%
+    const res2 = ControlLogic.parseCpuUsage(tick2, res1.prev);
+    assert.strictEqual(res2.usage, 70);
+    assert.deepStrictEqual(res2.prev, { total: 1100, idle: 880 });
+});
+
+test("parseMemUsage calculates GiB and percentage cleanly", () => {
+    const totalKb = 16 * 1048576; // 16 GiB
+    const availKb = 4 * 1048576;  // 4 GiB avail -> 12 GiB used = 75%
+    const res = ControlLogic.parseMemUsage(totalKb, availKb);
+    assert.strictEqual(res.totalGiB, 16);
+    assert.strictEqual(res.usedGiB, 12);
+    assert.strictEqual(res.pct, 75);
+});
+
+test("parseTempC converts millidegrees to degrees Celsius", () => {
+    assert.strictEqual(ControlLogic.parseTempC("49000"), 49);
+    assert.strictEqual(ControlLogic.parseTempC("52"), 52);
+    assert.strictEqual(ControlLogic.parseTempC("-1"), -1);
+    assert.strictEqual(ControlLogic.parseTempC(""), -1);
+});
+
+test("formatDuration formats playback position and total length accurately", () => {
+    assert.strictEqual(ControlLogic.formatDuration(0), "0:00");
+    assert.strictEqual(ControlLogic.formatDuration(65000), "1:05");
+    assert.strictEqual(ControlLogic.formatDuration(3665000), "1:01:05");
+});
+
 console.log(`ALL ${testCount} CONTROL LOGIC CHECKS PASSED!`);

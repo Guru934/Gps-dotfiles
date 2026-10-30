@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Mpris
 import qs.config
 import "../ControlLogic.js" as ControlLogic
 
@@ -67,6 +68,39 @@ Item {
 
     property real dragMicVol: -1
     readonly property real liveMicVol: dragMicVol >= 0 ? dragMicVol : ((core.sourceAudio && core.micMuted) ? 0 : Math.max(0, Math.min(1.5, core.micVolume)))
+
+    // ───────────── MPRIS media state ─────────────
+    readonly property var player: MediaNowPlaying.player
+    readonly property bool hasActiveMedia: player !== null && player.trackTitle !== "" && (player.isPlaying || player.playbackState === MprisPlaybackState.Paused)
+    readonly property bool hasProgress: hasActiveMedia && Boolean(player.positionSupported) && Boolean(player.lengthSupported) && player.length > 0
+    readonly property real progressFraction: hasProgress ? Math.max(0, Math.min(1, displayPos / (player.length * 1000))) : 0
+
+    property real posBase: 0
+    property real posStamp: 0
+    property real tickNow: 0
+    function syncPos() {
+        if (player) {
+            posBase = player.position * 1000
+            posStamp = Date.now()
+            tickNow = Date.now()
+        }
+    }
+    onPlayerChanged: syncPos()
+    readonly property real displayPos: {
+        if (!hasActiveMedia || !player.positionSupported) return 0
+        if (!player.isPlaying) return Math.max(0, player.position * 1000)
+        let pos = posBase + Math.max(0, tickNow - posStamp)
+        if (player.length > 0) pos = Math.min(pos, player.length * 1000)
+        return Math.max(pos, player.position * 1000)
+    }
+
+    // ───────────── Telemetry state (polled only while panel is open) ─────────────
+    property int cpuUsage: -1
+    property real memUsedGiB: 0
+    property real memTotalGiB: 0
+    property int memPct: -1
+    property int tempC: -1
+    property var prevCpuData: null
 
     property int uptimeSec: 0
     property string kernelVer: ""
@@ -136,6 +170,7 @@ Item {
             dragMicVol = -1
             if (sysProbe.running) sysProbe.running = false
             if (sinksProc.running) sinksProc.running = false
+            if (telemetryProc.running) telemetryProc.running = false
         }
     }
 
@@ -294,6 +329,79 @@ Item {
         const clamped = Math.max(0, Math.min(1.5, ratio))
         if (core.sourceAudio.muted && clamped > 0) core.sourceAudio.muted = false
         core.sourceAudio.volume = clamped
+    }
+
+    Connections {
+        target: st.player
+        function onPositionChanged() { st.syncPos() }
+        function onTrackTitleChanged() { st.syncPos() }
+    }
+
+    Timer {
+        interval: 250
+        repeat: true
+        running: st.active && st.expanded && st.hasActiveMedia && Boolean(st.player && st.player.isPlaying)
+        onTriggered: st.tickNow = Date.now()
+    }
+
+    Process {
+        id: telemetryProc
+        running: false
+        command: [
+            "sh", "-c",
+            "read -r _ u n s i w irq sirq st _ < /proc/stat 2>/dev/null; echo \"CPU $u $n $s $i $w $irq $sirq $st\"; " +
+            "awk '/MemTotal:/{t=$2} /MemAvailable:/{a=$2} END{print \"MEM\", t, a}' /proc/meminfo 2>/dev/null; " +
+            "temp=-1; " +
+            "for z in /sys/class/thermal/thermal_zone*; do " +
+            "  t=$(cat \"$z/type\" 2>/dev/null); " +
+            "  case \"$t\" in x86_pkg_temp|k10temp|coretemp|cpu*) " +
+            "    temp=$(cat \"$z/temp\" 2>/dev/null); [ -n \"$temp\" ] && break ;; " +
+            "  esac; " +
+            "done; " +
+            "if [ -z \"$temp\" ] || [ \"$temp\" -le 0 ] 2>/dev/null; then " +
+            "  for h in /sys/class/hwmon/hwmon*; do " +
+            "    n=$(cat \"$h/name\" 2>/dev/null); " +
+            "    case \"$n\" in coretemp|k10temp) " +
+            "      temp=$(cat \"$h/temp1_input\" 2>/dev/null); [ -n \"$temp\" ] && break ;; " +
+            "    esac; " +
+            "  done; " +
+            "fi; " +
+            "echo \"TEMP $temp\""
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (!st.active || !st.expanded) return
+                for (const line of text.split("\n")) {
+                    if (line.startsWith("CPU ")) {
+                        const nums = line.slice(4).trim().split(/\s+/).map(Number)
+                        const res = ControlLogic.parseCpuUsage(nums, st.prevCpuData)
+                        st.prevCpuData = res.prev
+                        if (res.usage >= 0) st.cpuUsage = res.usage
+                    } else if (line.startsWith("MEM ")) {
+                        const parts = line.slice(4).trim().split(/\s+/).map(Number)
+                        if (parts.length >= 2) {
+                            const res = ControlLogic.parseMemUsage(parts[0], parts[1])
+                            st.memTotalGiB = res.totalGiB
+                            st.memUsedGiB = res.usedGiB
+                            st.memPct = res.pct
+                        }
+                    } else if (line.startsWith("TEMP ")) {
+                        st.tempC = ControlLogic.parseTempC(line.slice(5).trim())
+                    }
+                }
+            }
+        }
+    }
+
+    Timer {
+        id: telemetryTimer
+        interval: 1500
+        repeat: true
+        running: st.active && st.expanded
+        triggeredOnStart: true
+        onTriggered: {
+            if (!telemetryProc.running) telemetryProc.running = true
+        }
     }
 
     Timer {
@@ -1386,6 +1494,311 @@ Item {
                                 st.dragBright = -1
                                 st.commitBrightness(clamped)
                             }
+                        }
+                    }
+                }
+
+                // MPRIS Now-Playing Card (hidden when nothing plays)
+                Rectangle {
+                    visible: st.hasActiveMedia
+                    Layout.fillWidth: true
+                    implicitHeight: st.hasProgress ? 96 : 64
+                    radius: Theme.radiusCard
+                    color: Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: Theme.outlineSoft
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            // Album Art / Fallback
+                            Rectangle {
+                                Layout.preferredWidth: 44
+                                Layout.preferredHeight: 44
+                                radius: 8
+                                color: Qt.rgba(1, 1, 1, 0.08)
+                                clip: true
+
+                                Image {
+                                    id: coverImg
+                                    anchors.fill: parent
+                                    source: (st.player && st.player.trackArtUrl) ? st.player.trackArtUrl : ""
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+
+                                Ico {
+                                    visible: coverImg.status !== Image.Ready
+                                    anchors.centerIn: parent
+                                    name: "music_note"
+                                    alt: "♫"
+                                    font.pixelSize: 20
+                                    color: Theme.textMuted
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: st.openMediaHub()
+                                }
+                            }
+
+                            // Title & Artist
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (st.player && st.player.trackTitle) ? st.player.trackTitle : ""
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                    color: Theme.textMain
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (st.player && st.player.trackArtist) ? st.player.trackArtist : "Unknown Artist"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.weight: Font.Medium
+                                    color: Theme.textMuted
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            // Transport Controls
+                            RowLayout {
+                                spacing: 4
+
+                                // Previous
+                                Rectangle {
+                                    Layout.preferredWidth: 28
+                                    Layout.preferredHeight: 28
+                                    radius: 14
+                                    color: prevMa.containsMouse ? Theme.cardHover : "transparent"
+                                    opacity: Boolean(st.player && st.player.canGoPrevious) ? 1.0 : 0.35
+
+                                    Ico {
+                                        anchors.centerIn: parent
+                                        name: "skip_previous"
+                                        alt: "|<"
+                                        font.pixelSize: 18
+                                        color: Theme.textMain
+                                    }
+
+                                    MouseArea {
+                                        id: prevMa
+                                        anchors.fill: parent
+                                        enabled: Boolean(st.player && st.player.canGoPrevious)
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (st.player && st.player.canGoPrevious) st.player.previous()
+                                    }
+                                }
+
+                                // Play / Pause
+                                Rectangle {
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: 16
+                                    color: playMa.containsMouse ? Qt.lighter(Theme.brandAccent, 1.08) : Theme.brandAccent
+
+                                    Ico {
+                                        anchors.centerIn: parent
+                                        name: (st.player && st.player.isPlaying) ? "pause" : "play_arrow"
+                                        alt: (st.player && st.player.isPlaying) ? "||" : ">"
+                                        font.pixelSize: 18
+                                        color: Theme.brandAccentFg
+                                    }
+
+                                    MouseArea {
+                                        id: playMa
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (st.player) st.player.togglePlaying()
+                                    }
+                                }
+
+                                // Next
+                                Rectangle {
+                                    Layout.preferredWidth: 28
+                                    Layout.preferredHeight: 28
+                                    radius: 14
+                                    color: nextMa.containsMouse ? Theme.cardHover : "transparent"
+                                    opacity: Boolean(st.player && st.player.canGoNext) ? 1.0 : 0.35
+
+                                    Ico {
+                                        anchors.centerIn: parent
+                                        name: "skip_next"
+                                        alt: ">|"
+                                        font.pixelSize: 18
+                                        color: Theme.textMain
+                                    }
+
+                                    MouseArea {
+                                        id: nextMa
+                                        anchors.fill: parent
+                                        enabled: Boolean(st.player && st.player.canGoNext)
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: if (st.player && st.player.canGoNext) st.player.next()
+                                    }
+                                }
+                            }
+                        }
+
+                        // Progress bar
+                        RowLayout {
+                            visible: st.hasProgress
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Text {
+                                text: ControlLogic.formatDuration(st.displayPos)
+                                font.family: Theme.fontMono
+                                font.pixelSize: 9
+                                color: Theme.textMuted
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 4
+                                radius: 2
+                                color: Qt.rgba(1, 1, 1, 0.08)
+                                clip: true
+
+                                Rectangle {
+                                    width: parent.width * st.progressFraction
+                                    height: parent.height
+                                    radius: 2
+                                    color: Theme.brandAccent
+                                }
+                            }
+
+                            Text {
+                                text: st.player ? ControlLogic.formatDuration(st.player.length * 1000) : "0:00"
+                                font.family: Theme.fontMono
+                                font.pixelSize: 9
+                                color: Theme.textMuted
+                            }
+                        }
+                    }
+                }
+
+                // Compact CPU / RAM / Temp Strip
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    radius: Theme.radiusCard
+                    color: Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: Theme.outlineSoft
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        spacing: 8
+
+                        // CPU Item
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Ico {
+                                name: "memory"
+                                alt: "C"
+                                font.pixelSize: 15
+                                color: Theme.brandAccent
+                            }
+                            Text {
+                                text: "CPU"
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                                color: Theme.textMuted
+                            }
+                            Text {
+                                text: st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "--%"
+                                font.family: Theme.fontMono
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                color: Theme.textMain
+                            }
+                            ToolTip.visible: cpuMa.containsMouse
+                            ToolTip.text: "CPU usage: " + (st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "measuring\u2026")
+                            ToolTip.delay: 300
+                            MouseArea { id: cpuMa; anchors.fill: parent; hoverEnabled: true }
+                        }
+
+                        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
+
+                        // RAM Item
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Ico {
+                                name: "storage"
+                                alt: "R"
+                                font.pixelSize: 15
+                                color: Theme.accentSecondary
+                            }
+                            Text {
+                                text: "RAM"
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                                color: Theme.textMuted
+                            }
+                            Text {
+                                text: st.memPct >= 0 ? (st.memPct + "%") : "--%"
+                                font.family: Theme.fontMono
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                color: Theme.textMain
+                            }
+                            ToolTip.visible: ramMa.containsMouse
+                            ToolTip.text: "RAM: " + st.memUsedGiB.toFixed(1) + " / " + st.memTotalGiB.toFixed(1) + " GiB (" + st.memPct + "%)"
+                            ToolTip.delay: 300
+                            MouseArea { id: ramMa; anchors.fill: parent; hoverEnabled: true }
+                        }
+
+                        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
+
+                        // TEMP Item
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Ico {
+                                name: "thermostat"
+                                alt: "T"
+                                font.pixelSize: 15
+                                color: st.tempC >= 80 ? Theme.statusDanger : (st.tempC >= 70 ? Theme.statusWarn : Theme.brandAccent)
+                            }
+                            Text {
+                                text: "TEMP"
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                                color: Theme.textMuted
+                            }
+                            Text {
+                                text: st.tempC > 0 ? (st.tempC + "°C") : "--°C"
+                                font.family: Theme.fontMono
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                color: Theme.textMain
+                            }
+                            ToolTip.visible: tempMa.containsMouse
+                            ToolTip.text: "CPU package temperature: " + (st.tempC > 0 ? (st.tempC + "°C") : "measuring\u2026")
+                            ToolTip.delay: 300
+                            MouseArea { id: tempMa; anchors.fill: parent; hoverEnabled: true }
                         }
                     }
                 }

@@ -206,6 +206,60 @@
         return result;
     }
 
+    /**
+     * Parse CPU usage percentage from /proc/stat ticks.
+     */
+    function parseCpuUsage(rawNumbers, prevCpu) {
+        if (!Array.isArray(rawNumbers) || rawNumbers.length < 4) return { usage: -1, prev: null };
+        const idle = rawNumbers[3] + (rawNumbers[4] || 0);
+        let total = 0;
+        for (const n of rawNumbers) total += n;
+        let usage = -1;
+        if (prevCpu && typeof prevCpu.total === "number") {
+            const dTotal = total - prevCpu.total;
+            const dIdle = idle - prevCpu.idle;
+            if (dTotal > 0) {
+                usage = Math.max(0, Math.min(100, Math.round(100 * (1 - dIdle / dTotal))));
+            }
+        }
+        return { usage: usage, prev: { total: total, idle: idle } };
+    }
+
+    /**
+     * Parse memory usage from MemTotal and MemAvailable in KB.
+     */
+    function parseMemUsage(totalKb, availKb) {
+        if (typeof totalKb !== "number" || typeof availKb !== "number" || totalKb <= 0) {
+            return { usedGiB: 0, totalGiB: 0, pct: 0 };
+        }
+        const totalGiB = totalKb / 1048576;
+        const usedGiB = Math.max(0, (totalKb - availKb)) / 1048576;
+        const pct = Math.max(0, Math.min(100, Math.round(100 * (totalKb - availKb) / totalKb)));
+        return { usedGiB: usedGiB, totalGiB: totalGiB, pct: pct };
+    }
+
+    /**
+     * Parse thermal millidegree Celsius reading to degrees Celsius.
+     */
+    function parseTempC(rawTemp) {
+        const v = parseInt(rawTemp, 10);
+        if (isNaN(v) || v <= 0) return -1;
+        return v > 1000 ? Math.round(v / 1000) : v;
+    }
+
+    /**
+     * Format milliseconds into m:ss or h:mm:ss.
+     */
+    function formatDuration(ms) {
+        if (typeof ms !== "number" || !isFinite(ms) || ms < 0) return "0:00";
+        const total = Math.floor(ms / 1000);
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const ss = (s < 10 ? "0" : "") + s;
+        return h > 0 ? (h + ":" + (m < 10 ? "0" : "") + m + ":" + ss) : (m + ":" + ss);
+    }
+
     return {
         DEFAULT_PROFILES: DEFAULT_PROFILES,
         DEFAULT_TILES: DEFAULT_TILES,
@@ -216,6 +270,10 @@
         formatDndSubText: formatDndSubText,
         buildGameModeLua: buildGameModeLua,
         parseGapsValue: parseGapsValue,
-        validateControlTiles: validateControlTiles
+        validateControlTiles: validateControlTiles,
+        parseCpuUsage: parseCpuUsage,
+        parseMemUsage: parseMemUsage,
+        parseTempC: parseTempC,
+        formatDuration: formatDuration
     };
 }));
