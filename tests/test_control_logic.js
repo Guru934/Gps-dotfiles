@@ -159,4 +159,37 @@ test("formatDuration formats playback position and total length accurately", () 
     assert.strictEqual(ControlLogic.formatDuration(3665000), "1:01:05");
 });
 
+test("moveTile reorders items safely with boundary validation", () => {
+    const list = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    const moved = ControlLogic.moveTile(list, 0, 2);
+    assert.deepStrictEqual(moved.map(i => i.id), ["b", "c", "a"]);
+
+    // Out of bounds preserves list
+    assert.deepStrictEqual(ControlLogic.moveTile(list, -1, 2), list);
+    assert.deepStrictEqual(ControlLogic.moveTile(list, 0, 5), list);
+    assert.deepStrictEqual(ControlLogic.moveTile(list, 1, 1), list);
+});
+
+test("toggleTileEnabled toggles enabled flag cleanly", () => {
+    const list = [{ id: "wifi", enabled: true }, { id: "bt", enabled: true }];
+    const toggled = ControlLogic.toggleTileEnabled(list, "wifi");
+    assert.strictEqual(toggled[0].enabled, false);
+    assert.strictEqual(toggled[1].enabled, true);
+
+    const toggledBack = ControlLogic.toggleTileEnabled(toggled, "wifi");
+    assert.strictEqual(toggledBack[0].enabled, true);
+});
+
+test("serialize and deserialize round-trip and recover safely from corrupt data", () => {
+    const original = ControlLogic.DEFAULT_TILES.slice();
+    const serialized = ControlLogic.serializeControlTiles(original);
+    const deserialized = ControlLogic.deserializeControlTiles(serialized);
+    assert.deepStrictEqual(deserialized, original);
+
+    // Corrupt data falls back to defaults
+    assert.deepStrictEqual(ControlLogic.deserializeControlTiles("{bad json"), original);
+    assert.deepStrictEqual(ControlLogic.deserializeControlTiles(""), original);
+    assert.deepStrictEqual(ControlLogic.deserializeControlTiles(null), original);
+});
+
 console.log(`ALL ${testCount} CONTROL LOGIC CHECKS PASSED!`);

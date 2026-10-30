@@ -260,6 +260,56 @@
         return h > 0 ? (h + ":" + (m < 10 ? "0" : "") + m + ":" + ss) : (m + ":" + ss);
     }
 
+    /**
+     * Move a tile up or down in the ordered list.
+     */
+    function moveTile(tiles, fromIndex, toIndex) {
+        if (!Array.isArray(tiles)) return [];
+        const copy = tiles.slice();
+        if (fromIndex < 0 || fromIndex >= copy.length || toIndex < 0 || toIndex >= copy.length || fromIndex === toIndex) {
+            return copy;
+        }
+        const item = copy.splice(fromIndex, 1)[0];
+        copy.splice(toIndex, 0, item);
+        return copy;
+    }
+
+    /**
+     * Toggle enabled flag for a tile.
+     */
+    function toggleTileEnabled(tiles, tileId) {
+        if (!Array.isArray(tiles)) return [];
+        return tiles.map(t => {
+            if (t.id === tileId) {
+                return Object.assign({}, t, { enabled: !t.enabled });
+            }
+            return Object.assign({}, t);
+        });
+    }
+
+    /**
+     * Parse and deserialize JSON into validated control tiles.
+     */
+    function deserializeControlTiles(jsonString) {
+        if (!jsonString || typeof jsonString !== "string") {
+            return DEFAULT_TILES.map(t => Object.assign({}, t));
+        }
+        try {
+            const parsed = JSON.parse(jsonString);
+            return validateControlTiles(parsed);
+        } catch (e) {
+            return DEFAULT_TILES.map(t => Object.assign({}, t));
+        }
+    }
+
+    /**
+     * Serialize control tiles to formatted JSON.
+     */
+    function serializeControlTiles(tiles) {
+        const validated = validateControlTiles(tiles);
+        return JSON.stringify(validated, null, 2);
+    }
+
     return {
         DEFAULT_PROFILES: DEFAULT_PROFILES,
         DEFAULT_TILES: DEFAULT_TILES,
@@ -271,6 +321,10 @@
         buildGameModeLua: buildGameModeLua,
         parseGapsValue: parseGapsValue,
         validateControlTiles: validateControlTiles,
+        moveTile: moveTile,
+        toggleTileEnabled: toggleTileEnabled,
+        deserializeControlTiles: deserializeControlTiles,
+        serializeControlTiles: serializeControlTiles,
         parseCpuUsage: parseCpuUsage,
         parseMemUsage: parseMemUsage,
         parseTempC: parseTempC,

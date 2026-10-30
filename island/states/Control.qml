@@ -31,6 +31,53 @@ Item {
     property var audioSinks: []
     property int defaultSinkId: 0
 
+    property bool editTilesMode: false
+    property var controlTiles: ControlLogic.DEFAULT_TILES.map(t => Object.assign({}, t))
+    readonly property var visibleTiles: {
+        const list = Array.isArray(st.controlTiles) ? st.controlTiles : ControlLogic.DEFAULT_TILES
+        return list.filter(t => t && t.enabled !== false)
+    }
+    readonly property string controlTilesPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/gps/control_tiles.json"
+
+    function moveTileUp(index) {
+        if (index <= 0) return
+        const next = ControlLogic.moveTile(controlTiles, index, index - 1)
+        saveControlTiles(next)
+    }
+
+    function moveTileDown(index) {
+        if (!controlTiles || index >= controlTiles.length - 1) return
+        const next = ControlLogic.moveTile(controlTiles, index, index + 1)
+        saveControlTiles(next)
+    }
+
+    function toggleTile(id) {
+        const next = ControlLogic.toggleTileEnabled(controlTiles, id)
+        saveControlTiles(next)
+    }
+
+    function resetControlTiles() {
+        saveControlTiles(ControlLogic.DEFAULT_TILES)
+    }
+
+    function saveControlTiles(newTiles) {
+        st.controlTiles = ControlLogic.validateControlTiles(newTiles)
+        const raw = ControlLogic.serializeControlTiles(st.controlTiles)
+        const path = st.controlTilesPath
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && printf "%s\\n" "$2" > "$tmp" && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", path, raw])
+    }
+
+    FileView {
+        id: tilesFile
+        path: st.controlTilesPath
+        watchChanges: true
+        onLoaded: {
+            st.controlTiles = ControlLogic.deserializeControlTiles(tilesFile.text())
+        }
+        onFileChanged: tilesFile.reload()
+    }
+
     property bool hasNmcli: false
     property bool wifiEnabled: false
     property string wifiSsid: ""
@@ -158,6 +205,7 @@ Item {
             confirmPower = false
             dndExpanded = false
             audioOutputsExpanded = false
+            editTilesMode = false
             triggerProbe()
             refreshSinks()
         } else {
@@ -165,6 +213,7 @@ Item {
             confirmPower = false
             dndExpanded = false
             audioOutputsExpanded = false
+            editTilesMode = false
             dragBright = -1
             dragVol = -1
             dragMicVol = -1
@@ -176,6 +225,10 @@ Item {
 
     focus: active && expanded
     Keys.onEscapePressed: {
+        if (editTilesMode) {
+            editTilesMode = false
+            return
+        }
         if (dndExpanded) {
             dndExpanded = false
             return
@@ -944,6 +997,187 @@ Item {
         }
     }
 
+    // ───────────── Tile Delegates for dynamic customization ─────────────
+    Component {
+        id: compWifi
+        ToggleTile {
+            iconName: st.wifiEnabled ? "wifi" : "wifi_off"
+            iconAlt: "W"
+            titleText: "Wi-Fi"
+            subText: !st.hasNmcli ? "No nmcli" : (st.wifiEnabled ? (st.wifiSsid !== "" ? st.wifiSsid : "On") : "Off")
+            trailIcon: "chevron_right"
+            trailAlt: ">"
+            tileOn: st.wifiEnabled
+            tileAvailable: st.hasNmcli
+            tooltipText: "Wi-Fi radio toggle · click arrow for network settings"
+            onToggled: st.toggleWifi()
+            onTrailClicked: st.openSettings("network")
+        }
+    }
+
+    Component {
+        id: compBt
+        ToggleTile {
+            iconName: st.btEnabled ? "bluetooth" : "bluetooth_disabled"
+            iconAlt: "B"
+            titleText: "Bluetooth"
+            subText: !st.hasBt ? "No adapter" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
+            trailIcon: "chevron_right"
+            trailAlt: ">"
+            tileOn: st.btEnabled
+            tileAvailable: st.hasBt
+            tooltipText: "Bluetooth power toggle · click arrow for bluetooth settings"
+            onToggled: st.toggleBluetooth()
+            onTrailClicked: st.openSettings("network")
+        }
+    }
+
+    Component {
+        id: compDnd
+        ToggleTile {
+            iconName: st.core.dnd ? "notifications_off" : "notifications"
+            iconAlt: "D"
+            titleText: "Do not disturb"
+            subText: st.dndSubtitle
+            trailIcon: "tune"
+            trailAlt: "*"
+            tileOn: st.core.dnd
+            tileAvailable: true
+            tooltipText: "Do Not Disturb · tap toggles, chevron selects duration"
+            onToggled: st.toggleDnd()
+            onTrailClicked: st.dndExpanded = !st.dndExpanded
+        }
+    }
+
+    Component {
+        id: compIdle
+        ToggleTile {
+            iconName: "timer"
+            iconAlt: "I"
+            titleText: "Idle lock"
+            subText: st.idleSubtitle
+            tileOn: st.idleDaemonOn
+            tileAvailable: st.hasIdleTool
+            tooltipText: "Automated session locking daemon (hypridle)"
+            onToggled: st.toggleIdleLock()
+        }
+    }
+
+    Component {
+        id: compKeepAwake
+        ToggleTile {
+            iconName: "coffee"
+            iconAlt: "K"
+            titleText: "Keep awake"
+            subText: st.keepAwakeOn ? "Active" : "Off"
+            tileOn: st.keepAwakeOn
+            tileAvailable: true
+            tooltipText: "Inhibit idle sleep and screen timeout (systemd-inhibit)"
+            onToggled: st.toggleKeepAwake()
+        }
+    }
+
+    Component {
+        id: compFlight
+        ToggleTile {
+            iconName: "flight"
+            iconAlt: "F"
+            titleText: "Flight mode"
+            subText: st.flightMode ? "Enabled" : "Disabled"
+            tileOn: st.flightMode
+            tileAvailable: st.hasNmcli || st.hasBt
+            tooltipText: "Disable all wireless radios simultaneously"
+            onToggled: st.toggleFlightMode()
+        }
+    }
+
+    Component {
+        id: compNightLight
+        ToggleTile {
+            iconName: "nightlight"
+            iconAlt: "N"
+            titleText: "Night light"
+            subText: !st.hasSunset ? "sudo pacman -S hyprsunset" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
+            trailIcon: st.hasSunset ? "tune" : ""
+            trailAlt: "*"
+            tileOn: st.nightLightOn
+            tileAvailable: st.hasSunset
+            tooltipText: st.hasSunset ? "Blue-light filter · click arrow to cycle color temperature" : "hyprsunset is not installed (sudo pacman -S hyprsunset)"
+            onToggled: st.toggleNightLight()
+            onTrailClicked: st.cycleNightKelvin()
+        }
+    }
+
+    Component {
+        id: compGameMode
+        ToggleTile {
+            iconName: "sports_esports"
+            iconAlt: "G"
+            titleText: "Game mode"
+            subText: st.gameModeOn ? "Active" : "Off"
+            tileOn: st.gameModeOn
+            tileAvailable: true
+            tooltipText: "Disable animations, blur, shadows & gaps for max gaming performance"
+            onToggled: st.toggleGameMode()
+        }
+    }
+
+    Component {
+        id: compPowerProfile
+        ToggleTile {
+            iconName: "speed"
+            iconAlt: "P"
+            titleText: "Power profile"
+            subText: st.powerProfile !== "" ? st.powerProfile : "Default"
+            tileOn: st.powerProfile === "performance"
+            tileAvailable: st.profileList.length > 0
+            tooltipText: "Cycle device power profile (" + (st.powerProfile || "balanced") + ")"
+            onToggled: st.cyclePowerProfile()
+        }
+    }
+
+    Component {
+        id: compMic
+        ToggleTile {
+            iconName: (st.core.sourceAudio && st.core.micMuted) ? "mic_off" : "mic"
+            iconAlt: "M"
+            titleText: "Microphone"
+            subText: st.core.sourceAudio ? (st.core.micMuted ? "Muted" : (Math.round(st.core.micVolume * 100) + "%")) : "No input"
+            tileOn: st.core.sourceAudio ? st.core.micMuted : false
+            tileAvailable: st.core.sourceAudio !== null
+            tooltipText: "Toggle microphone mute"
+            onToggled: st.toggleMicMute()
+        }
+    }
+
+    Component {
+        id: compScreenshot
+        ToggleTile {
+            iconName: "screenshot_monitor"
+            iconAlt: "S"
+            titleText: "Screenshot"
+            subText: "Reserved"
+            tileOn: false
+            tileAvailable: false
+            tileInteractable: false
+            tooltipText: "Screenshot capture (reserved slot)"
+        }
+    }
+
+    Component {
+        id: compRecord
+        ToggleTile {
+            iconName: "screen_record"
+            iconAlt: "R"
+            titleText: "Record"
+            subText: "Reserved"
+            tileOn: false
+            tileAvailable: false
+            tileInteractable: false
+            tooltipText: "Screen recording (reserved slot)"
+        }
+    }
+
     // ───────────── STATE 01: Collapsed Pill (180x36) ─────────────
     Item {
         id: compactView
@@ -1124,170 +1358,230 @@ Item {
                         tooltipText: "Settings"
                         onTriggered: st.openSettings("")
                     }
+
+                    HeaderButton {
+                        iconName: "tune"
+                        iconAlt: "*"
+                        tooltipText: st.editTilesMode ? "Done customizing" : "Customize tiles"
+                        color: st.editTilesMode ? Theme.brandAccent : ((hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card)
+                        onTriggered: st.editTilesMode = !st.editTilesMode
+                    }
                 }
 
-                // Two-Column Grid of K1 Tiles
+                // Tiles Customization Edit Mode View
+                Rectangle {
+                    visible: st.editTilesMode
+                    Layout.fillWidth: true
+                    implicitHeight: editContentCol.implicitHeight + 20
+                    radius: Theme.radiusCard
+                    color: Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: Theme.brandAccent
+
+                    ColumnLayout {
+                        id: editContentCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 10
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "CUSTOMIZE TILES"
+                                font.family: Theme.fontMono
+                                font.pixelSize: 10
+                                font.weight: Font.Bold
+                                font.letterSpacing: 0.8
+                                color: Theme.brandAccent
+                            }
+                            Item { Layout.fillWidth: true }
+                            Rectangle {
+                                Layout.preferredHeight: 24
+                                Layout.preferredWidth: 96
+                                radius: 6
+                                color: rstMa.containsMouse ? Theme.cardHover : Qt.rgba(1, 1, 1, 0.06)
+                                border.width: 1
+                                border.color: Theme.outlineSoft
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Reset Defaults"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 9
+                                    font.weight: Font.Medium
+                                    color: Theme.textMuted
+                                }
+                                MouseArea {
+                                    id: rstMa
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: st.resetControlTiles()
+                                }
+                            }
+                            Rectangle {
+                                Layout.preferredHeight: 24
+                                Layout.preferredWidth: 60
+                                radius: 6
+                                color: Theme.brandAccent
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Done"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.weight: Font.Bold
+                                    color: Theme.brandAccentFg
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: st.editTilesMode = false
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: st.controlTiles
+                            delegate: Rectangle {
+                                required property var modelData
+                                required property int index
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 34
+                                radius: 8
+                                color: Qt.rgba(1, 1, 1, 0.04)
+                                border.width: 1
+                                border.color: Theme.outlineSoft
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 24
+                                        Layout.preferredHeight: 24
+                                        radius: 4
+                                        color: upMa.containsMouse ? Theme.cardHover : "transparent"
+                                        opacity: index > 0 ? 1.0 : 0.25
+                                        Ico {
+                                            anchors.centerIn: parent
+                                            name: "arrow_upward"
+                                            alt: "^"
+                                            font.pixelSize: 14
+                                            color: Theme.textMain
+                                        }
+                                        MouseArea {
+                                            id: upMa
+                                            anchors.fill: parent
+                                            enabled: index > 0
+                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: st.moveTileUp(index)
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 24
+                                        Layout.preferredHeight: 24
+                                        radius: 4
+                                        color: downMa.containsMouse ? Theme.cardHover : "transparent"
+                                        opacity: (st.controlTiles && index < st.controlTiles.length - 1) ? 1.0 : 0.25
+                                        Ico {
+                                            anchors.centerIn: parent
+                                            name: "arrow_downward"
+                                            alt: "v"
+                                            font.pixelSize: 14
+                                            color: Theme.textMain
+                                        }
+                                        MouseArea {
+                                            id: downMa
+                                            anchors.fill: parent
+                                            enabled: Boolean(st.controlTiles && index < st.controlTiles.length - 1)
+                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: st.moveTileDown(index)
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.title
+                                        font.family: Theme.fontUi
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                        color: modelData.enabled ? Theme.textMain : Theme.textMuted
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 64
+                                        Layout.preferredHeight: 22
+                                        radius: 6
+                                        color: modelData.enabled ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.2) : Qt.rgba(1, 1, 1, 0.06)
+                                        border.width: 1
+                                        border.color: modelData.enabled ? Theme.brandAccent : Theme.outlineSoft
+
+                                        RowLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 4
+                                            Ico {
+                                                name: modelData.enabled ? "visibility" : "visibility_off"
+                                                alt: modelData.enabled ? "O" : "X"
+                                                font.pixelSize: 12
+                                                color: modelData.enabled ? Theme.brandAccent : Theme.textMuted
+                                            }
+                                            Text {
+                                                text: modelData.enabled ? "Shown" : "Hidden"
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 9
+                                                font.weight: Font.Medium
+                                                color: modelData.enabled ? Theme.brandAccent : Theme.textMuted
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: st.toggleTile(modelData.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Two-Column Grid of Enabled Tiles
                 GridLayout {
+                    visible: !st.editTilesMode
                     Layout.fillWidth: true
                     columns: 2
                     columnSpacing: 10
                     rowSpacing: 10
                     uniformCellWidths: true
 
-                    // 1. Wi-Fi
-                    ToggleTile {
-                        iconName: st.wifiEnabled ? "wifi" : "wifi_off"
-                        iconAlt: "W"
-                        titleText: "Wi-Fi"
-                        subText: !st.hasNmcli ? "No nmcli" : (st.wifiEnabled ? (st.wifiSsid !== "" ? st.wifiSsid : "On") : "Off")
-                        trailIcon: "chevron_right"
-                        trailAlt: ">"
-                        tileOn: st.wifiEnabled
-                        tileAvailable: st.hasNmcli
-                        tooltipText: "Wi-Fi radio toggle · click arrow for network settings"
-                        onToggled: st.toggleWifi()
-                        onTrailClicked: st.openSettings("network")
-                    }
-
-                    // 2. Bluetooth
-                    ToggleTile {
-                        iconName: st.btEnabled ? "bluetooth" : "bluetooth_disabled"
-                        iconAlt: "B"
-                        titleText: "Bluetooth"
-                        subText: !st.hasBt ? "No adapter" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
-                        trailIcon: "chevron_right"
-                        trailAlt: ">"
-                        tileOn: st.btEnabled
-                        tileAvailable: st.hasBt
-                        tooltipText: "Bluetooth power toggle · click arrow for bluetooth settings"
-                        onToggled: st.toggleBluetooth()
-                        onTrailClicked: st.openSettings("network")
-                    }
-
-                    // 3. Do Not Disturb
-                    ToggleTile {
-                        iconName: st.core.dnd ? "notifications_off" : "notifications"
-                        iconAlt: "D"
-                        titleText: "Do not disturb"
-                        subText: st.dndSubtitle
-                        trailIcon: "tune"
-                        trailAlt: "*"
-                        tileOn: st.core.dnd
-                        tileAvailable: true
-                        tooltipText: "Do Not Disturb · tap toggles, chevron selects duration"
-                        onToggled: st.toggleDnd()
-                        onTrailClicked: st.dndExpanded = !st.dndExpanded
-                    }
-
-                    // 4. Idle lock
-                    ToggleTile {
-                        iconName: "timer"
-                        iconAlt: "I"
-                        titleText: "Idle lock"
-                        subText: st.idleSubtitle
-                        tileOn: st.idleDaemonOn
-                        tileAvailable: st.hasIdleTool
-                        tooltipText: "Automated session locking daemon (hypridle)"
-                        onToggled: st.toggleIdleLock()
-                    }
-
-                    // 5. Keep awake
-                    ToggleTile {
-                        iconName: "coffee"
-                        iconAlt: "K"
-                        titleText: "Keep awake"
-                        subText: st.keepAwakeOn ? "Active" : "Off"
-                        tileOn: st.keepAwakeOn
-                        tileAvailable: true
-                        tooltipText: "Inhibit idle sleep and screen timeout (systemd-inhibit)"
-                        onToggled: st.toggleKeepAwake()
-                    }
-
-                    // 6. Flight mode
-                    ToggleTile {
-                        iconName: "flight"
-                        iconAlt: "F"
-                        titleText: "Flight mode"
-                        subText: st.flightMode ? "Enabled" : "Disabled"
-                        tileOn: st.flightMode
-                        tileAvailable: st.hasNmcli || st.hasBt
-                        tooltipText: "Disable all wireless radios simultaneously"
-                        onToggled: st.toggleFlightMode()
-                    }
-
-                    // 7. Night light
-                    ToggleTile {
-                        iconName: "nightlight"
-                        iconAlt: "N"
-                        titleText: "Night light"
-                        subText: !st.hasSunset ? "sudo pacman -S hyprsunset" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
-                        trailIcon: st.hasSunset ? "tune" : ""
-                        trailAlt: "*"
-                        tileOn: st.nightLightOn
-                        tileAvailable: st.hasSunset
-                        tooltipText: st.hasSunset ? "Blue-light filter · click arrow to cycle color temperature" : "hyprsunset is not installed (sudo pacman -S hyprsunset)"
-                        onToggled: st.toggleNightLight()
-                        onTrailClicked: st.cycleNightKelvin()
-                    }
-
-                    // 8. Game mode
-                    ToggleTile {
-                        iconName: "sports_esports"
-                        iconAlt: "G"
-                        titleText: "Game mode"
-                        subText: st.gameModeOn ? "Active" : "Off"
-                        tileOn: st.gameModeOn
-                        tileAvailable: true
-                        tooltipText: "Disable animations, blur, shadows & gaps for max gaming performance"
-                        onToggled: st.toggleGameMode()
-                    }
-
-                    // 9. Power profile
-                    ToggleTile {
-                        iconName: "speed"
-                        iconAlt: "P"
-                        titleText: "Power profile"
-                        subText: st.powerProfile !== "" ? st.powerProfile : "Default"
-                        tileOn: st.powerProfile === "performance"
-                        tileAvailable: st.profileList.length > 0
-                        tooltipText: "Cycle device power profile (" + (st.powerProfile || "balanced") + ")"
-                        onToggled: st.cyclePowerProfile()
-                    }
-
-                    // 10. Microphone mute
-                    ToggleTile {
-                        iconName: (st.core.sourceAudio && st.core.micMuted) ? "mic_off" : "mic"
-                        iconAlt: "M"
-                        titleText: "Microphone"
-                        subText: st.core.sourceAudio ? (st.core.micMuted ? "Muted" : (Math.round(st.core.micVolume * 100) + "%")) : "No input"
-                        tileOn: st.core.sourceAudio ? st.core.micMuted : false
-                        tileAvailable: st.core.sourceAudio !== null
-                        tooltipText: "Toggle microphone mute"
-                        onToggled: st.toggleMicMute()
-                    }
-
-                    // 11. Screenshot (Reserved)
-                    ToggleTile {
-                        iconName: "screenshot_monitor"
-                        iconAlt: "S"
-                        titleText: "Screenshot"
-                        subText: "Reserved"
-                        tileOn: false
-                        tileAvailable: false
-                        tileInteractable: false
-                        tooltipText: "Screenshot capture (reserved slot)"
-                    }
-
-                    // 12. Record (Reserved)
-                    ToggleTile {
-                        iconName: "screen_record"
-                        iconAlt: "R"
-                        titleText: "Record"
-                        subText: "Reserved"
-                        tileOn: false
-                        tileAvailable: false
-                        tileInteractable: false
-                        tooltipText: "Screen recording (reserved slot)"
+                    Repeater {
+                        model: st.visibleTiles
+                        delegate: Loader {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            sourceComponent: {
+                                switch (modelData.id) {
+                                    case "wifi": return compWifi;
+                                    case "bluetooth": return compBt;
+                                    case "dnd": return compDnd;
+                                    case "idle": return compIdle;
+                                    case "keepawake": return compKeepAwake;
+                                    case "flight": return compFlight;
+                                    case "nightlight": return compNightLight;
+                                    case "gamemode": return compGameMode;
+                                    case "powerprofile": return compPowerProfile;
+                                    case "mic": return compMic;
+                                    case "screenshot": return compScreenshot;
+                                    case "record": return compRecord;
+                                    default: return null;
+                                }
+                            }
+                        }
                     }
                 }
 
