@@ -187,6 +187,102 @@ PanelWindow {
         root.savePlanner()
     }
 
+    function saveDndState() {
+        const raw = JSON.stringify(root.dndState || {}, null, 2)
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && (umask 077 && printf "%s\\n" "$2" > "$tmp") && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", root.notifDndPath, raw])
+    }
+
+    function saveNotifSettings() {
+        const raw = JSON.stringify({
+            version: 1,
+            entries: root.islandItems,
+            settings: root.notifSettings || { storeBody: true, mutedApps: [] }
+        }, null, 2)
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && (umask 077 && printf "%s\\n" "$2" > "$tmp") && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", root.notifHistoryPath, raw])
+    }
+
+    function toggleDnd() {
+        Quickshell.execDetached([root.ipcScript, "notify", "dnd", "toggle"])
+    }
+
+    function snoozeDnd(minutes) {
+        Quickshell.execDetached([root.ipcScript, "notify", "snooze", "" + minutes])
+    }
+
+    function setDndManual(on) {
+        Quickshell.execDetached([root.ipcScript, "notify", "dnd", on ? "on" : "off"])
+    }
+
+    function getMinutesUntilTomorrowMorning() {
+        const now = new Date()
+        const morning = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 7, 0, 0)
+        return Math.max(1, Math.floor((morning.getTime() - now.getTime()) / 60000))
+    }
+
+    function toggleAllowCritical() {
+        if (!root.dndState) root.dndState = { mode: "off", allowCritical: true, schedule: { enabled: false, from: "22:00", to: "07:00", days: [1,2,3,4,5,6,7] } }
+        root.dndState.allowCritical = !root.dndState.allowCritical
+        root.saveDndState()
+    }
+
+    function toggleStoreBody() {
+        const curr = (root.notifSettings && root.notifSettings.storeBody !== false)
+        Quickshell.execDetached([root.ipcScript, "notify", "store-body", curr ? "off" : "on"])
+        if (!root.notifSettings) root.notifSettings = { storeBody: true, mutedApps: [] }
+        root.notifSettings.storeBody = !curr
+        root.saveNotifSettings()
+    }
+
+    function toggleScheduleEnabled() {
+        if (!root.dndState) root.dndState = { mode: "off", allowCritical: true, schedule: { enabled: false, from: "22:00", to: "07:00", days: [1,2,3,4,5,6,7] } }
+        if (!root.dndState.schedule) root.dndState.schedule = { enabled: false, from: "22:00", to: "07:00", days: [1,2,3,4,5,6,7] }
+        root.dndState.schedule.enabled = !root.dndState.schedule.enabled
+        root.dndState.mode = root.dndState.schedule.enabled ? "schedule" : "off"
+        root.saveDndState()
+    }
+
+    function toggleScheduleDay(dayNum) {
+        if (!root.dndState || !root.dndState.schedule) return
+        if (!Array.isArray(root.dndState.schedule.days)) root.dndState.schedule.days = [1,2,3,4,5,6,7]
+        const days = root.dndState.schedule.days.slice()
+        const idx = days.indexOf(dayNum)
+        if (idx >= 0) {
+            days.splice(idx, 1)
+        } else {
+            days.push(dayNum)
+        }
+        root.dndState.schedule.days = days.sort()
+        root.saveDndState()
+    }
+
+    function updateScheduleTimes(fromTime, toTime) {
+        if (!root.dndState || !root.dndState.schedule) return
+        if (fromTime) root.dndState.schedule.from = fromTime
+        if (toTime) root.dndState.schedule.to = toTime
+        root.saveDndState()
+    }
+
+    function toggleMuteApp(appName) {
+        if (!root.notifSettings) root.notifSettings = { storeBody: true, mutedApps: [] }
+        if (!Array.isArray(root.notifSettings.mutedApps)) root.notifSettings.mutedApps = []
+        const muted = root.notifSettings.mutedApps.slice()
+        const idx = muted.indexOf(appName)
+        if (idx >= 0) {
+            muted.splice(idx, 1)
+        } else {
+            muted.push(appName)
+        }
+        root.notifSettings.mutedApps = muted
+        root.saveNotifSettings()
+    }
+
+    function clearNotificationHistory() {
+        Quickshell.execDetached([root.ipcScript, "notify", "clear"])
+        root.confirmClearHistory = false
+    }
+
     FileView {
         path: root.notifHistoryPath
         watchChanges: true
@@ -199,9 +295,28 @@ PanelWindow {
                     if (parsed && Array.isArray(parsed.entries)) {
                         root.islandItems = parsed.entries
                     }
+                    if (parsed && parsed.settings) {
+                        root.notifSettings = parsed.settings
+                    }
                 }
             } catch (e) {}
         }
+    }
+
+    property var notifSettings: ({ storeBody: true, mutedApps: [] })
+    property bool confirmClearHistory: false
+    property string scheduleFromDraft: ""
+    property string scheduleToDraft: ""
+
+    readonly property var allKnownApps: {
+        const apps = root.appNames.slice()
+        if (root.notifSettings && Array.isArray(root.notifSettings.mutedApps)) {
+            for (let i = 0; i < root.notifSettings.mutedApps.length; i++) {
+                const m = root.notifSettings.mutedApps[i]
+                if (!apps.includes(m)) apps.push(m)
+            }
+        }
+        return apps.sort()
     }
 
     FileView {
@@ -323,6 +438,7 @@ PanelWindow {
 
     onOpenChanged: {
         if (root.open) {
+            if (root.hub) root.hub.closeDashboard()
             root.refreshIsland()
             markReadOnOpenTimer.restart()
         } else {
@@ -341,13 +457,13 @@ PanelWindow {
     readonly property var groupedEntries: NotifCenterLogic.groupEntriesByDay(root.filteredEntries, Date.now())
 
     // 80% of 800 logical screen height is 640px
-    readonly property int maxDrawerHeight: Math.min(640, Math.floor(Screen.height * 0.80))
+    readonly property int maxDrawerHeight: 640
     readonly property int calculatedContentHeight: Math.min(root.maxDrawerHeight, Math.max(320, mainCol.implicitHeight + 36))
 
     anchors { top: true; left: true }
     margins {
         left: 60
-        top: Math.max(20, Math.floor((Screen.height - root.calculatedContentHeight) / 2))
+        top: 20
     }
     implicitWidth: 380
     implicitHeight: root.calculatedContentHeight
@@ -367,7 +483,7 @@ PanelWindow {
         id: cardBg
         anchors.fill: parent
         radius: Theme.radiusPanel
-        color: Theme.surface
+        color: Theme.surfaceDeep
         border.width: 1
         border.color: Theme.brandAccent
 
@@ -413,9 +529,9 @@ PanelWindow {
 
                 // Clear all button (only shown in Inbox tab when entries exist)
                 Rectangle {
-                    visible: root.currentSection === 0 && root.activeEntries.length > 0 && !root.undoActive
+                    visible: Number(root.currentSection) === 0 && root.activeEntries.length > 0 && !root.undoActive
                     radius: 6
-                    color: clearMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                    color: clearMa.containsMouse ? Theme.surfaceHigh : "transparent"
                     border.width: 1
                     border.color: clearMa.containsMouse ? Theme.border : "transparent"
                     implicitWidth: clearRow.implicitWidth + 12
@@ -443,7 +559,7 @@ PanelWindow {
                     width: 22
                     height: 22
                     radius: 6
-                    color: escMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                    color: escMa.containsMouse ? Theme.surfaceHigh : "transparent"
                     Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
                     MouseArea {
                         id: escMa
@@ -483,7 +599,7 @@ PanelWindow {
                             width: (parent.width - 4) / 3
                             height: parent.height
                             radius: Theme.radiusPill
-                            color: root.currentSection === index ? Theme.brandAccent : (tabMa.containsMouse ? Theme.surfaceAlt : "transparent")
+                            color: Number(root.currentSection) === index ? Theme.brandAccent : (tabMa.containsMouse ? Theme.surfaceHigh : "transparent")
 
                             Behavior on color {
                                 enabled: Theme.animationsEnabled && !Theme.reducedMotion
@@ -496,7 +612,7 @@ PanelWindow {
 
                                 Text {
                                     text: modelData.label
-                                    color: root.currentSection === index ? Theme.brandAccentFg : (tabMa.containsMouse ? Theme.textMain : Theme.textMuted)
+                                    color: Number(root.currentSection) === index ? Theme.brandAccentFg : (tabMa.containsMouse ? Theme.textMain : Theme.textMuted)
                                     font.family: Theme.fontUi
                                     font.pixelSize: 11
                                     font.bold: true
@@ -506,7 +622,7 @@ PanelWindow {
                                 Rectangle {
                                     visible: modelData.badge !== ""
                                     radius: 6
-                                    color: root.currentSection === index ? Qt.rgba(0,0,0,0.2) : Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.2)
+                                    color: Number(root.currentSection) === index ? Qt.rgba(0,0,0,0.2) : Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.2)
                                     implicitWidth: tabBadgeText.implicitWidth + 8
                                     implicitHeight: 14
                                     anchors.verticalCenter: parent.verticalCenter
@@ -515,7 +631,7 @@ PanelWindow {
                                         id: tabBadgeText
                                         anchors.centerIn: parent
                                         text: modelData.badge
-                                        color: root.currentSection === index ? Theme.brandAccentFg : Theme.brandAccent
+                                        color: Number(root.currentSection) === index ? Theme.brandAccentFg : Theme.brandAccent
                                         font.family: Theme.fontMono
                                         font.pixelSize: 9
                                         font.bold: true
@@ -587,7 +703,7 @@ PanelWindow {
 
             // SECTION 0: INBOX
             Column {
-                visible: root.currentSection === 0
+                visible: Number(root.currentSection) === 0
                 width: parent.width
                 spacing: 10
 
@@ -830,7 +946,7 @@ PanelWindow {
 
             // SECTION 1: PLANNER
             Column {
-                visible: root.currentSection === 1
+                visible: Number(root.currentSection) === 1
                 width: parent.width
                 spacing: 10
 
@@ -857,7 +973,7 @@ PanelWindow {
                                 width: 22
                                 height: 22
                                 radius: 4
-                                color: prevMoMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                color: prevMoMa.containsMouse ? Theme.surfaceHigh : "transparent"
                                 Text { anchors.centerIn: parent; text: "󰅁"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
                                 MouseArea {
                                     id: prevMoMa
@@ -883,7 +999,7 @@ PanelWindow {
                                 width: 22
                                 height: 22
                                 radius: 4
-                                color: nextMoMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                color: nextMoMa.containsMouse ? Theme.surfaceHigh : "transparent"
                                 Text { anchors.centerIn: parent; text: "󰅂"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
                                 MouseArea {
                                     id: nextMoMa
@@ -899,7 +1015,7 @@ PanelWindow {
                             // Today button
                             Rectangle {
                                 radius: 4
-                                color: todayBtnMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                color: todayBtnMa.containsMouse ? Theme.surfaceHigh : "transparent"
                                 border.width: 1
                                 border.color: Theme.border
                                 implicitWidth: todayBtnText.implicitWidth + 10
@@ -959,7 +1075,7 @@ PanelWindow {
                                     width: (parent.width - 12) / 7
                                     height: 24
                                     radius: 6
-                                    color: modelData.isSelected ? Theme.brandAccent : (dayMa.containsMouse ? Theme.surfaceAlt : "transparent")
+                                    color: modelData.isSelected ? Theme.brandAccent : (dayMa.containsMouse ? Theme.surfaceHigh : "transparent")
                                     border.width: modelData.isToday ? 1.5 : 0
                                     border.color: Theme.brandAccent
 
@@ -1048,9 +1164,9 @@ PanelWindow {
                     Rectangle {
                         visible: root.carriedPendingCount > 0
                         radius: 5
-                        color: carryMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.25) : Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.15)
+                        color: carryMa.containsMouse ? Qt.rgba(Theme.statusWarn.r, Theme.statusWarn.g, Theme.statusWarn.b, 0.25) : Qt.rgba(Theme.statusWarn.r, Theme.statusWarn.g, Theme.statusWarn.b, 0.15)
                         border.width: 1
-                        border.color: Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.40)
+                        border.color: Qt.rgba(Theme.statusWarn.r, Theme.statusWarn.g, Theme.statusWarn.b, 0.40)
                         implicitWidth: carryText.implicitWidth + 10
                         implicitHeight: 20
 
@@ -1058,8 +1174,8 @@ PanelWindow {
                             id: carryText
                             anchors.centerIn: parent
                             spacing: 4
-                            Text { text: "󰁔"; color: Theme.accentWarning; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Carry (" + root.carriedPendingCount + ") to today"; color: Theme.accentWarning; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "󰁔"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Carry (" + root.carriedPendingCount + ") to today"; color: Theme.statusWarn; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                         }
 
                         MouseArea {
@@ -1331,12 +1447,12 @@ PanelWindow {
                                         width: 18
                                         height: 18
                                         radius: 4
-                                        color: delTaskMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.2) : "transparent"
+                                        color: delTaskMa.containsMouse ? Qt.rgba(Theme.statusDanger.r, Theme.statusDanger.g, Theme.statusDanger.b, 0.2) : "transparent"
 
                                         Text {
                                             anchors.centerIn: parent
                                             text: "󰆴"
-                                            color: delTaskMa.containsMouse ? Theme.accentWarning : Theme.textMuted
+                                            color: delTaskMa.containsMouse ? Theme.statusDanger : Theme.textMuted
                                             font.family: Theme.fontMono
                                             font.pixelSize: 10
                                         }
@@ -1356,18 +1472,574 @@ PanelWindow {
                 }
             }
 
-            // SECTION 2: MODES (Stub for U3 commit)
-            Column {
-                visible: root.currentSection === 2
+            // SECTION 2: MODES
+            Flickable {
+                visible: Number(root.currentSection) === 2
                 width: parent.width
-                spacing: 10
+                height: Math.max(160, Math.min(460, root.maxDrawerHeight - 120))
+                contentHeight: modesCol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                Text {
-                    text: "MODES & DO NOT DISTURB"
-                    color: Theme.textMuted
-                    font.family: Theme.fontMono
-                    font.pixelSize: 10
-                    font.bold: true
+                Column {
+                    id: modesCol
+                    width: parent.width
+                    spacing: 12
+
+                    // Big DND Switch Card
+                    Rectangle {
+                        width: parent.width
+                        implicitHeight: dndCardRow.implicitHeight + 20
+                        radius: 10
+                        color: Theme.card
+                        border.width: 1
+                        border.color: root.dndActive ? Theme.brandAccent : Theme.border
+
+                        Behavior on border.color {
+                            enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                            ColorAnimation { duration: Theme.animDuration }
+                        }
+
+                        RowLayout {
+                            id: dndCardRow
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
+                            spacing: 10
+
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
+                                color: root.dndActive ? Theme.brandAccent : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.4)
+
+                                Behavior on color {
+                                    enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                                    ColorAnimation { duration: Theme.animDuration }
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.dndActive ? "󰂛" : "󰂚"
+                                    color: root.dndActive ? Theme.brandAccentFg : Theme.textMain
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: 18
+                                }
+                            }
+
+                            Column {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Text {
+                                    text: "Do Not Disturb"
+                                    color: Theme.textMain
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    text: root.dndActive ? "Popups and alert banners are silenced" : "Banner notifications and popups active"
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                }
+                            }
+
+                            ToggleSwitch {
+                                checked: root.dndActive
+                                onToggled: root.toggleDnd()
+                            }
+                        }
+                    }
+
+                    // Duration Chips
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Text {
+                            text: "QUICK DURATION"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 9
+                            font.bold: true
+                            font.letterSpacing: 1.1
+                        }
+
+                        Grid {
+                            width: parent.width
+                            columns: 2
+                            spacing: 6
+
+                            // 30 min chip
+                            Rectangle {
+                                width: (parent.width - 6) / 2
+                                height: 30
+                                radius: 8
+                                color: dnd30Ma.containsMouse ? Theme.surfaceHigh : Theme.card
+                                border.width: 1
+                                border.color: (root.dndActive && root.dndState && root.dndState.mode === "snooze") ? Theme.brandAccent : Theme.border
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 5
+                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "30 min"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                }
+
+                                MouseArea {
+                                    id: dnd30Ma
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.snoozeDnd(30)
+                                }
+                            }
+
+                            // 1 hour chip
+                            Rectangle {
+                                width: (parent.width - 6) / 2
+                                height: 30
+                                radius: 8
+                                color: dnd60Ma.containsMouse ? Theme.surfaceHigh : Theme.card
+                                border.width: 1
+                                border.color: Theme.border
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 5
+                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "1 hour"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                }
+
+                                MouseArea {
+                                    id: dnd60Ma
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.snoozeDnd(60)
+                                }
+                            }
+
+                            // Until tomorrow morning chip
+                            Rectangle {
+                                width: (parent.width - 6) / 2
+                                height: 30
+                                radius: 8
+                                color: dndMornMa.containsMouse ? Theme.surfaceHigh : Theme.card
+                                border.width: 1
+                                border.color: Theme.border
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 5
+                                    Text { text: "󰖔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Until tomorrow"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                }
+
+                                MouseArea {
+                                    id: dndMornMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.snoozeDnd(root.getMinutesUntilTomorrowMorning())
+                                }
+                            }
+
+                            // Until I turn it off chip
+                            Rectangle {
+                                width: (parent.width - 6) / 2
+                                height: 30
+                                radius: 8
+                                color: dndIndefMa.containsMouse ? Theme.surfaceHigh : Theme.card
+                                border.width: 1
+                                border.color: (root.dndActive && root.dndState && root.dndState.mode === "dnd") ? Theme.brandAccent : Theme.border
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 5
+                                    Text { text: "󰂛"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Until I turn it off"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                }
+
+                                MouseArea {
+                                    id: dndIndefMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.setDndManual(true)
+                                }
+                            }
+                        }
+                    }
+
+                    // Schedule Editor Card
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Text {
+                            text: "SCHEDULED DO NOT DISTURB"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 9
+                            font.bold: true
+                            font.letterSpacing: 1.1
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            implicitHeight: schedCol.implicitHeight + 20
+                            radius: 10
+                            color: Theme.card
+                            border.width: 1
+                            border.color: Theme.border
+
+                            Column {
+                                id: schedCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                                spacing: 10
+
+                                RowLayout {
+                                    width: parent.width
+
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text { text: "Enable Schedule"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
+                                        Text { text: "Automatically silence notifications during set hours"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                    }
+
+                                    ToggleSwitch {
+                                        checked: !!(root.dndState && root.dndState.schedule && root.dndState.schedule.enabled)
+                                        onToggled: root.toggleScheduleEnabled()
+                                    }
+                                }
+
+                                // From / To Time Pickers
+                                RowLayout {
+                                    width: parent.width
+                                    spacing: 10
+
+                                    Row {
+                                        spacing: 6
+                                        Text { text: "From"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                        Rectangle {
+                                            width: 54
+                                            height: 24
+                                            radius: 6
+                                            color: Theme.surfaceHigh
+                                            border.width: 1
+                                            border.color: Theme.border
+
+                                            TextInput {
+                                                anchors.fill: parent
+                                                horizontalAlignment: TextInput.AlignHCenter
+                                                verticalAlignment: TextInput.AlignVCenter
+                                                color: Theme.textMain
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 10
+                                                maximumLength: 5
+                                                text: (root.dndState && root.dndState.schedule && root.dndState.schedule.from) ? root.dndState.schedule.from : "22:00"
+                                                onEditingFinished: root.updateScheduleTimes(text, null)
+                                            }
+                                        }
+                                    }
+
+                                    Row {
+                                        spacing: 6
+                                        Text { text: "To"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                        Rectangle {
+                                            width: 54
+                                            height: 24
+                                            radius: 6
+                                            color: Theme.surfaceHigh
+                                            border.width: 1
+                                            border.color: Theme.border
+
+                                            TextInput {
+                                                anchors.fill: parent
+                                                horizontalAlignment: TextInput.AlignHCenter
+                                                verticalAlignment: TextInput.AlignVCenter
+                                                color: Theme.textMain
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 10
+                                                maximumLength: 5
+                                                text: (root.dndState && root.dndState.schedule && root.dndState.schedule.to) ? root.dndState.schedule.to : "07:00"
+                                                onEditingFinished: root.updateScheduleTimes(null, text)
+                                            }
+                                        }
+                                    }
+
+                                    Item { Layout.fillWidth: true; height: 1 }
+                                }
+
+                                // Days selector row (Mo, Tu, We, Th, Fr, Sa, Su)
+                                Row {
+                                    width: parent.width
+                                    spacing: 4
+
+                                    Repeater {
+                                        model: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+                                        delegate: Rectangle {
+                                            required property string modelData
+                                            required property int index
+                                            readonly property int dayNum: index + 1
+                                            readonly property bool isDayActive: !!(root.dndState && root.dndState.schedule && Array.isArray(root.dndState.schedule.days) && root.dndState.schedule.days.includes(dayNum))
+
+                                            width: (parent.width - 24) / 7
+                                            height: 24
+                                            radius: 6
+                                            color: isDayActive ? Theme.brandAccent : Theme.surfaceHigh
+                                            border.width: 1
+                                            border.color: isDayActive ? Theme.brandAccent : Theme.border
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData
+                                                color: isDayActive ? Theme.brandAccentFg : Theme.textMuted
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.toggleScheduleDay(dayNum)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Alerts & History Settings Card
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Text {
+                            text: "SETTINGS & PRIVACY"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 9
+                            font.bold: true
+                            font.letterSpacing: 1.1
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            implicitHeight: privacyCol.implicitHeight + 20
+                            radius: 10
+                            color: Theme.card
+                            border.width: 1
+                            border.color: Theme.border
+
+                            Column {
+                                id: privacyCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                                spacing: 10
+
+                                // Allow critical alerts toggle
+                                RowLayout {
+                                    width: parent.width
+
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text { text: "Allow critical alerts"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
+                                        Text { text: "Urgent notifications bypass Do Not Disturb"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                    }
+
+                                    ToggleSwitch {
+                                        checked: root.dndState ? (root.dndState.allowCritical !== false) : true
+                                        onToggled: root.toggleAllowCritical()
+                                    }
+                                }
+
+                                Rectangle { width: parent.width; height: 1; color: Theme.border }
+
+                                // Store notification body toggle
+                                RowLayout {
+                                    width: parent.width
+
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text { text: "Store notification body text"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
+                                        Text { text: "Preserve message content in disk history"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                    }
+
+                                    ToggleSwitch {
+                                        checked: root.notifSettings ? (root.notifSettings.storeBody !== false) : true
+                                        onToggled: root.toggleStoreBody()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Per-App Mute List
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Text {
+                            text: "MUTED APPLICATIONS"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 9
+                            font.bold: true
+                            font.letterSpacing: 1.1
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            implicitHeight: appMuteCol.implicitHeight + 16
+                            radius: 10
+                            color: Theme.card
+                            border.width: 1
+                            border.color: Theme.border
+
+                            Column {
+                                id: appMuteCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
+                                spacing: 8
+
+                                Text {
+                                    visible: root.allKnownApps.length === 0
+                                    text: "No applications registered yet"
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                }
+
+                                Repeater {
+                                    model: root.allKnownApps
+                                    delegate: RowLayout {
+                                        required property string modelData
+                                        readonly property bool isMuted: !!(root.notifSettings && Array.isArray(root.notifSettings.mutedApps) && root.notifSettings.mutedApps.includes(modelData))
+
+                                        width: parent.width
+                                        spacing: 8
+
+                                        Text {
+                                            text: modelData
+                                            color: Theme.textMain
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            text: isMuted ? "Muted" : "Active"
+                                            color: isMuted ? Theme.statusWarn : Theme.textMuted
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 9
+                                            font.bold: true
+                                        }
+
+                                        ToggleSwitch {
+                                            checked: isMuted
+                                            onToggled: root.toggleMuteApp(modelData)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Clear History with Confirmation
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Rectangle {
+                            visible: !root.confirmClearHistory
+                            width: parent.width
+                            height: 32
+                            radius: 8
+                            color: clearHistMa.containsMouse ? Theme.surfaceHigh : Theme.card
+                            border.width: 1
+                            border.color: Theme.border
+
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Text { text: "󰆴"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "Clear notification history"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            }
+
+                            MouseArea {
+                                id: clearHistMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.confirmClearHistory = true
+                            }
+                        }
+
+                        // Confirmation Box
+                        Rectangle {
+                            visible: root.confirmClearHistory
+                            width: parent.width
+                            implicitHeight: confirmCol.implicitHeight + 16
+                            radius: 8
+                            color: Qt.rgba(Theme.statusWarn.r, Theme.statusWarn.g, Theme.statusWarn.b, 0.12)
+                            border.width: 1
+                            border.color: Theme.statusWarn
+
+                            Column {
+                                id: confirmCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
+                                spacing: 8
+
+                                Text {
+                                    text: "Permanently delete all stored notifications?"
+                                    color: Theme.textMain
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+
+                                Row {
+                                    spacing: 8
+
+                                    Rectangle {
+                                        width: 70
+                                        height: 24
+                                        radius: 5
+                                        color: Theme.surfaceHigh
+                                        border.width: 1
+                                        border.color: Theme.border
+                                        Text { anchors.centerIn: parent; text: "Cancel"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.confirmClearHistory = false
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 90
+                                        height: 24
+                                        radius: 5
+                                        color: Theme.statusWarn
+                                        Text { anchors.centerIn: parent; text: "Clear All"; color: Theme.brandAccentFg; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.clearNotificationHistory()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1398,7 +2070,7 @@ PanelWindow {
 
             Rectangle {
                 radius: 4
-                color: groupClearMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                color: groupClearMa.containsMouse ? Theme.surfaceHigh : "transparent"
                 implicitWidth: groupClearText.implicitWidth + 8
                 implicitHeight: 18
 
@@ -1523,12 +2195,12 @@ PanelWindow {
                     width: 18
                     height: 18
                     radius: 4
-                    color: dismissCardMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.2) : "transparent"
+                    color: dismissCardMa.containsMouse ? Qt.rgba(Theme.statusDanger.r, Theme.statusDanger.g, Theme.statusDanger.b, 0.2) : "transparent"
 
                     Text {
                         anchors.centerIn: parent
                         text: "✕"
-                        color: dismissCardMa.containsMouse ? Theme.accentWarning : Theme.textMuted
+                        color: dismissCardMa.containsMouse ? Theme.statusDanger : Theme.textMuted
                         font.pixelSize: 9
                     }
 
@@ -1584,7 +2256,7 @@ PanelWindow {
                         height: 22
                         radius: 5
                         implicitWidth: actionBtnText.implicitWidth + 14
-                        color: actMa.containsMouse ? Theme.surfaceAlt : Theme.cardAlt
+                        color: actMa.containsMouse ? Theme.surfaceHigh : Theme.card
                         border.width: 1
                         border.color: Theme.border
 
@@ -1610,6 +2282,45 @@ PanelWindow {
                     }
                 }
             }
+        }
+    }
+
+    // ToggleSwitch Component
+    component ToggleSwitch: Rectangle {
+        id: sw
+        property bool checked: false
+        signal toggled()
+
+        width: 38
+        height: 22
+        radius: 11
+        color: checked ? Theme.brandAccent : Theme.surfaceHigh
+        border.width: 1
+        border.color: checked ? Theme.brandAccent : Theme.border
+
+        Behavior on color {
+            enabled: Theme.animationsEnabled && !Theme.reducedMotion
+            ColorAnimation { duration: Theme.animDuration }
+        }
+
+        Rectangle {
+            width: 16
+            height: 16
+            radius: 8
+            anchors.verticalCenter: parent.verticalCenter
+            x: sw.checked ? (sw.width - width - 3) : 3
+            color: sw.checked ? Theme.brandAccentFg : Theme.textMuted
+
+            Behavior on x {
+                enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sw.toggled()
         }
     }
 }

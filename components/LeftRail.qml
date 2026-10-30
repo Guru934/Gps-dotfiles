@@ -660,10 +660,17 @@ PanelWindow {
 
                     // Notifications
                     RailButton {
-                        glyph: "󰂚"
-                        accentColor: Theme.accentTertiary
-                        iconColor: Theme.accentTertiary
-                        tooltip: "Notifications (Super+N)"
+                        readonly property bool dndOn: root.notifications ? root.notifications.dndActive : false
+                        readonly property int unread: root.notifications ? root.notifications.unreadCount : 0
+
+                        glyph: dndOn ? "󰂛" : "󰂚"
+                        accentColor: dndOn ? Theme.statusWarn : Theme.accentTertiary
+                        iconColor: dndOn ? Theme.statusWarn : Theme.accentTertiary
+                        sublabel: unread > 0 ? (unread > 99 ? "99+" : "" + unread) : ""
+                        sublabelColor: Theme.brandAccent
+                        tooltip: dndOn
+                            ? "Notifications (Do Not Disturb · Super+N)"
+                            : (unread > 0 ? ("Notifications (" + unread + " unread · Super+N)") : "Notifications (Super+N)")
                         onClicked: {
                             if (root.notifications) {
                                 root.notifications.toggle()

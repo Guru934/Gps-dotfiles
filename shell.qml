@@ -148,6 +148,8 @@ Scope {
         function toggle() { notifCenter.toggle() }
         function open() { notifCenter.open = true }
         function close() { notifCenter.open = false }
+        function section(sec: int) { notifCenter.currentSection = sec }
+        function status(): string { return JSON.stringify({ open: notifCenter.open, section: notifCenter.currentSection, unread: notifCenter.unreadCount, dnd: notifCenter.dndActive }) }
     }
 
     IpcHandler {
@@ -729,6 +731,7 @@ Scope {
     // router) routes through these to the single DashboardHost instance.
     function openDashboard(pinned) {
         aiChat.close()
+        notifCenter.close()
         dashboardHost.open(pinned)
     }
 
