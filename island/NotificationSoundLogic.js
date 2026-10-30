@@ -75,7 +75,13 @@ function resolveNotificationSound(n, options) {
     }
 
     const isCrit = (n.urgency === 2 || n.urgency === "critical");
-    const defaultEvent = isCrit ? "notification-critical" : "notification";
+    let defaultEvent = isCrit ? "notification-critical" : "notification";
+
+    const appName = (n.appName || "").trim().toLowerCase();
+    const summary = (n.summary || "").trim().toLowerCase();
+    if (appName === "planner" || summary === "task reminder") {
+        defaultEvent = "reminder";
+    }
 
     // 1. sound-file hint
     let soundFile = null;

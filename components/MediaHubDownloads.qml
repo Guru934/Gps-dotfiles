@@ -23,6 +23,7 @@ Item {
     readonly property string projectPath: Quickshell.env("GPS_DESKTOP_ROOT")
         || (Quickshell.env("HOME") + "/Projects/my-rice")
     readonly property string helperPath: root.projectPath + "/scripts/media-hub-downloads.py"
+    readonly property string soundBin: root.projectPath + "/scripts/gps-sound"
 
     property bool checkingStatus: false
     property bool statusReady: false
@@ -926,6 +927,7 @@ Item {
         var finished = root.downloadJob(jobId)
         root.notify("Downloaded \u201c" + (finished ? finished.title : "media") + "\u201d.", "info")
         root.logActivity("Download complete: " + (finished ? finished.title : jobId))
+        Quickshell.execDetached([root.soundBin, "play", "download-done"])
         dlQueueTimer.restart()
     }
     function handleDownloadFailure(message, code, jobId) {
@@ -944,6 +946,7 @@ Item {
         root.dlErrorCode = String(code || "download_failed")
         root.notify("Download failed: " + root.dlError, "warn")
         root.logActivity("Download failed: " + root.dlErrorCode)
+        Quickshell.execDetached([root.soundBin, "play", "download-failed"])
         dlQueueTimer.restart()
     }
     function handleDownloadCancelled(jobId) {

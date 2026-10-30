@@ -54,6 +54,15 @@ const emailRes = SoundLogic.resolveNotificationSound({
 }, opts);
 assert.strictEqual(emailRes.event, "notification");
 
+// Planner reminder maps to event 'reminder'
+const plannerRes = SoundLogic.resolveNotificationSound({
+    id: 50,
+    appName: "Planner",
+    summary: "Task Reminder",
+    hints: {}
+}, opts);
+assert.strictEqual(plannerRes.event, "reminder");
+
 const errorRes = SoundLogic.resolveNotificationSound({
     id: 6,
     urgency: 1,

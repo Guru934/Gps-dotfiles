@@ -31,6 +31,7 @@ import qs.config
 import "IslandVisibility.js" as IslandVisibility
 import "NotificationStore.js" as NotificationStore
 import "NotificationSoundLogic.js" as NotificationSoundLogic
+import "AgentAlertLogic.js" as AgentAlertLogic
 
 Scope {
     id: root
@@ -787,7 +788,10 @@ Scope {
     }
     Connections {
         target: root.sinkAudio
-        function onVolumeChanged() { root.requestOsd("vol") }
+        function onVolumeChanged() {
+            root.requestOsd("vol")
+            root.playSound("tick")
+        }
         function onMutedChanged() { root.requestOsd(root.muted ? "mute" : "vol") }
     }
     Connections {
@@ -916,6 +920,28 @@ Scope {
     property bool dnd: false
     property var notifQueue: []              // [{n: Notification, ts, age, timeout}] newest first
     property var held: []                    // queued silently while DND is on
+    property var agentReminders: AgentAlertLogic.createReminderTracker()
+
+    Timer {
+        id: agentReminderTimer
+        interval: 5000
+        repeat: true
+        running: root.agentReminders ? Object.keys(root.agentReminders.active).length > 0 : false
+        onTriggered: {
+            const nowMs = Date.now()
+            const isStillActive = function(id) {
+                if (String(id).startsWith("notif:")) {
+                    const notifId = parseInt(String(id).slice(6))
+                    return root.notifQueue.some(q => q.n && q.n.id === notifId)
+                }
+                return root.alerts.some(a => String(a.id) === String(id) || String(a.token) === String(id))
+            }
+            const playReminder = function(id, count) {
+                root.playSound("agent-permission-reminder", "agent-reminder:" + id + ":" + count)
+            }
+            AgentAlertLogic.tickPermissionReminders(root.agentReminders, nowMs, isStillActive, playReminder)
+        }
+    }
     function addNotif(n) {
         const nowMs = Date.now()
         const res = NotificationStore.add(root.notifStore, {
@@ -943,6 +969,7 @@ Scope {
         n.bodyChanged.connect(function () { root.updateNotif(n) })
         const crit = n.urgency === NotificationUrgency.Critical
         const isDnd = NotificationStore.isDndActive(root.dndState, nowMs, n.urgency)
+        const agentClass = AgentAlertLogic.classifyAgentNotification(n)
 
         const item = {
             n: n,
@@ -951,20 +978,27 @@ Scope {
             age: 0,
             timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 4)
         }
-        if (isDnd) {
+        if (isDnd && !(agentClass && agentClass.isPermission)) {
             held = [item].concat(held).slice(0, 30)
             return
         }
         notifQueue = [item].concat(notifQueue.filter(q => q.n !== n)).slice(0, maxToasts)
-        const dur = crit ? 3600000 : (item.timeout > 0 ? item.timeout * 1000 : root.durations.notification)
+        const dur = (crit || (agentClass && agentClass.isPermission)) ? 3600000 : (item.timeout > 0 ? item.timeout * 1000 : root.durations.notification)
         root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, dur)
 
-        const soundDecision = NotificationSoundLogic.resolveNotificationSound(n, {
-            homeDir: Quickshell.env("HOME"),
-            repoRoot: root.repoRoot
-        })
-        if (soundDecision) {
-            root.playSound(soundDecision.event, soundDecision.dedupeKey, soundDecision.soundFile)
+        if (agentClass) {
+            root.playSound(agentClass.event, agentClass.dedupeKey)
+            if (agentClass.isPermission) {
+                AgentAlertLogic.addPermissionReminder(root.agentReminders, "notif:" + n.id, agentClass.agent, n.summary + ":" + n.body, nowMs)
+            }
+        } else {
+            const soundDecision = NotificationSoundLogic.resolveNotificationSound(n, {
+                homeDir: Quickshell.env("HOME"),
+                repoRoot: root.repoRoot
+            })
+            if (soundDecision) {
+                root.playSound(soundDecision.event, soundDecision.dedupeKey, soundDecision.soundFile)
+            }
         }
     }
     function updateNotif(n) {
@@ -992,6 +1026,7 @@ Scope {
         root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
     }
     function dropNotif(n) {
+        if (n && n.id) AgentAlertLogic.cancelPermissionReminder(root.agentReminders, "notif:" + n.id)
         notifQueue = notifQueue.filter(q => q.n !== n)
         held = held.filter(q => q.n !== n)
         if (notifQueue.length === 0) {
@@ -1000,6 +1035,7 @@ Scope {
     }
     function dismissNotif(item) {
         const n = item.n
+        if (n && n.id) AgentAlertLogic.cancelPermissionReminder(root.agentReminders, "notif:" + n.id)
         notifQueue = notifQueue.filter(q => q !== item)
         if (n && n.id && root.notifStore) {
             NotificationStore.dismiss(root.notifStore, n.id, Date.now())
@@ -1013,19 +1049,28 @@ Scope {
     function dismissAllNotifs() {
         const l = notifQueue
         notifQueue = []
-        l.forEach(q => q.n.dismiss())
+        l.forEach(q => {
+            if (q.n && q.n.id) AgentAlertLogic.cancelPermissionReminder(root.agentReminders, "notif:" + q.n.id)
+            q.n.dismiss()
+        })
         root.clearEvent("notify")
     }
     function invokeAction(item, action) {
         action.invoke()
-        if (item.n && item.n.id && root.notifStore) {
-            NotificationStore.markRead(root.notifStore, item.n.id, Date.now())
-            root.saveNotifStore()
+        if (item.n && item.n.id) {
+            AgentAlertLogic.cancelPermissionReminder(root.agentReminders, "notif:" + item.n.id)
+            if (root.notifStore) {
+                NotificationStore.markRead(root.notifStore, item.n.id, Date.now())
+                root.saveNotifStore()
+            }
         }
         if (!item.n.resident) notifQueue = notifQueue.filter(q => q !== item)
     }
     function setDnd(on) {
-        dnd = on
+        if (dnd !== on) {
+            dnd = on
+            root.playSound(on ? "dnd-on" : "dnd-off")
+        }
         if (root.dndState) {
             root.dndState.mode = on ? "dnd" : "off"
             root.saveDndState()
@@ -1352,6 +1397,7 @@ Scope {
     function volIcon() { return muted || volume <= 0.001 ? "volume_off" : volume < 0.5 ? "volume_down" : "volume_up" }
     function removeAlert(id) {
         if (typeof id !== "string" || id === "") return false
+        AgentAlertLogic.cancelPermissionReminder(root.agentReminders, id)
         const next = alerts.filter(a => a.id !== id)
         if (next.length === alerts.length) return false
         alerts = next
@@ -1377,6 +1423,8 @@ Scope {
                 || typeof a.token !== "string" || a.token === ""
                 || (decision !== "allow" && decision !== "deny")) return false
         if (alertResponseIds.indexOf(a.id) >= 0) return false
+        AgentAlertLogic.cancelPermissionReminder(root.agentReminders, a.id)
+        if (decision === "deny") root.playSound("agent-error")
         Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/pet-alert", "respond",
                                  a.token, decision])
         alertResponseIds = alertResponseIds.concat([a.id])
@@ -1406,7 +1454,13 @@ Scope {
             alertExpanded = true
             alertResponseIds = alertResponseIds.filter(id => id !== o.id)
             alerts = [o].concat(alerts.filter(a => a.id !== o.id)).slice(0, 5)
+            const dedupeKey = AgentAlertLogic.normalizeAgentKey(o.tool || o.source, (o.title || "") + ":" + (o.detail || ""))
+            root.playSound("agent-permission", dedupeKey)
+            AgentAlertLogic.addPermissionReminder(root.agentReminders, o.id, o.tool || o.source, o.detail, Date.now())
         } else if (o.type === "clear") {
+            if (typeof o.id === "string" && o.id !== "") {
+                AgentAlertLogic.cancelPermissionReminder(root.agentReminders, o.id)
+            }
             const before = alerts.length
             const next = alerts.filter(a => !clearMatches(a, o))
             if (next.length === before) return
@@ -1417,6 +1471,9 @@ Scope {
                 alertResolvedOn = true
                 alertResolvedAt = Date.now() / 1000
                 alertResolvedLabel = "Resolved"
+                root.playSound("agent-done")
+            } else if (o.resolved === false || o.decision === "deny") {
+                root.playSound("agent-error")
             }
         }
     }
