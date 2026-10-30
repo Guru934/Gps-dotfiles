@@ -92,6 +92,7 @@ Scope {
     property bool manualShow: false
     property bool manualHide: false
     property double hoverLeaveExpiry: 0
+    property bool externalInteraction: false
     property var transientQueue: []
     property string currentMode: "idle"
     property string currentReason: "initial"
@@ -416,7 +417,7 @@ Scope {
         }
     }
     function controlPanelChanged(inside) {
-        if (root.notifQueue.length > 0 && !root.isPinned && !root.manualShow) {
+        if ((root.notifQueue.length > 0 && !root.isPinned && !root.manualShow) || root.externalInteraction) {
             return
         }
         if (inside) {
@@ -698,6 +699,7 @@ Scope {
             fullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen),
             workspaceEmpty: wsEmpty,
             hovered: (root.notifQueue.length > 0 && !root.isPinned && !root.manualShow) ? false : root.hovered,
+            externalInteraction: root.externalInteraction,
             pinned: root.isPinned,
             manualShow: root.manualShow,
             manualHide: root.manualHide,
@@ -1263,27 +1265,41 @@ Scope {
         function privacy(action: string) {
             if (["toggle", "expand", "off"].indexOf(action) >= 0) root.setPrivacy(action)
         }
-        function clip() {
-            root.clipHistoryOn = !root.clipHistoryOn
-            if (root.clipHistoryOn) {
-                root.holdClip()
-            } else {
-                root.clipOn = false
-                if (root.debugMode === "clip") root.debugMode = ""
+        function externalInteraction(active: string): string {
+            root.externalInteraction = (active === "true" || active === "1" || active === "on")
+            if (!root.externalInteraction) {
+                root.hoverLeaveExpiry = 0
             }
+            root.updateVisibility()
+            return JSON.stringify({ ok: true, externalInteraction: root.externalInteraction })
+        }
+        function copied(kind: string, preview: string): string {
+            root.flashCopied(kind, preview)
+            return JSON.stringify({ ok: true })
+        }
+        function clip() {
+            root.flashCopied("text", root.clipText)
         }
         function clipboard(action: string) {
             if (action === "close" || action === "off") {
                 root.clipHistoryOn = false
                 root.clipOn = false
                 if (root.debugMode === "clip") root.debugMode = ""
-            } else if (action === "open" || action === "on") {
-                root.clipHistoryOn = true
-                root.holdClip()
             } else {
-                clip()
+                root.flashCopied("text", root.clipText)
             }
         }
+    }
+
+    function flashCopied(kind, preview) {
+        root.clipKind = kind || "text"
+        root.clipText = preview || ""
+        root.clipChars = preview ? preview.length : 0
+        root.clipTs = Date.now() / 1000
+        root.clipOn = true
+        root.clipHistoryOn = false
+        root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, root.durations.clipboard)
+        root.updateVisibility()
     }
 
     // PipeWire is event-driven; the helper polls direct V4L2 file descriptors every 1.5s.

@@ -1060,6 +1060,69 @@ check("settings store parses showWorkspaceName, workspaceTransientMs, and worksp
     assert.strictEqual(Object.keys(sInvalid.workspaceNames).length, 0);
 });
 
+check("external interaction suppresses hover from opening control center", () => {
+    // Normal hover opens control
+    const normalHover = IV.evaluateVisibility({
+        hovered: true,
+        externalInteraction: false
+    });
+    assert.strictEqual(normalHover.state, "control");
+    assert.strictEqual(normalHover.reason, "hover_active");
+
+    // External interaction suppresses hover
+    const suppressedHover = IV.evaluateVisibility({
+        hovered: true,
+        externalInteraction: true,
+        windowFocused: true,
+        workspaceEmpty: false
+    });
+    assert.notStrictEqual(suppressedHover.state, "control");
+    assert.strictEqual(suppressedHover.visible, false); // hidden when window focused & no resting state
+});
+
+check("closing picker restores normal hover and repeated toggles do not get stuck", () => {
+    // Repeated toggle cycles
+    for (let i = 0; i < 5; i++) {
+        // Picker open
+        const openRes = IV.evaluateVisibility({
+            hovered: true,
+            externalInteraction: true,
+            workspaceEmpty: true
+        });
+        assert.notStrictEqual(openRes.state, "control");
+        assert.strictEqual(openRes.state, "idle");
+
+        // Picker closed -> hover immediately opens control
+        const closedRes = IV.evaluateVisibility({
+            hovered: true,
+            externalInteraction: false,
+            workspaceEmpty: true
+        });
+        assert.strictEqual(closedRes.state, "control");
+        assert.strictEqual(closedRes.reason, "hover_active");
+    }
+});
+
+check("active pet alert and pinned states beat external interaction", () => {
+    // Alert beats external interaction
+    const alertRes = IV.evaluateVisibility({
+        activeAlert: true,
+        externalInteraction: true,
+        hovered: true
+    });
+    assert.strictEqual(alertRes.state, "alert");
+    assert.strictEqual(alertRes.reason, "active_alert");
+
+    // Pinned stays pinned
+    const pinnedRes = IV.evaluateVisibility({
+        pinned: true,
+        externalInteraction: true,
+        hovered: true
+    });
+    assert.strictEqual(pinnedRes.state, "control");
+    assert.strictEqual(pinnedRes.reason, "pinned_open");
+});
+
 console.log("ALL PASS (" + passed + " island visibility checks)");
 
 

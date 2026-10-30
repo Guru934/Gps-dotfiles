@@ -209,7 +209,7 @@ function evaluateVisibility(inputs) {
     };
   }
 
-  if (inputs.hovered) {
+  if (inputs.hovered && !inputs.externalInteraction) {
     return {
       visible: true,
       state: "control",
@@ -219,7 +219,7 @@ function evaluateVisibility(inputs) {
     };
   }
 
-  if (inputs.hoverLeaveExpiry && inputs.hoverLeaveExpiry > now) {
+  if (inputs.hoverLeaveExpiry && inputs.hoverLeaveExpiry > now && !inputs.externalInteraction) {
     return {
       visible: true,
       state: "control",
