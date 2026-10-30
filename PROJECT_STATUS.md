@@ -31,7 +31,11 @@
   - Updated `Launcher.qml` usage frequency writer and `scripts/toolkit.sh` with safe directory creation and atomic replacement.
   - Added validation for non-array object shapes and corrupt JSON fallbacks in `settings.qml`.
   - Added automated persistence tests in `tests/test_settings_persistence.py` (5 tests passing).
-- [ ] **P5.5 — Graceful Dependency Handling**: In Progress.
+- [x] **P5.5 — Graceful Dependency Handling**: Completed.
+  - Verified and hardened fallback behavior across Audio (PipeWire), Network (NetworkManager), Bluetooth (BlueZ), Battery (UPower), Notifications, Wallpapers, Media playback, Downloads (yt-dlp, ffmpeg), and Pet companion.
+  - Ensured UI elements surface actionable banners rather than silent hangs or blank dialogs.
+  - Added automated dependency handling tests in `tests/test_dependency_handling.py` (9 tests passing).
+- [ ] **P5.6 — Integrated Reliability Verification**: In Progress.
 - [ ] **P5.4 — Settings and Persistence**: Pending.
 - [ ] **P5.5 — Graceful Dependency Handling**: Pending.
 - [ ] **P5.6 — Integrated Reliability Verification**: Pending.

@@ -62,7 +62,9 @@
     - Preserved existing configuration sections during targeted updates
     - Fault-tolerant JSON handling with safe fallbacks on malformed settings
     - Automated persistence and atomic write test suite (`tests/test_settings_persistence.py`)
-  - [ ] **P5.5 — Graceful dependency handling**
-    - Clean UI fallbacks when audio, network, bluetooth, battery, or tools are unavailable
+  - [x] **P5.5 — Graceful dependency handling**
+    - Verified clean UI fallbacks across all 9 subsystems (Audio, Network, Bluetooth, Battery, Notifications, Wallpapers, Media, Downloads, Pet)
+    - Actionable error banners in popups and drawers when external daemons are missing
+    - Automated external service dependency test suite (`tests/test_dependency_handling.py`)
   - [ ] **P5.6 — Integrated reliability verification**
     - Real-session verification, panel toggle soak tests, automated regression runs
