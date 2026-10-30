@@ -1,15 +1,81 @@
 #!/usr/bin/env bash
+# ============================================================================
+# Unified IPC Router for GPS Desktop
+# Handles command dispatching, timeouts, instance checks, and error recovery.
+# ============================================================================
 set -euo pipefail
 
-# Unified IPC router for GPS Desktop
 REPO_DIR="${GPS_ROOT:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
 BACKEND_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/gps-island-backend"
+TIMEOUT="${GPS_IPC_TIMEOUT:-3s}"
 
 get_backend() {
     if [[ -f "$BACKEND_FILE" ]]; then
         cat "$BACKEND_FILE" 2>/dev/null | tr -d '[:space:]'
     else
         echo "gps"
+    fi
+}
+
+island_target_path() {
+    local backend
+    backend="$(get_backend)"
+    if [[ "$backend" == "tide" ]]; then
+        printf '%s\n' "${HOME}/.local/share/tide-island"
+    else
+        printf '%s\n' "${REPO_DIR}/island/IslandProduction.qml"
+    fi
+}
+
+# Protected QuickShell IPC call with timeout and structured diagnostics.
+call_qs() {
+    local path="$1"
+    local target="$2"
+    local action="$3"
+    shift 3 || true
+
+    local out="" rc=0
+    if command -v timeout >/dev/null 2>&1; then
+        out=$(timeout "$TIMEOUT" quickshell ipc --any-display -p "$path" call "$target" "$action" "$@" 2>&1) || rc=$?
+    else
+        out=$(quickshell ipc --any-display -p "$path" call "$target" "$action" "$@" 2>&1) || rc=$?
+    fi
+
+    if [[ $rc -eq 124 ]]; then
+        echo "ERROR: IPC request timed out (${TIMEOUT}) calling '${target}.${action}' on ${path}" >&2
+        return 124
+    elif [[ $rc -ne 0 ]]; then
+        if [[ "$out" =~ "No running instances" ]]; then
+            echo "ERROR: Target Quickshell instance is not running (${path})" >&2
+            return 3
+        fi
+        echo "ERROR: IPC call failed ($rc): $out" >&2
+        return "$rc"
+    fi
+
+    if [[ -n "$out" ]]; then
+        printf '%s\n' "$out"
+    fi
+    return 0
+}
+
+# Check if a Quickshell target configuration is running and responsive.
+check_instance() {
+    local path="$1"
+    local label="$2"
+    local rc=0 out=""
+    if command -v timeout >/dev/null 2>&1; then
+        out=$(timeout "$TIMEOUT" quickshell ipc --any-display -p "$path" show 2>&1) || rc=$?
+    else
+        out=$(quickshell ipc --any-display -p "$path" show 2>&1) || rc=$?
+    fi
+
+    if [[ $rc -eq 0 ]]; then
+        echo "${label}: running (${path})"
+        return 0
+    else
+        echo "${label}: stopped" >&2
+        return 3
     fi
 }
 
@@ -25,57 +91,126 @@ case "$cmd" in
             echo "Usage: gps-ipc shell <target> <action> [args...]" >&2
             exit 1
         fi
-        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call "$target" "$action" "$@"
+        call_qs "$REPO_DIR/shell.qml" "$target" "$action" "$@"
         ;;
+
     settings)
         action="${1:-toggle}"
         shift || true
-        if ! quickshell ipc --any-display -p "$REPO_DIR/settings.qml" call settings "$action" "$@" 2>/dev/null; then
-            nohup quickshell --no-duplicate -p "$REPO_DIR/settings.qml" >/dev/null 2>&1 &
+        if ! call_qs "$REPO_DIR/settings.qml" settings "$action" "$@" 2>/dev/null; then
+            if [[ "$action" == "toggle" || "$action" == "open" ]]; then
+                nohup quickshell --no-duplicate -p "$REPO_DIR/settings.qml" >/dev/null 2>&1 &
+                echo "settings: launched"
+            else
+                echo "ERROR: Settings Hub is not running" >&2
+                exit 3
+            fi
         fi
         ;;
+
     island)
         action="${1:-}"
         shift || true
         if [[ -z "$action" ]]; then
-            echo "Usage: gps-ipc island <show|hide|pin|unpin|status|action> [args...]" >&2
+            echo "Usage: gps-ipc island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
             exit 1
         fi
-        backend="$(get_backend)"
-        if [[ "$backend" == "tide" ]]; then
-            exec quickshell ipc --any-display -p "$HOME/.local/share/tide-island" call island "$action" "$@"
-        else
-            exec quickshell ipc --any-display -p "$REPO_DIR/island/IslandProduction.qml" call island "$action" "$@"
-        fi
+        ipath="$(island_target_path)"
+        call_qs "$ipath" island "$action" "$@"
         ;;
+
     clipboard|clip)
         action="${1:-toggle}"
         shift || true
+        ipath="$(island_target_path)"
         backend="$(get_backend)"
         if [[ "$backend" == "tide" ]]; then
-            exec quickshell ipc --any-display -p "$HOME/.local/share/tide-island" call clipboard "$action" "$@"
+            call_qs "$ipath" clipboard "$action" "$@"
         else
-            exec quickshell ipc --any-display -p "$REPO_DIR/island/IslandProduction.qml" call island clipboard "$action" "$@"
+            call_qs "$ipath" island clipboard "$action" "$@"
         fi
         ;;
+
     mediahub)
         action="${1:-toggle}"
         shift || true
-        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call mediahub "$action" "$@"
+        call_qs "$REPO_DIR/shell.qml" mediahub "$action" "$@"
         ;;
+
     toolbox)
         action="${1:-toggle}"
         shift || true
-        exec quickshell ipc --any-display -p "$REPO_DIR/shell.qml" call toolbox "$action" "$@"
+        call_qs "$REPO_DIR/shell.qml" toolbox "$action" "$@"
         ;;
+
+    pet)
+        action="${1:-status}"
+        shift || true
+        call_qs "$REPO_DIR/shell.qml" pet "$action" "$@"
+        ;;
+
+    rail)
+        action="${1:-togglePower}"
+        shift || true
+        call_qs "$REPO_DIR/shell.qml" rail "$action" "$@"
+        ;;
+
+    check|ping)
+        target="${1:-all}"
+        case "$target" in
+            shell)
+                check_instance "$REPO_DIR/shell.qml" "shell"
+                ;;
+            island)
+                check_instance "$(island_target_path)" "island"
+                ;;
+            settings)
+                check_instance "$REPO_DIR/settings.qml" "settings"
+                ;;
+            all)
+                s_ok=0
+                check_instance "$REPO_DIR/shell.qml" "shell" || s_ok=$?
+                check_instance "$(island_target_path)" "island" || s_ok=$?
+                exit "$s_ok"
+                ;;
+            *)
+                echo "Usage: gps-ipc check [shell|island|settings|all]" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
+    status)
+        echo "=== GPS Desktop Status ==="
+        echo "Backend: $(get_backend)"
+        check_instance "$REPO_DIR/shell.qml" "Master Shell" || true
+        check_instance "$(island_target_path)" "Island Pill" || true
+        check_instance "$REPO_DIR/settings.qml" "Settings Hub" || true
+
+        if command -v "$REPO_DIR/scripts/gps-idle" >/dev/null 2>&1; then
+            printf "Idle: "
+            "$REPO_DIR/scripts/gps-idle" status || true
+        fi
+
+        if pidof hyprlock >/dev/null 2>&1; then
+            echo "Lock: active (hyprlock running)"
+        else
+            echo "Lock: inactive"
+        fi
+        ;;
+
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|check|status> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
+        echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
         echo "  settings [action] [args...]" >&2
-        echo "  island <show|hide|pin|unpin|status|action> [args...]" >&2
         echo "  clipboard [action]" >&2
         echo "  mediahub [action]" >&2
         echo "  toolbox [action]" >&2
+        echo "  pet [action]" >&2
+        echo "  rail [action]" >&2
+        echo "  check [shell|island|settings|all]" >&2
+        echo "  status" >&2
         exit 1
         ;;
 esac

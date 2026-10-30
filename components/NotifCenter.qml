@@ -17,7 +17,10 @@ PanelWindow {
     // notification daemon). Polled while the center is open - never faked.
     property var islandItems: []
     property bool islandFocus: false
-    readonly property string islandPath: Quickshell.env("HOME") + "/.local/share/tide-island"
+    readonly property string repoRoot: (root.hub && root.hub.repoRoot)
+        ? root.hub.repoRoot
+        : (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice"))
+    readonly property string ipcScript: root.repoRoot + "/scripts/gps-ipc"
 
     function parseIslandHistory(raw) {
         try {
@@ -30,11 +33,11 @@ PanelWindow {
         if (!islandHistoryProc.running) islandHistoryProc.running = true
     }
     function toggleIslandFocus() {
-        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "-p", root.islandPath, "call", "island", "focusToggle"])
+        Quickshell.execDetached([root.ipcScript, "island", "focusToggle"])
         islandSyncTimer.restart()
     }
     function openIslandCenter() {
-        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "-p", root.islandPath, "call", "tide", "toggleNotificationCenter"])
+        Quickshell.execDetached([root.ipcScript, "island", "control", "open"])
     }
     function timeAgo(ts) {
         if (!ts) return ""
@@ -47,7 +50,7 @@ PanelWindow {
 
     Process {
         id: islandHistoryProc
-        command: ["quickshell", "ipc", "-p", root.islandPath, "call", "island", "history"]
+        command: [root.ipcScript, "island", "history"]
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.parseIslandHistory(text)

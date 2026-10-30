@@ -943,6 +943,34 @@ Scope {
         function focusResume() { root.resumeFocus() }
         function focusSkip() { root.skipFocus() }
         function focusStop() { root.stopFocus() }
+        function focusToggle() {
+            if (root.focusOn) root.stopFocus()
+            else root.startFocus(25 * 60, 5 * 60, 4, "Focus Session")
+        }
+        function history(): string {
+            var items = []
+            for (var i = 0; i < root.notifQueue.length; i++) {
+                var q = root.notifQueue[i]
+                if (q && q.n) {
+                    items.push({
+                        id: q.n.id !== undefined ? q.n.id : (i + 1),
+                        app: q.n.appName || "Notification",
+                        summary: q.n.summary || "",
+                        body: q.n.body || "",
+                        time: Date.now() - ((q.age || 0) * 1000),
+                        urgency: q.n.urgency !== undefined ? q.n.urgency : 1
+                    })
+                }
+            }
+            return JSON.stringify({
+                focus: root.focusOn,
+                dnd: root.dnd,
+                items: items
+            })
+        }
+        function toggleNotificationCenter() {
+            Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "shell", "notifcenter", "toggle"])
+        }
         function focusState(): string {
             return JSON.stringify({
                 available: true,

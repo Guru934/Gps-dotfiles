@@ -51,8 +51,12 @@
     - Prevent duplicate shell launches (`--no-duplicate`), graceful SIGTERM termination with fallback
     - Dynamic user/process detection without hardcoded paths, actionable diagnostics logging
     - Automated lifecycle safety tests (`tests/test_session_lifecycle.py`)
-  - [ ] **P5.3 — IPC reliability**
-    - Predictable arguments/responses, timeouts, missing targets handling, clipboard/history harmonization
+  - [x] **P5.3 — IPC reliability**
+    - Predictable arguments/responses, 3s execution timeouts, structured failure exit codes
+    - Target routing for `pet`, `rail`, `mediahub`, `toolbox`, `island`, `clipboard`, `settings`
+    - Harmonized `Island.qml` contract (`history`, `focusToggle`, `clipboard`, `clip`)
+    - Added health checks (`gps-ipc check`) and system status command (`gps-ipc status`)
+    - Automated failure and contract test suite (`tests/test_gps_ipc_reliability.py`)
   - [ ] **P5.4 — Settings and persistence**
     - Atomic configuration writes, malformed JSON recovery, safe defaults
   - [ ] **P5.5 — Graceful dependency handling**

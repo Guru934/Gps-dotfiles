@@ -18,7 +18,14 @@
   - Replaced hardcoded repository path strings in `pgrep` queries with dynamic user-scoped process patterns.
   - Added structured diagnostic logging with failure log tail capture.
   - Automated regression suite added in `tests/test_session_lifecycle.py` (6 tests passing).
-- [ ] **P5.3 — IPC Reliability**: In Progress.
+- [x] **P5.3 — IPC Reliability**: Completed.
+  - Re-architected `scripts/gps-ipc` with 3-second execution timeout guard (`GPS_IPC_TIMEOUT`) and structured error diagnostics (exit code 3 for dead instances, 124 for timeout).
+  - Added direct first-class CLI routing for `pet` and `rail` subsystems.
+  - Implemented `history(): string` and `focusToggle()` on `Island.qml`, enabling notification history querying.
+  - Replaced hardcoded `tide-island` IPC paths in `NotifCenter.qml` with dynamic `gps-ipc` invocations.
+  - Added `gps-ipc check [shell|island|settings|all]` and `gps-ipc status` diagnostic commands.
+  - Added comprehensive failure, timeout, and routing test suite in `tests/test_gps_ipc_reliability.py` (10 tests passing).
+- [ ] **P5.4 — Settings and Persistence**: In Progress.
 - [ ] **P5.4 — Settings and Persistence**: Pending.
 - [ ] **P5.5 — Graceful Dependency Handling**: Pending.
 - [ ] **P5.6 — Integrated Reliability Verification**: Pending.
