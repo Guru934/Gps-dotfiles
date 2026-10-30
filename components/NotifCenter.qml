@@ -51,6 +51,142 @@ PanelWindow {
         return stateHome + "/gps/planner.json"
     }
 
+    // Planner State
+    property var plannerTasks: []
+    property int selectedYear: new Date().getFullYear()
+    property int selectedMonthIndex: new Date().getMonth()
+    property string selectedDateKey: PlannerLogic.formatDateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())
+    readonly property string todayKey: PlannerLogic.formatDateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())
+    property string taskFilterMode: "All" // "All", "Pending", "Done"
+    property string taskDraftText: ""
+    property string taskDraftTime: ""
+    property string editingTaskId: ""
+    property string editingTaskDraft: ""
+
+    readonly property var taskDotsMap: PlannerLogic.getTaskDotsMap(root.plannerTasks)
+    readonly property var monthCells: PlannerLogic.getMonthDays(root.selectedYear, root.selectedMonthIndex, root.selectedDateKey, Date.now())
+    readonly property var selectedDayTasks: PlannerLogic.filterTasks(root.plannerTasks, root.selectedDateKey, root.taskFilterMode)
+    readonly property int carriedPendingCount: {
+        let count = 0
+        for (let i = 0; i < root.plannerTasks.length; i++) {
+            const t = root.plannerTasks[i]
+            if (!t.done && t.dateKey < root.todayKey) count++
+        }
+        return count
+    }
+
+    FileView {
+        path: root.plannerPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const textData = text()
+                root.plannerTasks = PlannerLogic.deserialize(textData)
+            } catch (e) {
+                root.plannerTasks = []
+            }
+        }
+    }
+
+    function savePlanner() {
+        const raw = PlannerLogic.serialize(root.plannerTasks)
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && (umask 077 && printf "%s\\n" "$2" > "$tmp") && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", root.plannerPath, raw])
+    }
+
+    function checkReminders() {
+        const due = PlannerLogic.getDueReminders(root.plannerTasks, Date.now())
+        if (due.length === 0) return
+        for (let i = 0; i < due.length; i++) {
+            const t = due[i]
+            Quickshell.execDetached(["notify-send", "-a", "Planner", "Task Reminder", t.text])
+        }
+        const dueIds = due.map(d => d.id)
+        root.plannerTasks = PlannerLogic.markRemindersSent(root.plannerTasks, dueIds)
+        root.savePlanner()
+    }
+
+    Timer {
+        id: reminderTimer
+        interval: 15000
+        repeat: true
+        running: true
+        onTriggered: root.checkReminders()
+    }
+
+    function prevMonth() {
+        if (root.selectedMonthIndex === 0) {
+            root.selectedYear--
+            root.selectedMonthIndex = 11
+        } else {
+            root.selectedMonthIndex--
+        }
+    }
+
+    function nextMonth() {
+        if (root.selectedMonthIndex === 11) {
+            root.selectedYear++
+            root.selectedMonthIndex = 0
+        } else {
+            root.selectedMonthIndex++
+        }
+    }
+
+    function jumpToday() {
+        const d = new Date()
+        root.selectedYear = d.getFullYear()
+        root.selectedMonthIndex = d.getMonth()
+        root.selectedDateKey = PlannerLogic.formatDateKey(d.getFullYear(), d.getMonth(), d.getDate())
+    }
+
+    function selectDate(key, yr, mo) {
+        root.selectedDateKey = key
+        root.selectedYear = yr
+        root.selectedMonthIndex = mo
+    }
+
+    function addPlannerTask() {
+        const t = PlannerLogic.createTask(root.taskDraftText, root.taskDraftTime, root.selectedDateKey)
+        if (!t) return
+        root.plannerTasks = PlannerLogic.addTask(root.plannerTasks, t)
+        root.taskDraftText = ""
+        root.taskDraftTime = ""
+        root.savePlanner()
+        root.checkReminders()
+    }
+
+    function toggleTask(id) {
+        root.plannerTasks = PlannerLogic.toggleTaskDone(root.plannerTasks, id)
+        root.savePlanner()
+    }
+
+    function deleteTask(id) {
+        root.plannerTasks = PlannerLogic.deleteTask(root.plannerTasks, id)
+        root.savePlanner()
+    }
+
+    function carryUnfinished() {
+        const res = PlannerLogic.carryUnfinishedToToday(root.plannerTasks, root.todayKey)
+        if (res.carriedCount > 0) {
+            root.plannerTasks = res.updatedTasks
+            root.savePlanner()
+        }
+    }
+
+    function startEditTask(task) {
+        root.editingTaskId = task.id
+        root.editingTaskDraft = task.text
+    }
+
+    function commitEditTask() {
+        if (!root.editingTaskId) return
+        root.plannerTasks = PlannerLogic.editTask(root.plannerTasks, root.editingTaskId, { text: root.editingTaskDraft })
+        root.editingTaskId = ""
+        root.editingTaskDraft = ""
+        root.savePlanner()
+    }
+
     FileView {
         path: root.notifHistoryPath
         watchChanges: true
@@ -692,18 +828,531 @@ PanelWindow {
                 }
             }
 
-            // SECTION 1: PLANNER (Stub for U2 commit)
+            // SECTION 1: PLANNER
             Column {
                 visible: root.currentSection === 1
                 width: parent.width
                 spacing: 10
 
-                Text {
-                    text: "PLANNER CALENDAR & TASKS"
-                    color: Theme.textMuted
-                    font.family: Theme.fontMono
-                    font.pixelSize: 10
-                    font.bold: true
+                // Calendar Month Card
+                Rectangle {
+                    width: parent.width
+                    implicitHeight: calCol.implicitHeight + 16
+                    radius: 10
+                    color: Theme.card
+                    border.width: 1
+                    border.color: Theme.border
+
+                    Column {
+                        id: calCol
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
+                        spacing: 8
+
+                        // Month Navigation Header
+                        RowLayout {
+                            width: parent.width
+                            spacing: 8
+
+                            Rectangle {
+                                width: 22
+                                height: 22
+                                radius: 4
+                                color: prevMoMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                Text { anchors.centerIn: parent; text: "󰅁"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
+                                MouseArea {
+                                    id: prevMoMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.prevMonth()
+                                }
+                            }
+
+                            Text {
+                                text: {
+                                    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+                                    return (months[root.selectedMonthIndex] || "") + " " + root.selectedYear
+                                }
+                                color: Theme.textMain
+                                font.family: Theme.fontUi
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+
+                            Rectangle {
+                                width: 22
+                                height: 22
+                                radius: 4
+                                color: nextMoMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                Text { anchors.centerIn: parent; text: "󰅂"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
+                                MouseArea {
+                                    id: nextMoMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.nextMonth()
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true; height: 1 }
+
+                            // Today button
+                            Rectangle {
+                                radius: 4
+                                color: todayBtnMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                                border.width: 1
+                                border.color: Theme.border
+                                implicitWidth: todayBtnText.implicitWidth + 10
+                                implicitHeight: 20
+
+                                Text {
+                                    id: todayBtnText
+                                    anchors.centerIn: parent
+                                    text: "Today"
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    id: todayBtnMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.jumpToday()
+                                }
+                            }
+                        }
+
+                        // Day of week headers (Monday first)
+                        Row {
+                            width: parent.width
+                            spacing: 2
+                            Repeater {
+                                model: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+                                delegate: Item {
+                                    required property string modelData
+                                    width: (parent.width - 12) / 7
+                                    height: 16
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData
+                                        color: Theme.textMuted
+                                        font.family: Theme.fontMono
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                    }
+                                }
+                            }
+                        }
+
+                        // Grid of month days
+                        Grid {
+                            width: parent.width
+                            columns: 7
+                            spacing: 2
+
+                            Repeater {
+                                model: root.monthCells
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    width: (parent.width - 12) / 7
+                                    height: 24
+                                    radius: 6
+                                    color: modelData.isSelected ? Theme.brandAccent : (dayMa.containsMouse ? Theme.surfaceAlt : "transparent")
+                                    border.width: modelData.isToday ? 1.5 : 0
+                                    border.color: Theme.brandAccent
+
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 1
+
+                                        Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: "" + modelData.dayNumber
+                                            color: modelData.isSelected ? Theme.brandAccentFg : (modelData.isOtherMonth ? Qt.rgba(Theme.textMuted.r, Theme.textMuted.g, Theme.textMuted.b, 0.45) : Theme.textMain)
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 10
+                                            font.bold: modelData.isSelected || modelData.isToday || !modelData.isOtherMonth
+                                        }
+
+                                        // Task dot indicator
+                                        Rectangle {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            readonly property var dotsInfo: root.taskDotsMap[modelData.dateKey]
+                                            visible: !!dotsInfo && dotsInfo.total > 0
+                                            width: 4
+                                            height: 4
+                                            radius: 2
+                                            color: {
+                                                if (modelData.isSelected) return Theme.brandAccentFg
+                                                if (dotsInfo && dotsInfo.pending > 0) return Theme.brandAccent
+                                                return Theme.textMuted
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: dayMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.selectDate(modelData.dateKey, modelData.year, modelData.monthIndex)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Selected Day Header & Actions
+                RowLayout {
+                    width: parent.width
+                    spacing: 6
+
+                    Text {
+                        text: {
+                            const parsed = PlannerLogic.parseDateKey(root.selectedDateKey)
+                            if (!parsed) return root.selectedDateKey
+                            const d = new Date(parsed.year, parsed.monthIndex, parsed.day)
+                            const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                            return (days[d.getDay()] || "") + ", " + (months[d.getMonth()] || "") + " " + d.getDate()
+                        }
+                        color: Theme.textMain
+                        font.family: Theme.fontUi
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+
+                    Rectangle {
+                        radius: 4
+                        color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.15)
+                        implicitWidth: dayTaskCountText.implicitWidth + 8
+                        implicitHeight: 16
+
+                        Text {
+                            id: dayTaskCountText
+                            anchors.centerIn: parent
+                            text: root.selectedDayTasks.length + " tasks"
+                            color: Theme.brandAccent
+                            font.family: Theme.fontUi
+                            font.pixelSize: 8
+                            font.bold: true
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true; height: 1 }
+
+                    // Carry unfinished to today button
+                    Rectangle {
+                        visible: root.carriedPendingCount > 0
+                        radius: 5
+                        color: carryMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.25) : Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.15)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.40)
+                        implicitWidth: carryText.implicitWidth + 10
+                        implicitHeight: 20
+
+                        Row {
+                            id: carryText
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Text { text: "󰁔"; color: Theme.accentWarning; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Carry (" + root.carriedPendingCount + ") to today"; color: Theme.accentWarning; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                        }
+
+                        MouseArea {
+                            id: carryMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.carryUnfinished()
+                        }
+                    }
+                }
+
+                // Filter pills: All | Pending | Done
+                Row {
+                    spacing: 6
+                    Repeater {
+                        model: ["All", "Pending", "Done"]
+                        delegate: Rectangle {
+                            required property string modelData
+                            height: 22
+                            radius: Theme.radiusPill
+                            implicitWidth: filterPillText.implicitWidth + 14
+                            color: root.taskFilterMode === modelData ? Theme.brandAccent : Theme.card
+                            border.width: 1
+                            border.color: root.taskFilterMode === modelData ? Theme.brandAccent : Theme.border
+
+                            Text {
+                                id: filterPillText
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: root.taskFilterMode === modelData ? Theme.brandAccentFg : Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.taskFilterMode = modelData
+                            }
+                        }
+                    }
+                }
+
+                // Add Task Row
+                RowLayout {
+                    width: parent.width
+                    height: 32
+                    spacing: 6
+
+                    // Text Input
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: parent.height
+                        radius: 7
+                        color: Theme.card
+                        border.width: 1
+                        border.color: taskTextInput.activeFocus ? Theme.brandAccent : Theme.border
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 6
+
+                            TextInput {
+                                id: taskTextInput
+                                Layout.fillWidth: true
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: Theme.textMain
+                                font.family: Theme.fontUi
+                                font.pixelSize: 11
+                                text: root.taskDraftText
+                                onTextChanged: root.taskDraftText = text
+                                Keys.onReturnPressed: root.addPlannerTask()
+                            }
+
+                            Text {
+                                visible: root.taskDraftText === "" && !taskTextInput.activeFocus
+                                text: "Add a task for this day…"
+                                color: Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
+
+                    // Optional Time Input
+                    Rectangle {
+                        width: 54
+                        height: parent.height
+                        radius: 7
+                        color: Theme.card
+                        border.width: 1
+                        border.color: timeTextInput.activeFocus ? Theme.brandAccent : Theme.border
+
+                        TextInput {
+                            id: timeTextInput
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            horizontalAlignment: TextInput.AlignHCenter
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: Theme.textMain
+                            font.family: Theme.fontMono
+                            font.pixelSize: 10
+                            maximumLength: 5
+                            text: root.taskDraftTime
+                            onTextChanged: root.taskDraftTime = text
+                            Keys.onReturnPressed: root.addPlannerTask()
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: root.taskDraftTime === "" && !timeTextInput.activeFocus
+                            text: "HH:MM"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 8
+                        }
+                    }
+
+                    // Add Button
+                    Rectangle {
+                        width: 32
+                        height: parent.height
+                        radius: 7
+                        color: Theme.brandAccent
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+"
+                            color: Theme.brandAccentFg
+                            font.pixelSize: 18
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.addPlannerTask()
+                        }
+                    }
+                }
+
+                // Tasks List
+                Flickable {
+                    width: parent.width
+                    height: Math.max(100, Math.min(220, root.maxDrawerHeight - 400))
+                    contentHeight: tasksCol.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    Column {
+                        id: tasksCol
+                        width: parent.width
+                        spacing: 6
+
+                        // Friendly empty state
+                        Text {
+                            visible: root.selectedDayTasks.length === 0
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            topPadding: 16
+                            bottomPadding: 16
+                            text: "No tasks for this day. Add one above!"
+                            color: Theme.textMuted
+                            font.family: Theme.fontUi
+                            font.pixelSize: 10
+                        }
+
+                        Repeater {
+                            model: root.selectedDayTasks
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: parent.width
+                                implicitHeight: 34
+                                radius: 8
+                                color: Theme.card
+                                border.width: 1
+                                border.color: Theme.border
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    // Checkbox
+                                    Rectangle {
+                                        width: 16
+                                        height: 16
+                                        radius: 4
+                                        color: modelData.done ? Theme.brandAccent : "transparent"
+                                        border.width: 1
+                                        border.color: modelData.done ? Theme.brandAccent : Theme.textMuted
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: modelData.done
+                                            text: "✓"
+                                            color: Theme.brandAccentFg
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.toggleTask(modelData.id)
+                                        }
+                                    }
+
+                                    // Task Text or Edit Input
+                                    Item {
+                                        Layout.fillWidth: true
+                                        height: parent.height
+
+                                        Text {
+                                            visible: root.editingTaskId !== modelData.id
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: parent.width
+                                            text: modelData.text
+                                            color: modelData.done ? Theme.textMuted : Theme.textMain
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            font.strikeout: modelData.done
+                                            elide: Text.ElideRight
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                onDoubleClicked: root.startEditTask(modelData)
+                                            }
+                                        }
+
+                                        TextInput {
+                                            visible: root.editingTaskId === modelData.id
+                                            anchors.fill: parent
+                                            verticalAlignment: TextInput.AlignVCenter
+                                            color: Theme.textMain
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            text: root.editingTaskDraft
+                                            onTextChanged: root.editingTaskDraft = text
+                                            Keys.onReturnPressed: root.commitEditTask()
+                                            Keys.onEscapePressed: root.editingTaskId = ""
+                                        }
+                                    }
+
+                                    // Time Badge
+                                    Rectangle {
+                                        visible: !!modelData.time
+                                        radius: 4
+                                        color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.12)
+                                        implicitWidth: timeBadgeRow.implicitWidth + 8
+                                        implicitHeight: 18
+
+                                        Row {
+                                            id: timeBadgeRow
+                                            anchors.centerIn: parent
+                                            spacing: 3
+                                            Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+                                            Text { text: modelData.time || ""; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                        }
+                                    }
+
+                                    // Delete button
+                                    Rectangle {
+                                        width: 18
+                                        height: 18
+                                        radius: 4
+                                        color: delTaskMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.2) : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "󰆴"
+                                            color: delTaskMa.containsMouse ? Theme.accentWarning : Theme.textMuted
+                                            font.family: Theme.fontMono
+                                            font.pixelSize: 10
+                                        }
+
+                                        MouseArea {
+                                            id: delTaskMa
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.deleteTask(modelData.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
