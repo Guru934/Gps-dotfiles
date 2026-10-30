@@ -82,6 +82,28 @@ class ControlIntegrationContractTests(unittest.TestCase):
         self.assertIn('property bool showCloseButton:', toolbox_qml)
         self.assertIn('signal closeRequested()', toolbox_qml)
 
+    def test_control_polish_p4_contract(self):
+        """Verifies P4 fixes: compact battery chip, pinned footer, idle lock pause state, and night light hint."""
+        control_qml = (ROOT / "island/states/Control.qml").read_text(encoding="utf-8")
+
+        # Battery chip compact profile and tooltip
+        self.assertIn("compactPowerProfile", control_qml)
+        self.assertIn('"SAVER"', control_qml)
+        self.assertIn("ToolTip.visible: badgeMa.containsMouse", control_qml)
+
+        # Footer visible and unclipped at maximum height
+        self.assertIn("anchors.bottom: footerRow.top", control_qml)
+        self.assertIn("id: footerRow", control_qml)
+        self.assertIn("anchors.bottom: parent.bottom", control_qml)
+
+        # Idle lock paused by Keep awake
+        self.assertIn('keepAwakeOn) return "paused by Keep awake"', control_qml)
+        self.assertIn("tileOn: st.idleDaemonOn && !st.keepAwakeOn", control_qml)
+
+        # Night light missing hyprsunset hint
+        self.assertIn('subText: !st.hasSunset ? "Not installed"', control_qml)
+        self.assertIn('tooltipText: st.hasSunset ? "Blue-light filter · click arrow to cycle color temperature" : "hyprsunset is not installed (sudo pacman -S hyprsunset)"', control_qml)
+
 
 if __name__ == "__main__":
     unittest.main()

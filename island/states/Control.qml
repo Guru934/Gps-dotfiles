@@ -15,7 +15,7 @@ Item {
     readonly property bool active: core.mode === key
     readonly property bool expanded: core.hovered || Boolean(core.controlExpanded) || localExpanded
     readonly property real w: expanded ? 460 : 180
-    readonly property real h: expanded ? Math.min(560, Math.max(380, controlContent.implicitHeight + 40)) : 36
+    readonly property real h: expanded ? Math.min(560, Math.max(380, controlContent.implicitHeight + footerRow.implicitHeight + 8 + 40)) : 36
     readonly property color accent: core.teal
 
     anchors.fill: parent
@@ -177,16 +177,25 @@ Item {
         return ControlLogic.formatBatteryTime(s, core.charging)
     }
 
+    readonly property string compactPowerProfile: {
+        if (!powerProfile) return ""
+        const p = powerProfile.toLowerCase()
+        if (p === "power-saver") return "SAVER"
+        if (p === "performance") return "PERF"
+        return p.toUpperCase()
+    }
+
     readonly property string headerBadgeText: {
         const parts = []
         if (core.hasBat) parts.push(Math.round(core.batPct) + "%")
         if (batteryTimeText !== "") parts.push(batteryTimeText)
-        if (powerProfile !== "") parts.push(powerProfile.toUpperCase())
+        if (compactPowerProfile !== "") parts.push(compactPowerProfile)
         return parts.join(" · ")
     }
 
     readonly property string idleSubtitle: {
         if (!hasIdleTool) return "Off"
+        if (keepAwakeOn) return "paused by Keep awake"
         if (!idleDaemonOn) return "Off"
         if (idleTimeoutSec > 0) {
             const mins = Math.round(idleTimeoutSec / 60)
@@ -1058,9 +1067,11 @@ Item {
             iconAlt: "I"
             titleText: "Idle lock"
             subText: st.idleSubtitle
-            tileOn: st.idleDaemonOn
+            tileOn: st.idleDaemonOn && !st.keepAwakeOn
             tileAvailable: st.hasIdleTool
-            tooltipText: "Automated session locking daemon (hypridle)"
+            tooltipText: st.keepAwakeOn
+                ? "Idle lock is temporarily paused by Keep awake"
+                : "Automated session locking daemon (hypridle)"
             onToggled: st.toggleIdleLock()
         }
     }
@@ -1099,7 +1110,7 @@ Item {
             iconName: "nightlight"
             iconAlt: "N"
             titleText: "Night light"
-            subText: !st.hasSunset ? "sudo pacman -S hyprsunset" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
+            subText: !st.hasSunset ? "Not installed" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
             trailIcon: st.hasSunset ? "tune" : ""
             trailAlt: "*"
             tileOn: st.nightLightOn
@@ -1273,7 +1284,11 @@ Item {
 
         Flickable {
             id: controlScroll
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: footerRow.top
+            anchors.bottomMargin: 8
             clip: true
             contentWidth: width
             contentHeight: controlContent.implicitHeight
@@ -1294,7 +1309,7 @@ Item {
                     Rectangle {
                         visible: st.headerBadgeText !== ""
                         Layout.preferredHeight: 30
-                        Layout.preferredWidth: Math.min(260, badgeRow.implicitWidth + 18)
+                        Layout.preferredWidth: Math.min(280, badgeText.implicitWidth + (st.core.hasBat ? 22 : 0) + 24)
                         radius: Theme.radiusCard
                         color: badgeMa.containsMouse ? Theme.cardHover : Theme.card
                         border.width: Theme.borderWidth
@@ -1316,6 +1331,7 @@ Item {
                             }
 
                             Text {
+                                id: badgeText
                                 Layout.fillWidth: true
                                 text: st.headerBadgeText
                                 font.family: Theme.fontMono
@@ -1335,8 +1351,18 @@ Item {
                         }
 
                         ToolTip.visible: badgeMa.containsMouse
-                        ToolTip.text: "Click to cycle power profile (" + (st.powerProfile || "balanced") + ")"
-                        ToolTip.delay: 400
+                        ToolTip.text: {
+                            const details = []
+                            if (st.core.hasBat) {
+                                details.push(Math.round(st.core.batPct) + "%" + (st.batteryTimeText !== "" ? (" (" + st.batteryTimeText + ")") : ""))
+                            }
+                            if (st.powerProfile !== "") {
+                                details.push("Profile: " + st.powerProfile)
+                            }
+                            const prefix = details.length > 0 ? (details.join(" · ") + "\n") : ""
+                            return prefix + "Click to cycle power profile (" + (st.powerProfile || "balanced") + ")"
+                        }
+                        ToolTip.delay: 300
                     }
 
                     Item { Layout.fillWidth: true }
@@ -2120,66 +2146,69 @@ Item {
                 }
 
                 Item { Layout.fillHeight: true }
+            }
+        }
 
-                // Bottom Session Strip & Footer Actions
-                RowLayout {
+        // Bottom Session Strip & Footer Actions (pinned so lock/sleep/power is visible and never clipped)
+        RowLayout {
+            id: footerRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            spacing: 8
+
+            RowLayout {
+                visible: st.sessionSummary !== ""
+                Layout.fillWidth: true
+                spacing: 6
+
+                Ico {
+                    name: "memory"
+                    alt: "M"
+                    font.pixelSize: 14
+                    color: Theme.textMuted
+                }
+
+                Text {
                     Layout.fillWidth: true
-                    spacing: 8
+                    text: st.sessionSummary
+                    font.family: Theme.fontMono
+                    font.pixelSize: 9
+                    font.weight: Font.Medium
+                    color: Theme.textMuted
+                    elide: Text.ElideRight
+                }
+            }
 
-                    RowLayout {
-                        visible: st.sessionSummary !== ""
-                        Layout.fillWidth: true
-                        spacing: 6
+            Item {
+                visible: st.sessionSummary === ""
+                Layout.fillWidth: true
+            }
 
-                        Ico {
-                            name: "memory"
-                            alt: "M"
-                            font.pixelSize: 14
-                            color: Theme.textMuted
-                        }
+            RowLayout {
+                spacing: 8
 
-                        Text {
-                            Layout.fillWidth: true
-                            text: st.sessionSummary
-                            font.family: Theme.fontMono
-                            font.pixelSize: 9
-                            font.weight: Font.Medium
-                            color: Theme.textMuted
-                            elide: Text.ElideRight
-                        }
-                    }
+                ActionCircle {
+                    iconName: "lock"
+                    iconAlt: "L"
+                    tooltipText: "Lock screen"
+                    onTriggered: st.lockScreen()
+                }
 
-                    Item {
-                        visible: st.sessionSummary === ""
-                        Layout.fillWidth: true
-                    }
+                ActionCircle {
+                    iconName: "bedtime"
+                    iconAlt: "Z"
+                    tooltipText: "Suspend system"
+                    onTriggered: st.suspendSystem()
+                }
 
-                    RowLayout {
-                        spacing: 8
-
-                        ActionCircle {
-                            iconName: "lock"
-                            iconAlt: "L"
-                            tooltipText: "Lock screen"
-                            onTriggered: st.lockScreen()
-                        }
-
-                        ActionCircle {
-                            iconName: "bedtime"
-                            iconAlt: "Z"
-                            tooltipText: "Suspend system"
-                            onTriggered: st.suspendSystem()
-                        }
-
-                        ActionCircle {
-                            iconName: st.confirmPower ? "check" : "power_settings_new"
-                            iconAlt: st.confirmPower ? "!" : "P"
-                            danger: true
-                            armed: st.confirmPower
-                            tooltipText: st.confirmPower ? "Click again to confirm power off" : "Power off system"
-                            onTriggered: st.triggerPower()
-                        }
-                    }
+                ActionCircle {
+                    iconName: st.confirmPower ? "check" : "power_settings_new"
+                    iconAlt: st.confirmPower ? "!" : "P"
+                    danger: true
+                    armed: st.confirmPower
+                    tooltipText: st.confirmPower ? "Click again to confirm power off" : "Power off system"
+                    onTriggered: st.triggerPower()
                 }
             }
         }
