@@ -42,3 +42,18 @@
     - Comprehensive review across all surfaces
     - Verified 1920x1200 / 1.5x scale (1280x800 logical coords)
     - 100% pass across Python test suite (310 tests), Node test suite (74 tests), qmllint, luac, and git diff --check
+
+- [ ] **P5 — GPS Daily-Driver Readiness & Reliability**
+  - [x] **P5.1 — Architecture and reliability audit**
+    - Map runtime: main shell, island, IPC handlers, background processes, external dependencies
+    - Prioritized reliability audit report (`docs/reliability-audit-p5.md`)
+  - [ ] **P5.2 — Session and process lifecycle**
+    - Prevent duplicate shell launches, graceful termination, dynamic path detection, startup logging
+  - [ ] **P5.3 — IPC reliability**
+    - Predictable arguments/responses, timeouts, missing targets handling, clipboard/history harmonization
+  - [ ] **P5.4 — Settings and persistence**
+    - Atomic configuration writes, malformed JSON recovery, safe defaults
+  - [ ] **P5.5 — Graceful dependency handling**
+    - Clean UI fallbacks when audio, network, bluetooth, battery, or tools are unavailable
+  - [ ] **P5.6 — Integrated reliability verification**
+    - Real-session verification, panel toggle soak tests, automated regression runs
