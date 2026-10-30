@@ -44,6 +44,103 @@ def get_lock_colors_path() -> Path:
     return get_hypr_dir() / "lock-colors.conf"
 
 
+def get_state_dir() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local/state")) / "gps"
+
+
+def get_theme_hooks_log_path() -> Path:
+    return get_state_dir() / "theme-hooks.log"
+
+
+def get_theme_hooks_dir() -> Path:
+    return Path(__file__).resolve().parent / "theme-hooks"
+
+
+def log_hook_error(message: str, log_path: Path | None = None) -> None:
+    """Record hook warning or error to state log file."""
+    target_log = log_path or get_theme_hooks_log_path()
+    try:
+        target_log.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(target_log, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def run_theme_hooks(
+    palette_path: Path | str,
+    hooks_dir: Path | str | None = None,
+    timeout: float = 5.0,
+    log_file: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """Execute all executable hooks in hooks_dir in isolated subprocesses.
+
+    Requirements:
+    - Validates palette JSON before running hooks.
+    - Each hook receives the actual palette JSON path as an argument.
+    - Configurable timeout per hook.
+    - One failing hook never prevents other hooks or wallpaper changes.
+    - Errors are recorded in theme-hooks.log.
+    - Subprocess arguments array used (no shell interpolation).
+    """
+    log_path = Path(log_file) if log_file else get_theme_hooks_log_path()
+    pal_p = Path(palette_path).expanduser().resolve()
+
+    if not pal_p.is_file():
+        msg = f"Palette JSON file does not exist: {pal_p}"
+        log_hook_error(msg, log_path)
+        return [{"ok": False, "error": msg}]
+
+    try:
+        raw_json = json.loads(pal_p.read_text(encoding="utf-8"))
+        if not isinstance(raw_json, dict) or not raw_json.get("surface") or not raw_json.get("textMain"):
+            msg = f"Palette JSON validation failed: missing essential keys in {pal_p}"
+            log_hook_error(msg, log_path)
+            return [{"ok": False, "error": msg}]
+    except Exception as e:
+        msg = f"Palette JSON validation error for {pal_p}: {e}"
+        log_hook_error(msg, log_path)
+        return [{"ok": False, "error": msg}]
+
+    hdir = Path(hooks_dir).expanduser().resolve() if hooks_dir else get_theme_hooks_dir()
+    if not hdir.is_dir():
+        return []
+
+    candidates = sorted([p for p in hdir.iterdir() if p.is_file() and not p.name.startswith(".")])
+    results: list[dict[str, Any]] = []
+
+    for hook in candidates:
+        if not os.access(hook, os.X_OK):
+            continue
+
+        cmd = [str(hook), str(pal_p)]
+        hook_name = hook.name
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if proc.returncode == 0:
+                results.append({"hook": hook_name, "ok": True, "output": proc.stdout.strip()})
+            else:
+                err = (proc.stderr or proc.stdout or f"Exited with code {proc.returncode}").strip()
+                log_hook_error(f"Hook '{hook_name}' failed (code {proc.returncode}): {err}", log_path)
+                results.append({"hook": hook_name, "ok": False, "error": err, "code": proc.returncode})
+        except subprocess.TimeoutExpired:
+            msg = f"Hook '{hook_name}' timed out after {timeout} seconds"
+            log_hook_error(msg, log_path)
+            results.append({"hook": hook_name, "ok": False, "error": msg, "timed_out": True})
+        except Exception as e:
+            msg = f"Failed to execute hook '{hook_name}': {e}"
+            log_hook_error(msg, log_path)
+            results.append({"hook": hook_name, "ok": False, "error": msg})
+
+    return results
+
+
 def atomic_write(target_path: Path | str, content: str) -> None:
     """Atomically write text content to target_path using a temporary file and atomic replace."""
     target = Path(target_path).expanduser()
@@ -465,6 +562,9 @@ def apply_wallpaper(
     theme_json_path: Path | None = None,
     rofi_path: Path | None = None,
     lock_colors_path: Path | None = None,
+    hooks_dir: Path | None = None,
+    hooks_timeout: float = 5.0,
+    skip_hooks: bool = False,
 ) -> dict[str, Any]:
     """Execute the complete atomic wallpaper and theme application pipeline."""
     last_wall = last_wall_path or get_last_wall_path()
@@ -525,7 +625,20 @@ def apply_wallpaper(
     except Exception as e:
         return {"ok": False, "error": f"Failed to extract or write theme: {e}"}
 
-    return {"ok": True, "wallpaper": str(path), "theme": theme}
+    # Run theme hooks
+    hook_results: list[dict[str, Any]] = []
+    if not skip_hooks:
+        try:
+            hook_results = run_theme_hooks(
+                palette_path=theme_json_path or get_theme_json_path(),
+                hooks_dir=hooks_dir,
+                timeout=hooks_timeout,
+            )
+        except Exception as e:
+            log_hook_error(f"Unexpected error executing theme hooks: {e}")
+            hook_results = [{"ok": False, "error": str(e)}]
+
+    return {"ok": True, "wallpaper": str(path), "theme": theme, "hooks": hook_results}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -537,6 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transition-fps", type=int, default=165, help="awww transition FPS")
     parser.add_argument("--transition-duration", type=float, default=1.1, help="awww transition duration in seconds")
     parser.add_argument("--skip-awww", action="store_true", help="Only extract and write theme without calling awww")
+    parser.add_argument("--skip-hooks", action="store_true", help="Skip executing theme synchronization hooks")
     return parser
 
 
@@ -552,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
         transition_fps=args.transition_fps,
         transition_duration=args.transition_duration,
         skip_awww=args.skip_awww,
+        skip_hooks=args.skip_hooks,
     )
 
     if not res.get("ok"):
