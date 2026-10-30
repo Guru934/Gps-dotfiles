@@ -229,6 +229,21 @@ exit 0
         temp_files = list(self.tmp_path.glob(".*tmp-*"))
         self.assertEqual(len(temp_files), 0)
 
+    def test_04_icons_hook_exists_and_executable(self):
+        """Verify that scripts/theme-hooks/04-icons.py exists, is executable, and succeeds on valid palette."""
+        hook_path = ROOT / "scripts" / "theme-hooks" / "04-icons.py"
+        self.assertTrue(hook_path.is_file(), f"{hook_path} must exist")
+        self.assertTrue(os.access(hook_path, os.X_OK), f"{hook_path} must be executable")
+
+        res = subprocess.run(
+            [str(hook_path), str(self.palette_file)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(res.returncode, 0, f"Hook failed: {res.stderr}")
+        self.assertIn("Synchronized GPS-Icons", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
