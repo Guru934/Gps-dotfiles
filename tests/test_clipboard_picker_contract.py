@@ -42,8 +42,8 @@ class ClipboardPickerContractTests(unittest.TestCase):
         self.assertIn('mainMod .. " + V", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell clipboard toggle")', HYPRLAND_LUA)
 
     def test_gps_ipc_routes_to_shell_clipboard(self):
-        """gps-ipc clipboard toggle must route to shell.qml."""
-        self.assertIn('call_qs "$REPO_DIR/shell.qml" clipboard "$action"', GPS_IPC)
+        """gps-ipc shell clipboard routes to shell.qml."""
+        self.assertIn('call_qs "$REPO_DIR/shell.qml" "$target" "$action"', GPS_IPC)
 
     def test_gps_clipboard_cli_list_and_status(self):
         """scripts/gps-clipboard status and list output valid JSON."""
