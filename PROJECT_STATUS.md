@@ -23,4 +23,7 @@
   - Explicit window rules and layer rules for GPS surfaces (`gps-rail-blur`, `gps-island-blur`, `gps-rofi-blur`).
   - Terminal text crispness exception (`kitty` opaque), video playback exception (`mpv`/`vlc` opaque, idle inhibit), and floating dialogs (`Media Hub`, `Toolbox`, `Settings Hub`, `Pet Companion`).
   - Automated tests in `tests/test_hyprland_rules.py`.
-- [ ] **P4.5 — Final Visual Audit & Session Verification**: In Progress.
+- [x] **P4.5 — Final Visual Audit & Session Verification**: Completed.
+  - Full coordinate space audit for 1920×1200 / 1.5x scale (1280×800 logical).
+  - All automated test suites passing: 310 Python tests, 74 Node assertions, qmllint with 0 errors, luac with 0 errors, shell/fish checks clean, git diff --check clean.
+  - Zero functionality regressions; unrelated worktree modifications preserved.
