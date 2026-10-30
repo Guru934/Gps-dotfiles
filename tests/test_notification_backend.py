@@ -88,6 +88,22 @@ class NotificationBackendContractTests(unittest.TestCase):
         self.assertIn("watchChanges: true", NOTIF_CENTER_QML)
         self.assertIn("onFileChanged: reload()", NOTIF_CENTER_QML)
 
+    def test_notif_center_search_placeholder_and_chips_contract(self):
+        """Search placeholder is left-aligned after icon; chips row is scrollable with fade edges."""
+        qml = (ROOT / "components/NotifCenter.qml").read_text(encoding="utf-8")
+        self.assertIn("anchors.left: parent.left", qml)
+        self.assertIn("anchors.verticalCenter: parent.verticalCenter", qml)
+        self.assertIn('text: "Search notifications…"', qml)
+        self.assertIn("chipsFlickable", qml)
+        self.assertIn("chipsFlickable.contentX > 2", qml)
+        self.assertIn("chipsFlickable.contentWidth > chipsFlickable.width", qml)
+
+    def test_notif_center_group_header_scrollbar_clearance_contract(self):
+        """Group header Clear button and cards leave clearance to prevent scrollbar clipping."""
+        qml = (ROOT / "components/NotifCenter.qml").read_text(encoding="utf-8")
+        self.assertIn("id: inboxFeedCol\n                        width: parent.width - 12", qml)
+        self.assertIn("Gutter clearance so clear button is never clipped by the scrollbar", qml)
+
 
 if __name__ == "__main__":
     unittest.main()

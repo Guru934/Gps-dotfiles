@@ -729,23 +729,30 @@ PanelWindow {
                             font.pixelSize: 13
                         }
 
-                        TextInput {
-                            id: searchInput
+                        Item {
                             Layout.fillWidth: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            color: Theme.textMain
-                            font.family: Theme.fontUi
-                            font.pixelSize: 11
-                            text: root.searchQuery
-                            onTextChanged: root.searchQuery = text
-                        }
+                            Layout.fillHeight: true
 
-                        Text {
-                            visible: root.searchQuery === "" && !searchInput.activeFocus
-                            text: "Search notifications…"
-                            color: Theme.textMuted
-                            font.family: Theme.fontUi
-                            font.pixelSize: 11
+                            TextInput {
+                                id: searchInput
+                                anchors.fill: parent
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: Theme.textMain
+                                font.family: Theme.fontUi
+                                font.pixelSize: 11
+                                text: root.searchQuery
+                                onTextChanged: root.searchQuery = text
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: root.searchQuery === "" && !searchInput.activeFocus
+                                text: "Search notifications…"
+                                color: Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 11
+                            }
                         }
 
                         Text {
@@ -765,18 +772,29 @@ PanelWindow {
                     }
                 }
 
-                // Filter chips: All, Unread, + apps
-                Flickable {
+                // Filter chips: All, Unread, + apps (scrollable with fade edges)
+                Item {
                     width: parent.width
                     height: 26
-                    contentWidth: chipsRow.implicitWidth
-                    clip: true
-                    flickableDirection: Flickable.HorizontalFlick
-                    boundsBehavior: Flickable.StopAtBounds
 
-                    Row {
-                        id: chipsRow
-                        spacing: 6
+                    Flickable {
+                        id: chipsFlickable
+                        anchors.fill: parent
+                        contentWidth: chipsRow.implicitWidth
+                        clip: true
+                        flickableDirection: Flickable.HorizontalFlick
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        WheelHandler {
+                            orientation: Qt.Vertical
+                            onWheel: event => {
+                                chipsFlickable.contentX = Math.max(0, Math.min(chipsFlickable.contentWidth - chipsFlickable.width, chipsFlickable.contentX - event.angleDelta.y))
+                            }
+                        }
+
+                        Row {
+                            id: chipsRow
+                            spacing: 6
 
                         // "All" chip
                         Rectangle {
@@ -868,6 +886,35 @@ PanelWindow {
                     }
                 }
 
+                // Left fade edge
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 16
+                        visible: chipsFlickable.contentX > 2
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: Theme.surfaceDeep }
+                            GradientStop { position: 1.0; color: "transparent" }
+                        }
+                    }
+
+                    // Right fade edge
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 16
+                        visible: chipsFlickable.contentWidth > chipsFlickable.width && (chipsFlickable.contentX < chipsFlickable.contentWidth - chipsFlickable.width - 2)
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0.0; color: "transparent" }
+                            GradientStop { position: 1.0; color: Theme.surfaceDeep }
+                        }
+                    }
+                }
+
                 // Scrollable Notifications Feed
                 Flickable {
                     id: inboxFlickable
@@ -882,7 +929,7 @@ PanelWindow {
 
                     Column {
                         id: inboxFeedCol
-                        width: parent.width
+                        width: parent.width - 12
                         spacing: 12
 
                         // Friendly Empty State
@@ -2092,6 +2139,9 @@ PanelWindow {
                     onClicked: root.clearGroup(groupRoot.groupName)
                 }
             }
+
+            // Gutter clearance so clear button is never clipped by the scrollbar
+            Item { Layout.preferredWidth: 4 }
         }
 
         Repeater {
