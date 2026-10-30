@@ -1307,5 +1307,6 @@ Scope {
     TrayPopup          { hub: root }
     ClipboardPicker    { id: clipboardPicker; hub: root }
     Pet                { id: pet }
+    EventsService      { id: eventsService; hub: root }
     onToastVisibleChanged: if (root.toastVisible) pet.wave()
 }
