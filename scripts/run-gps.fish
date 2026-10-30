@@ -8,12 +8,40 @@ set -gx QML2_IMPORT_PATH "$REPO_DIR"
 set -gx QML_IMPORT_PATH "$REPO_DIR"
 set -g __done_enabled 0
 
+mkdir -p "$HOME/.config/quickshell"
+
 # Visible startup log: every run appends here so a startup failure leaves a
 # trace even after /tmp/qs-gps.log is rotated by the next run.
 function log --argument-names msg
     printf '[%s] %s\n' (date '+%Y-%m-%d %H:%M:%S') "$msg" >>"$HOME/.config/quickshell/startup.log"
 end
 log "run-gps.fish starting (user "(whoami)")"
+
+# Graceful process stop: sends SIGTERM, waits up to 1.5s, then SIGKILL fallback.
+function stop_pattern --argument-names pattern label
+    set -l pids (pgrep -u (id -u) -f "$pattern" 2>/dev/null)
+    if test (count $pids) -eq 0
+        return 0
+    end
+    for pid in $pids
+        if test "$pid" = $fish_pid
+            continue
+        end
+        kill -TERM $pid 2>/dev/null; or true
+    end
+    for i in (seq 1 15)
+        if not pgrep -u (id -u) -f "$pattern" >/dev/null 2>&1
+            log "stopped $label gracefully"
+            return 0
+        end
+        sleep 0.1
+    end
+    for pid in (pgrep -u (id -u) -f "$pattern" 2>/dev/null)
+        kill -9 $pid 2>/dev/null; or true
+    end
+    log "force-killed $label after 1.5s timeout"
+    return 0
+end
 
 # 0. Wait until the compositor accepts Wayland clients. hyprland.start can
 #    fire a moment before the socket is ready; launching early crashed every
@@ -33,12 +61,12 @@ end
 
 # 1. Stop only the stale GPS shell and wallpaper daemon.
 # Tide Island is also a QuickShell process, so never kill all quickshell PIDs.
-pkill -9 -f "$REPO_DIR/shell.qml" 2>/dev/null; or true
-pkill -9 -x awww-daemon 2>/dev/null; or true
+stop_pattern "quickshell.*shell\.qml" "GPS master shell"
+stop_pattern "awww-daemon" "awww-daemon"
 rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
 # /tmp/tide-island.log is NOT deleted here: a preserved island keeps writing
 # to it; when the island is (re)started its redirect truncates the file.
-sleep 0.4
+sleep 0.2
 
 # 2. Start the wallpaper daemon before extracting the initial palette.
 if not pgrep -x awww-daemon >/dev/null 2>&1
@@ -86,37 +114,56 @@ if test -z "$island_backend"; and test -f "$backend_file"
 end
 if test "$island_backend" = gps
     set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
-    if not pgrep -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
+    if not pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" >/dev/null 2>&1
         nohup /usr/bin/quickshell --no-duplicate -d -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
         disown
     end
     sleep 0.5
-    set -l island_pid (pgrep -f "my-rice/island/IslandProduction.qml" | head -1)
+    set -l island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
     set -l island_label "GPS island"
 else
-    if not pgrep -f "share/tide-[i]sland" >/dev/null 2>&1
+    if not pgrep -u (id -u) -f "share/tide-[i]sland" >/dev/null 2>&1
         nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
         disown
     end
     sleep 0.5
-    set -l island_pid (pgrep -f 'share/tide-[i]sland' | head -1)
+    set -l island_pid (pgrep -u (id -u) -f 'share/tide-[i]sland' | head -1)
     set -l island_label "Tide Island"
 end
 if test -n "$island_pid"
     log "$island_label up (pid $island_pid)"
 else
     log "ERROR: $island_label is not running"
+    if test "$island_backend" = gps; and test -f "$HOME/.config/quickshell/island.log"
+        set -l err_tail (tail -n 3 "$HOME/.config/quickshell/island.log" 2>/dev/null | string join " | ")
+        if test -n "$err_tail"
+            log "  island.log: $err_tail"
+        end
+    else if test -f /tmp/tide-island.log
+        set -l err_tail (tail -n 3 /tmp/tide-island.log 2>/dev/null | string join " | ")
+        if test -n "$err_tail"
+            log "  tide-island.log: $err_tail"
+        end
+    end
 end
 
 # 6. Launch the QuickShell master shell.
-nohup /usr/bin/quickshell -d -p "$REPO_DIR/shell.qml" >/tmp/qs-gps.log 2>&1 &
-disown
-sleep 1
-set -l shell_pid (pgrep -f 'my-rice/she[l]l.qml' | head -1)
+if not pgrep -u (id -u) -f "quickshell.*shell\.qml" >/dev/null 2>&1
+    nohup /usr/bin/quickshell --no-duplicate -d -p "$REPO_DIR/shell.qml" >/tmp/qs-gps.log 2>&1 &
+    disown
+end
+sleep 0.8
+set -l shell_pid (pgrep -u (id -u) -f "quickshell.*shell\.qml" | head -1)
 if test -n "$shell_pid"
     log "GPS shell up (pid $shell_pid)"
 else
     log "ERROR: GPS shell exited during startup - see /tmp/qs-gps.log"
+    if test -f /tmp/qs-gps.log
+        set -l err_tail (tail -n 3 /tmp/qs-gps.log 2>/dev/null | string join " | ")
+        if test -n "$err_tail"
+            log "  qs-gps.log: $err_tail"
+        end
+    end
 end
 
 # 7. Start the local screen-time tracker (ActivityWatch-compatible awatcher

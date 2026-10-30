@@ -47,8 +47,10 @@
   - [x] **P5.1 — Architecture and reliability audit**
     - Map runtime: main shell, island, IPC handlers, background processes, external dependencies
     - Prioritized reliability audit report (`docs/reliability-audit-p5.md`)
-  - [ ] **P5.2 — Session and process lifecycle**
-    - Prevent duplicate shell launches, graceful termination, dynamic path detection, startup logging
+  - [x] **P5.2 — Session and process lifecycle**
+    - Prevent duplicate shell launches (`--no-duplicate`), graceful SIGTERM termination with fallback
+    - Dynamic user/process detection without hardcoded paths, actionable diagnostics logging
+    - Automated lifecycle safety tests (`tests/test_session_lifecycle.py`)
   - [ ] **P5.3 — IPC reliability**
     - Predictable arguments/responses, timeouts, missing targets handling, clipboard/history harmonization
   - [ ] **P5.4 — Settings and persistence**

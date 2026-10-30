@@ -29,6 +29,12 @@ function stop_exact --argument-names pattern label
         end
         sleep 0.1
     end
+    for pid in (pgrep -u (id -u) -f "$pattern" 2>/dev/null)
+        kill -9 $pid 2>/dev/null; or true
+    end
+    if not pgrep -u (id -u) -f "$pattern" >/dev/null 2>&1
+        return 0
+    end
     echo "$label did not stop cleanly" >&2
     return 1
 end

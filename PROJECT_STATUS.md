@@ -12,8 +12,13 @@
   - Complete runtime mapped (main Quickshell instance, island instance, IPC routers, persistence files, and background daemons).
   - Failure modes identified and prioritized (non-atomic writes, ungraceful SIGKILL, missing `--no-duplicate`, IPC method desynchronization).
   - Detailed report documented in `docs/reliability-audit-p5.md`.
-- [ ] **P5.2 — Session and Process Lifecycle**: In Progress.
-- [ ] **P5.3 — IPC Reliability**: Pending.
+- [x] **P5.2 — Session and Process Lifecycle**: Completed.
+  - Implemented graceful process termination (`SIGTERM` -> 1.5s timeout -> `SIGKILL` fallback) in `scripts/run-gps.fish` and `scripts/switch-island.fish`.
+  - Added `--no-duplicate` to master shell and Island production instances to prevent accidental duplicate instances.
+  - Replaced hardcoded repository path strings in `pgrep` queries with dynamic user-scoped process patterns.
+  - Added structured diagnostic logging with failure log tail capture.
+  - Automated regression suite added in `tests/test_session_lifecycle.py` (6 tests passing).
+- [ ] **P5.3 — IPC Reliability**: In Progress.
 - [ ] **P5.4 — Settings and Persistence**: Pending.
 - [ ] **P5.5 — Graceful Dependency Handling**: Pending.
 - [ ] **P5.6 — Integrated Reliability Verification**: Pending.
