@@ -35,6 +35,11 @@ class BootSplashInstallerTests(unittest.TestCase):
         plymouth_bin.chmod(0o755)
         (self.fake_lib / "two-step.so").write_bytes(b"\x7fELFfake")
 
+        # Mock Limine integration binary (limine-mkinitcpio)
+        limine_mk = self.fake_bin / "limine-mkinitcpio"
+        limine_mk.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        limine_mk.chmod(0o755)
+
         # Mock existing plymouthd.conf
         plymouth_dir = self.fake_etc / "plymouth"
         plymouth_dir.mkdir(parents=True, exist_ok=True)
@@ -57,16 +62,38 @@ class BootSplashInstallerTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+        # Mock /boot/limine.conf with custom/unrelated entries
+        self.initial_limine_conf = (
+            "timeout: 5\n\n"
+            "/Windows Boot Manager\n"
+            "  protocol: efi_chainload\n"
+            "  image_path: boot():/EFI/Microsoft/Boot/bootmgfw.efi\n\n"
+            "/CachyOS Linux (Snapshot 12)\n"
+            "  protocol: linux\n"
+            "  kernel_path: boot():/d539a1316b0543e0b082edcf8cffe442/linux-cachyos/vmlinuz\n"
+            "  initrd_path: boot():/d539a1316b0543e0b082edcf8cffe442/linux-cachyos/initramfs\n"
+        )
+        (self.fake_boot / "limine.conf").write_text(self.initial_limine_conf, encoding="utf-8")
+
+        # Mock existing initramfs on separate /boot
+        kdir = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos"
+        kdir.mkdir(parents=True, exist_ok=True)
+        self.initial_initramfs_data = "FAKE_INITRAMFS_BINARY_DATA_ORIGINAL"
+        (kdir / "initramfs").write_text(self.initial_initramfs_data, encoding="utf-8")
+
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def run_installer(self, *args):
+    def run_installer(self, *args, env=None):
         cmd = [
             str(INSTALL_SCRIPT),
             "--root-dir", str(self.fake_root),
             "--no-initrd-rebuild",
         ] + list(args)
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=merged_env)
 
     def test_default_is_dry_run_and_modifies_no_files(self):
         """Default invocation without flags must perform dry-run and modify 0 files."""
@@ -127,22 +154,115 @@ class BootSplashInstallerTests(unittest.TestCase):
         self.assertEqual(manifest["installed_theme"], "gps")
         self.assertTrue((backup_dir / "plymouthd.conf.orig").exists())
 
-    def test_rollback_restores_previous_state(self):
-        """--rollback completely restores original configuration and removes GPS theme."""
-        # First apply
+    def test_boot_partition_initramfs_and_limine_backup_and_restoration(self):
+        """Installer backs up separate /boot files (limine.conf and initramfs) and restores them on rollback."""
         res_apply = self.run_installer("--apply")
         self.assertEqual(res_apply.returncode, 0)
 
-        # Then rollback
+        backups = list(self.fake_backups.glob("*_*"))
+        self.assertEqual(len(backups), 1)
+        bdir = backups[0]
+
+        # Verify /boot/limine.conf was backed up
+        backed_limine = bdir / "boot" / "limine.conf"
+        self.assertTrue(backed_limine.exists())
+        self.assertEqual(backed_limine.read_text(encoding="utf-8"), self.initial_limine_conf)
+
+        # Verify initramfs was backed up
+        backed_initramfs = bdir / "boot" / "initramfs" / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        self.assertTrue(backed_initramfs.exists())
+        self.assertEqual(backed_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
+
+        # Simulate mutation of /boot during bootloader updates
+        (self.fake_boot / "limine.conf").write_text("MUTATED_LIMINE_CONF", encoding="utf-8")
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        target_initramfs.write_text("MUTATED_INITRAMFS_DATA", encoding="utf-8")
+
+        # Rollback
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0)
+
+        # Verify restoration of /boot files
+        self.assertEqual((self.fake_boot / "limine.conf").read_text(encoding="utf-8"), self.initial_limine_conf)
+        self.assertEqual(target_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
+
+    def test_preservation_of_unrelated_boot_entries(self):
+        """Unrelated bootloader entries (e.g. Windows Boot Manager) remain intact through apply and rollback."""
+        self.run_installer("--apply")
+        limine_text = (self.fake_boot / "limine.conf").read_text(encoding="utf-8")
+        self.assertIn("/Windows Boot Manager", limine_text)
+        self.assertIn("image_path: boot():/EFI/Microsoft/Boot/bootmgfw.efi", limine_text)
+
+        self.run_installer("--rollback")
+        limine_after = (self.fake_boot / "limine.conf").read_text(encoding="utf-8")
+        self.assertEqual(limine_after, self.initial_limine_conf)
+
+    def test_missing_limine_integration_refuses_to_apply(self):
+        """Installer refuses to apply when Limine is detected but limine-mkinitcpio is missing."""
+        (self.fake_bin / "limine-mkinitcpio").unlink()
+
+        res = self.run_installer("--apply")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("required command 'limine-mkinitcpio'", res.stderr)
+        self.assertIn("limine-mkinitcpio-hook", res.stderr)
+
+        # Verify no files installed
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+    def test_regeneration_command_limine_selection(self):
+        """Dry-run explicitly displays the verified command 'sudo limine-mkinitcpio' for Limine."""
+        cmd = [str(INSTALL_SCRIPT), "--root-dir", str(self.fake_root), "--dry-run"]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("Verified Command: sudo limine-mkinitcpio", res.stdout)
+
+    def test_partial_failure_automatic_rollback(self):
+        """If a failure occurs during apply, the error trap automatically reverts all changes."""
+        res = self.run_installer("--apply", env={"GPS_TEST_FAIL_AFTER_COPY": "1"})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("FAILURE DETECTED", res.stderr)
+        self.assertIn("Initiating automatic emergency rollback", res.stderr)
+
+        # Verify theme files were safely rolled back / removed
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+        # Verify plymouthd.conf was restored
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        self.assertNotIn("Theme=gps", conf_text)
+
+    def test_idempotent_rollback(self):
+        """Running rollback multiple times is completely idempotent and safe."""
+        self.run_installer("--apply")
+
+        res1 = self.run_installer("--rollback")
+        self.assertEqual(res1.returncode, 0)
+        self.assertIn("Rollback completed successfully", res1.stdout)
+
+        # Second rollback
+        res2 = self.run_installer("--rollback")
+        self.assertEqual(res2.returncode, 0)
+
+        # Files remain clean and original
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+    def test_rollback_restores_previous_state(self):
+        """--rollback completely restores original configuration and removes GPS theme."""
+        res_apply = self.run_installer("--apply")
+        self.assertEqual(res_apply.returncode, 0)
+
         res_rollback = self.run_installer("--rollback")
         self.assertEqual(res_rollback.returncode, 0, f"Rollback failed: {res_rollback.stderr}")
         self.assertIn("Rollback completed successfully", res_rollback.stdout)
 
-        # Theme folder must be removed
         dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
         self.assertFalse(dest_theme.exists())
 
-        # plymouthd.conf must be restored
         conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
         self.assertIn("Theme=cachyos-bootanimation", conf_text)
         self.assertNotIn("Theme=gps", conf_text)
@@ -155,11 +275,9 @@ class BootSplashInstallerTests(unittest.TestCase):
         res2 = self.run_installer("--apply")
         self.assertEqual(res2.returncode, 0)
 
-        # Check theme still set once
         conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
         self.assertEqual(conf_text.count("Theme=gps"), 1)
 
-        # Check hook not duplicated
         mk_text = (self.fake_etc / "mkinitcpio.conf").read_text(encoding="utf-8")
         self.assertEqual(mk_text.count("plymouth"), 1)
 
@@ -175,7 +293,6 @@ class BootSplashInstallerTests(unittest.TestCase):
         mk_text = (self.fake_etc / "mkinitcpio.conf").read_text(encoding="utf-8")
         self.assertIn("sd-vconsole plymouth filesystems", mk_text)
 
-        # Rollback restores original
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
         restored_text = (self.fake_etc / "mkinitcpio.conf").read_text(encoding="utf-8")
@@ -210,13 +327,11 @@ class BootSplashInstallerTests(unittest.TestCase):
         self.assertIn("SAFETY ERROR", res.stderr)
         self.assertIn("appears BEFORE 'plymouth'", res.stderr)
 
-        # Ensure no modifications occurred
         dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
         self.assertFalse(dest_theme.exists())
 
     def test_missing_plymouth_package_fails_safely(self):
         """Installer fails with instructions if plymouth is not installed."""
-        # Remove fake plymouth binary from fake root
         (self.fake_bin / "plymouth").unlink()
 
         res = self.run_installer("--apply")
@@ -226,10 +341,9 @@ class BootSplashInstallerTests(unittest.TestCase):
 
     def test_grub_bootloader_variant(self):
         """Installer detects GRUB and appends splash to GRUB_CMDLINE_LINUX_DEFAULT if missing."""
-        # Remove Limine config
         (self.fake_etc / "default" / "limine").unlink()
+        (self.fake_boot / "limine.conf").unlink()
 
-        # Create GRUB config without splash
         grub_conf = self.fake_etc / "default" / "grub"
         grub_conf.write_text('GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3"\n', encoding="utf-8")
 
@@ -241,7 +355,6 @@ class BootSplashInstallerTests(unittest.TestCase):
         grub_after = grub_conf.read_text(encoding="utf-8")
         self.assertIn("splash", grub_after)
 
-        # Rollback restores GRUB
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
         grub_restored = grub_conf.read_text(encoding="utf-8")
@@ -261,8 +374,8 @@ class BootSplashInstallerTests(unittest.TestCase):
 
     def test_systemd_boot_variant(self):
         """Installer detects systemd-boot when loader.conf is present."""
-        # Remove Limine config
         (self.fake_etc / "default" / "limine").unlink()
+        (self.fake_boot / "limine.conf").unlink()
         loader_dir = self.fake_boot / "loader"
         loader_dir.mkdir(parents=True, exist_ok=True)
         (loader_dir / "loader.conf").write_text("timeout 3\ndefault arch\n", encoding="utf-8")
@@ -282,7 +395,6 @@ class BootSplashInstallerTests(unittest.TestCase):
 
     def test_permission_guard_on_system_paths(self):
         """Running --apply on system paths without root privileges must fail safely."""
-        # Non-root user running without --root-dir
         cmd = [str(INSTALL_SCRIPT), "--apply"]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(res.returncode, 1)

@@ -157,6 +157,7 @@ CURRENT_PLYMOUTH_THEME="none"
 CMDLINE_HAS_QUIET=false
 CMDLINE_HAS_SPLASH=false
 DISPLAY_MANAGER="Unknown"
+LIMINE_MKINITCPIO_EXISTS=false
 
 # Perform read-only audit of host or target root
 audit_system() {
@@ -202,6 +203,17 @@ audit_system() {
         DETECTED_BOOTLOADER="GRUB"
     elif [[ -d "${BOOT_DIR}/loader" || -f "${BOOT_DIR}/loader/loader.conf" ]]; then
         DETECTED_BOOTLOADER="systemd-boot"
+    fi
+
+    # Check verified Limine integration command (limine-mkinitcpio)
+    if [[ -n "${ROOT_DIR}" && "${ROOT_DIR}" != "/" ]]; then
+        if [[ -x "${ROOT_DIR}/usr/bin/limine-mkinitcpio" ]]; then
+            LIMINE_MKINITCPIO_EXISTS=true
+        fi
+    else
+        if command -v limine-mkinitcpio >/dev/null 2>&1; then
+            LIMINE_MKINITCPIO_EXISTS=true
+        fi
     fi
 
     # 3. Initramfs Generator Detection
@@ -340,9 +352,9 @@ print_audit_report() {
     printf "%b========================================================================%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
     printf "%b GPS Desktop — Plymouth Boot Splash System Audit%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
     printf "%b========================================================================%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
-    printf "  %-26s: %s\n" "Bootloader" "${DETECTED_BOOTLOADER}"
+    printf "  %-26s: %s%s\n" "Bootloader" "${DETECTED_BOOTLOADER}" "$([ "$DETECTED_BOOTLOADER" = "Limine" ] && echo " (limine-mkinitcpio: $([ "$LIMINE_MKINITCPIO_EXISTS" = true ] && echo 'Available' || echo 'Missing'))" || echo '')"
     printf "  %-26s: %s\n" "Initramfs Generator" "${DETECTED_INITRAMFS_GEN}"
-    printf "  %-26s: %s\n" "Root Filesystem" "${DETECTED_ROOT_FS}"
+    printf "  %-26s: %s (separate /boot: %s)\n" "Root Filesystem" "${DETECTED_ROOT_FS}" "$([ -d "${BOOT_DIR}" ] && echo 'YES' || echo 'NO')"
     printf "  %-26s: %s\n" "Snapshot Tool" "${DETECTED_SNAPSHOT_TOOL}"
     printf "  %-26s: %s\n" "Disk Encryption" "${DETECTED_ENCRYPTION}"
     printf "  %-26s: %s (two-step.so: %s)\n" "Plymouth Package" "$([ "$PLYMOUTH_INSTALLED" = true ] && echo 'Installed' || echo 'NOT Installed')" "$([ "$TWOSTEP_PLUGIN_EXISTS" = true ] && echo 'Available' || echo 'Missing')"
@@ -492,9 +504,17 @@ do_dry_run() {
         fi
     fi
 
+    # Limine Integration Verification
+    if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
+        if [[ "${LIMINE_MKINITCPIO_EXISTS}" == "false" ]]; then
+            printf "%b[SAFETY CHECK] FAILED%b: Limine bootloader detected with mkinitcpio, but required command 'limine-mkinitcpio' (package limine-mkinitcpio-hook) was not found.\n" "$C_RED$C_BOLD" "$C_RESET"
+            printf "The installer would REFUSE to apply changes on this configuration to protect boot entry synchronization.\n\n"
+        fi
+    fi
+
     printf "%bProposed Actions on --apply:%b\n" "$C_BOLD" "$C_RESET"
-    printf "  1. Verify Plymouth installation and two-step plugin presence.\n"
-    printf "  2. Create timestamped backup under: %s/<timestamp>/\n" "${BACKUP_BASE_DIR}"
+    printf "  1. Verify Plymouth installation, two-step plugin, and Limine integration command.\n"
+    printf "  2. Create timestamped backup of /etc and separate /boot files (limine.conf, existing initramfs) under:\n     -> %s/<timestamp>/\n" "${BACKUP_BASE_DIR}"
     printf "  3. Install GPS Plymouth theme files to:\n     -> %s\n" "${DEST_THEME_DIR}"
     printf "  4. Update Plymouth daemon configuration:\n     -> %s (Set [Daemon] Theme=%s)\n" "${PLYMOUTHD_CONF}" "${THEME_NAME}"
 
@@ -515,9 +535,9 @@ do_dry_run() {
     fi
 
     if [[ "${NO_INITRD_REBUILD}" == "false" ]]; then
-        printf "  7. Regenerate initramfs to pack GPS theme into early boot ramdisk:\n"
-        if [[ "${DETECTED_BOOTLOADER}" == "Limine" ]]; then
-            printf "     -> Command: %bsudo limine-update%b (or %bsudo mkinitcpio -P%b)\n" "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET"
+        printf "  7. Regenerate initramfs and update bootloader entries:\n"
+        if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
+            printf "     -> Verified Command: %bsudo limine-mkinitcpio%b\n" "$C_BOLD" "$C_RESET"
         elif [[ "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
             printf "     -> Command: %bsudo mkinitcpio -P%b\n" "$C_BOLD" "$C_RESET"
         else
@@ -526,8 +546,8 @@ do_dry_run() {
     fi
 
     printf "\n%bExact Manual Execution Commands for THIS Machine:%b\n" "$C_BOLD$C_GREEN" "$C_RESET"
-    printf "  1. Take pre-installation snapshot:\n"
-    printf "     %bsnapper create -d \"Pre-GPS-Plymouth-splash\"%b\n" "$C_BOLD" "$C_RESET"
+    printf "  1. Take dedicated non-expiring Snapper snapshot (omits timeline cleanup):\n"
+    printf "     %bsudo snapper -c root create -d \"Pre-GPS-boot-splash\"%b\n" "$C_BOLD" "$C_RESET"
     printf "  2. Apply installer package:\n"
     printf "     %bsudo %s --apply%b\n" "$C_BOLD" "$0" "$C_RESET"
     printf "  3. Reversible rollback if needed:\n"
@@ -568,6 +588,15 @@ do_apply() {
         exit 1
     fi
 
+    # Invariant 4: Limine integration validation
+    if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
+        if [[ "${LIMINE_MKINITCPIO_EXISTS}" == "false" ]]; then
+            printf "%bError: Limine bootloader detected with mkinitcpio, but required command 'limine-mkinitcpio' (package limine-mkinitcpio-hook) was not found.%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+            printf "Aborting to prevent unverified or out-of-sync bootloader entries.\n" >&2
+            exit 1
+        fi
+    fi
+
     local timestamp
     timestamp="$(date +%Y%m%d_%H%M%S)"
     local backup_dir="${BACKUP_BASE_DIR}/${timestamp}"
@@ -581,6 +610,19 @@ do_apply() {
 
     printf "%b=== Applying GPS Plymouth Boot Splash Theme ===%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
     printf "Backup directory created at: %s\n" "${backup_dir}"
+
+    # Error recovery trap: automatically roll back on any failure during apply
+    local apply_in_progress=true
+    cleanup_on_apply_failure() {
+        if [[ "${apply_in_progress}" == "true" ]]; then
+            printf "\n%b[FAILURE DETECTED] Error encountered during apply! Initiating automatic emergency rollback...%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+            apply_in_progress=false
+            ROLLBACK_TARGET="${backup_dir}"
+            do_rollback || true
+            printf "%b[RESTORED] System safely rolled back to pre-apply state.%b\n" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
+        fi
+    }
+    trap cleanup_on_apply_failure ERR
 
     # 1. Back up existing theme directory if present
     if [[ -d "${DEST_THEME_DIR}" ]]; then
@@ -597,13 +639,45 @@ do_apply() {
     set_plymouthd_theme "${PLYMOUTHD_CONF}" "${THEME_NAME}"
     modified_plymouthd=true
 
-    # 3. Copy theme package to destination
+    # 3. Back up /boot partition files (limine configs and initramfs images)
+    local boot_backup_dir="${backup_dir}/boot"
+    mkdir -p "${boot_backup_dir}"
+    for lconf in "${BOOT_DIR}/limine.conf" "${BOOT_DIR}/limine.cfg" "${BOOT_DIR}/EFI/limine/limine.conf" "${BOOT_DIR}/limine/limine.conf"; do
+        if [[ -f "$lconf" ]]; then
+            local rel_lconf="${lconf#"${BOOT_DIR}/"}"
+            mkdir -p "${boot_backup_dir}/$(dirname "${rel_lconf}")"
+            cp -a "$lconf" "${boot_backup_dir}/${rel_lconf}"
+            backed_up_files+=("$lconf")
+            printf "Backed up bootloader config: %s\n" "$lconf"
+        fi
+    done
+
+    local initramfs_backup_dir="${boot_backup_dir}/initramfs"
+    mkdir -p "${initramfs_backup_dir}"
+    if [[ -d "${BOOT_DIR}" ]]; then
+        while IFS= read -r -d '' img; do
+            local rel_img="${img#"${BOOT_DIR}/"}"
+            local dest_copy="${initramfs_backup_dir}/${rel_img}"
+            mkdir -p "$(dirname "${dest_copy}")"
+            cp -a "$img" "${dest_copy}"
+            backed_up_files+=("$img")
+            printf "Backed up boot initramfs image: %s\n" "$img"
+        done < <(find "${BOOT_DIR}" -type f \( -name "initramfs*" -o -name "*initrd*" -o -name "*.img" \) -print0 2>/dev/null || true)
+    fi
+
+    # 4. Copy theme package to destination
     mkdir -p "${DEST_THEME_DIR}"
     cp -a "${SOURCE_THEME_DIR}/." "${DEST_THEME_DIR}/"
     chmod 755 "${DEST_THEME_DIR}"
     find "${DEST_THEME_DIR}" -type f -exec chmod 644 {} +
 
-    # 4. Check & configure initramfs generator
+    # Test failure injection hook if requested
+    if [[ "${GPS_TEST_FAIL_AFTER_COPY:-0}" == "1" ]]; then
+        printf "Simulating intentional failure for testing partial rollback...\n" >&2
+        false
+    fi
+
+    # 5. Check & configure initramfs generator
     if [[ "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" && -f "${MKINITCPIO_CONF}" ]]; then
         local hooks_line
         hooks_line="$(grep -E '^\s*HOOKS=\(' "${MKINITCPIO_CONF}" 2>/dev/null || true)"
@@ -621,7 +695,7 @@ do_apply() {
         fi
     fi
 
-    # 5. Check & configure bootloader kernel command-line
+    # 6. Check & configure bootloader kernel command-line
     if [[ "${DETECTED_BOOTLOADER}" == "Limine" && -f "${LIMINE_DEFAULT_CONF}" ]]; then
         if ! grep -q '\bsplash\b' "${LIMINE_DEFAULT_CONF}" 2>/dev/null; then
             cp -a "${LIMINE_DEFAULT_CONF}" "${backup_dir}/limine.default.orig"
@@ -652,7 +726,7 @@ with open(conf, 'w', encoding='utf-8') as f:
         fi
     fi
 
-    # 6. Write backup manifest
+    # 7. Write backup manifest
     local manifest_file="${backup_dir}/manifest.json"
     cat << EOF > "${manifest_file}"
 {
@@ -674,17 +748,20 @@ EOF
     # Update latest symlink
     ln -sfn "${timestamp}" "${BACKUP_BASE_DIR}/latest"
 
-    # 7. Initramfs regeneration if requested
+    # 8. Initramfs regeneration if requested
     if [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
-        printf "\n%bRegenerating initramfs images...%b\n" "$C_CYAN" "$C_RESET"
-        if command -v limine-update >/dev/null 2>&1; then
-            limine-update
+        printf "\n%bRegenerating initramfs and updating bootloader entries...%b\n" "$C_CYAN" "$C_RESET"
+        if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
+            limine-mkinitcpio
         elif command -v mkinitcpio >/dev/null 2>&1; then
             mkinitcpio -P
         fi
     else
         printf "Initramfs regeneration skipped (--no-initrd-rebuild or test root).\n"
     fi
+
+    apply_in_progress=false
+    trap - ERR
 
     printf "\n%b[SUCCESS] GPS Plymouth Boot Splash Theme applied successfully!%b\n" "$C_GREEN$C_BOLD" "$C_RESET"
     printf "  - Effective Theme: %s\n" "${THEME_NAME}"
@@ -715,11 +792,17 @@ do_rollback() {
 
     printf "%b=== Rolling Back GPS Plymouth Boot Splash Theme ===%b\n" "$C_BOLD$C_YELLOW" "$C_RESET"
 
-    if [[ -n "${backup_dir}" && -f "${backup_dir}/manifest.json" ]]; then
+    if [[ -n "${backup_dir}" && -d "${backup_dir}" ]]; then
         printf "Restoring from backup archive: %s\n" "${backup_dir}"
 
-        local prev_theme
-        prev_theme="$(grep '"previous_theme":' "${backup_dir}/manifest.json" | cut -d: -f2 | tr -d ' ",' || echo 'cachyos-bootanimation')"
+        local prev_theme="cachyos-bootanimation"
+        if [[ -f "${backup_dir}/manifest.json" ]]; then
+            local pt
+            pt="$(grep '"previous_theme":' "${backup_dir}/manifest.json" | cut -d: -f2 | tr -d ' ",' || true)"
+            if [[ -n "$pt" ]]; then
+                prev_theme="$pt"
+            fi
+        fi
 
         # 1. Restore plymouthd.conf
         if [[ -f "${backup_dir}/plymouthd.conf.orig" ]]; then
@@ -746,7 +829,30 @@ do_rollback() {
             cp -a "${backup_dir}/grub.default.orig" "${GRUB_DEFAULT_CONF}"
         fi
 
-        # 4. Restore or remove GPS theme directory
+        # 4. Restore separate /boot partition files (limine.conf and initramfs)
+        local boot_backup_dir="${backup_dir}/boot"
+        if [[ -d "${boot_backup_dir}" ]]; then
+            for lconf_sub in limine.conf limine.cfg EFI/limine/limine.conf limine/limine.conf; do
+                if [[ -f "${boot_backup_dir}/${lconf_sub}" ]]; then
+                    printf "Restoring %s from backup...\n" "${BOOT_DIR}/${lconf_sub}"
+                    mkdir -p "$(dirname "${BOOT_DIR}/${lconf_sub}")"
+                    cp -a "${boot_backup_dir}/${lconf_sub}" "${BOOT_DIR}/${lconf_sub}"
+                fi
+            done
+
+            local initramfs_backup_dir="${boot_backup_dir}/initramfs"
+            if [[ -d "${initramfs_backup_dir}" ]]; then
+                while IFS= read -r -d '' b_img; do
+                    local rel_b_img="${b_img#"${initramfs_backup_dir}/"}"
+                    local target_img="${BOOT_DIR}/${rel_b_img}"
+                    printf "Restoring initramfs image: %s\n" "${target_img}"
+                    mkdir -p "$(dirname "${target_img}")"
+                    cp -a "$b_img" "${target_img}"
+                done < <(find "${initramfs_backup_dir}" -type f -print0 2>/dev/null || true)
+            fi
+        fi
+
+        # 5. Restore or remove GPS theme directory
         local had_theme
         had_theme="$(grep '"had_preexisting_theme":' "${backup_dir}/manifest.json" | grep -o 'true\|false' || echo 'false')"
         if [[ "${had_theme}" == "true" && -d "${backup_dir}/theme_gps_preexisting" ]]; then
@@ -758,11 +864,11 @@ do_rollback() {
             rm -rf "${DEST_THEME_DIR}"
         fi
 
-        # 5. Regenerate initramfs if not skipped
+        # 6. Resynchronize boot artifacts if not skipped
         if [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
-            printf "\n%bRegenerating initramfs images after rollback...%b\n" "$C_CYAN" "$C_RESET"
-            if command -v limine-update >/dev/null 2>&1; then
-                limine-update
+            printf "\n%bResynchronizing boot artifacts after rollback...%b\n" "$C_CYAN" "$C_RESET"
+            if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
+                limine-mkinitcpio
             elif command -v mkinitcpio >/dev/null 2>&1; then
                 mkinitcpio -P
             fi

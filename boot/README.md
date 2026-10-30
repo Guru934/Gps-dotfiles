@@ -90,12 +90,26 @@ The GPS theme implements the canonical GPS Visual Design System (P4):
    sudo pacman -S plymouth
    ```
 
-2. **Snapshot First**:
-   Always create a Btrfs Snapper snapshot before applying any boot modifications:
+2. **Dedicated Non-Expiring Snapshot (Snapper)**:
+   Always create a dedicated Snapper snapshot before applying any boot modifications:
    ```bash
-   snapper create -c timeline -d "Pre-GPS-boot-splash"
-   snapper list
+   sudo snapper -c root create -d "Pre-GPS-boot-splash"
+   sudo snapper -c root list
    ```
+   > [!IMPORTANT]
+   > The host Snapper configuration name is `root` (verified via `snapper list-configs`).
+   > We deliberately **omit** any `--cleanup-algorithm` flag (such as `timeline` or `number`). Leaving the cleanup algorithm empty ensures this critical recovery snapshot will **never be automatically purged** by periodic timeline rotation or quota cleanup.
+
+3. **Protection of the Separate `/boot` Partition**:
+   > [!WARNING]
+   > The root filesystem (`/`) is Btrfs on `/dev/nvme0n1p5`, but `/boot` is a **separate FAT32 ESP partition** on `/dev/nvme0n1p4`.
+   > Because Snapper operates strictly at the Btrfs filesystem level, a Snapper root snapshot **does not back up or restore `/boot`**!
+   >
+   > To guarantee full recovery, `install-splash.sh` independently archives:
+   > - `/boot/limine.conf` (and any alternate Limine configurations)
+   > - Existing initramfs images from `/boot` (including machine-id directories `/boot/<machine-id>/*/initramfs*`)
+   >
+   > into `/var/backups/gps-boot/<timestamp>/boot/`. On `--rollback`, these files are restored directly to `/boot`.
 
 ---
 
@@ -149,14 +163,17 @@ sudo ./boot/install-splash.sh --apply
 ```
 
 What `--apply` executes:
-1. Verifies Plymouth installation, `two-step.so` module, and source files.
-2. Performs encryption safety checks.
-3. Creates a timestamped backup directory under `/var/backups/gps-boot/<timestamp>/`.
+1. Verifies Plymouth installation, `two-step.so` module, source theme files, and verified Limine integration (`limine-mkinitcpio`).
+2. Performs encryption safety checks (verifies `plymouth` precedes `sd-encrypt`/`encrypt`).
+3. Creates a timestamped backup directory under `/var/backups/gps-boot/<timestamp>/` including `/etc` configuration, `/boot/limine.conf`, and existing initramfs images from `/boot`.
 4. Copies theme assets to `/usr/share/plymouth/themes/gps/`.
 5. Updates `/etc/plymouth/plymouthd.conf` with `[Daemon] Theme=gps`.
-6. Verifies mkinitcpio hook configuration (already present).
+6. Verifies mkinitcpio hook configuration (already present in the correct position).
 7. Writes a restoration `manifest.json`.
-8. Regenerates the initramfs (`limine-update` / `mkinitcpio -P`).
+8. Regenerates initramfs and synchronizes Limine boot entries via the verified command:
+   ```bash
+   sudo limine-mkinitcpio
+   ```
 
 ### Step 3: Verify Installation
 ```bash
@@ -183,9 +200,10 @@ sudo ./boot/install-splash.sh --rollback /var/backups/gps-boot/20261030_XXXXXX
 What rollback executes:
 1. Restores the original `/etc/plymouth/plymouthd.conf` (re-activating `cachyos-bootanimation`).
 2. Restores `/etc/mkinitcpio.conf` if it was modified.
-3. Restores bootloader configuration if modified.
-4. Removes `/usr/share/plymouth/themes/gps`.
-5. Regenerates initramfs to pack the original theme back into the boot images.
+3. Restores bootloader configuration in `/etc/default/limine` if modified.
+4. Restores `/boot/limine.conf` and the exact original initramfs images on the separate `/boot` partition.
+5. Removes `/usr/share/plymouth/themes/gps`.
+6. Resynchronizes Limine boot artifacts via `limine-mkinitcpio`.
 
 ---
 
@@ -206,24 +224,22 @@ Limine automatically synchronizes Snapper snapshots into its boot menu:
 
 ### Method B: Live USB Recovery via `arch-chroot`
 1. Boot any Arch Linux or CachyOS live USB.
-2. Mount the root Btrfs subvolume:
+2. Mount the root Btrfs subvolume and separate `/boot` partition:
    ```bash
    mount -o subvol=/@ /dev/nvme0n1p5 /mnt
    mount /dev/nvme0n1p4 /mnt/boot
-   ```
-3. Enter the chroot:
-   ```bash
    arch-chroot /mnt
    ```
-4. Restore previous Plymouth theme:
+3. Revert Plymouth theme and regenerate images:
    ```bash
-   plymouth-set-default-theme -R cachyos-bootanimation
+   plymouth-set-default-theme cachyos-bootanimation
+   limine-mkinitcpio
    ```
    Or restore from the latest backup:
    ```bash
    /home/rice/Projects/my-rice/boot/install-splash.sh --rollback
    ```
-5. Exit and reboot:
+4. Exit and reboot:
    ```bash
    exit
    umount -R /mnt
@@ -241,9 +257,9 @@ If you prefer maximum simplicity, faster boot times, and zero splash screen comp
    ```bash
    KERNEL_CMDLINE[default]+="quiet loglevel=3 rd.udev.log_priority=3 vt.global_cursor_default=0"
    ```
-3. Regenerate initramfs:
+3. Regenerate initramfs and sync Limine entries:
    ```bash
-   sudo limine-update
+   sudo limine-mkinitcpio
    ```
 
 This suppresses all kernel boot logs, leaving the screen clean and black until the SDDM greeter appears, with zero overhead and zero risk of splash hang.
