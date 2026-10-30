@@ -164,23 +164,25 @@ sudo ./boot/install-splash.sh --apply
 
 What `--apply` executes:
 1. **System Invariant Validation**: Verifies Plymouth installation, `two-step.so` module, source theme files, verified Limine integration (`limine-mkinitcpio`), and encryption hook ordering.
-2. **Phase A (Backup & Pre-apply Inventory)**:
-   - Takes a complete inventory of all files present on the separate `/boot` partition.
+2. **Phase A (Backup & Inventory)**:
+   - Identifies all files managed or replaced by GPS Plymouth (`/etc/plymouth/plymouthd.conf`, `/etc/mkinitcpio.conf`, `/etc/default/limine`, `/etc/default/grub`, `/boot/limine.conf`, and active initramfs images).
    - Archives any pre-existing GPS theme in `/usr/share/plymouth/themes/gps/`.
-   - Archives system configurations (`/etc/plymouth/plymouthd.conf`, `/etc/mkinitcpio.conf`, `/etc/default/limine`, `/etc/default/grub`).
-   - Archives all supported Limine configs (`/boot/limine.conf`, etc.) and all existing binary initramfs images from `/boot/`.
+   - Archives system configurations to a timestamped backup directory.
+   - Archives all supported Limine configs and existing binary initramfs images from `/boot/`.
 3. **Phase B (Verify)**:
    - Validates that every backed up file exists, is readable, and non-empty.
+   - Computes and records baseline SHA-256 hashes (`pre_apply_hashes`) for all managed files.
    - Writes and validates the restoration `manifest.json`.
    - Updates the `/var/backups/gps-boot/latest` pointer only after verification succeeds.
    - If any verification check fails, apply aborts before changing a single system file.
-4. **Phase C (Apply Modifications)**:
+4. **Phase C (Apply Modifications & Post-Apply Hashing)**:
    - Arms an automatic emergency rollback trap (`trap cleanup_on_apply_failure ERR`).
    - Updates `/etc/plymouth/plymouthd.conf` with `[Daemon] Theme=gps`.
    - Cleans and installs the theme package to `/usr/share/plymouth/themes/gps/`.
    - Injects the `plymouth` hook into `/etc/mkinitcpio.conf` if not present.
    - Adds `splash` kernel parameter if missing.
    - Regenerates initramfs and synchronizes Limine boot entries via `sudo limine-mkinitcpio`.
+   - Records post-apply SHA-256 hashes (`post_apply_hashes`) of all managed files in `manifest.json` and marks `apply_completed = true`.
    - Disarms the emergency rollback trap upon successful completion.
 
 ### Step 3: Verify Installation
@@ -192,7 +194,7 @@ Expected output: `gps`.
 
 ---
 
-## 7. Rollback Procedure
+## 7. Rollback Procedure & Conflict Protection
 
 To completely revert the system to its previous state:
 
@@ -205,14 +207,33 @@ To roll back to a specific timestamped backup archive:
 sudo ./boot/install-splash.sh --rollback /var/backups/gps-boot/20261030_XXXXXX
 ```
 
-What rollback executes:
+### Rollback Conflict Protection
+Before modifying ANY file on the target system, rollback performs **pre-flight conflict detection**:
+1. It compares the current SHA-256 hashes of all managed files (`/boot/limine.conf`, initramfs images, `/etc/plymouth/plymouthd.conf`, `/etc/mkinitcpio.conf`, `/etc/default/limine`) against the recorded `post_apply_hashes`.
+2. If any managed file has changed independently since GPS installation (for example, if a subsequent `pacman -Syu` updated the kernel and regenerated initramfs, or if an administrator manually edited `limine.conf`), **rollback aborts immediately with zero modifications made**.
+3. A precise report listing all conflicting paths is displayed on `stderr`.
+4. The backup archive is preserved intact for inspection.
+5. If rollback was already run previously (idempotent repeated rollback), the files match `pre_apply_hashes` and rollback completes safely without conflict.
+
+### What Rollback Executes (when no conflicts exist):
 1. Restores the original `/etc/plymouth/plymouthd.conf` (re-activating `cachyos-bootanimation`).
 2. Restores `/etc/mkinitcpio.conf` if it was modified.
 3. Restores bootloader configuration in `/etc/default/limine` and `/etc/default/grub` if modified.
 4. Restores `/boot/limine.conf` and the exact original binary initramfs images directly on the separate `/boot` partition.
-5. Prunes any new boot artifacts created during apply that were not in the pre-apply inventory.
+5. **Boot Artifact Preservation**: All independent boot artifacts (newly installed kernels, new initramfs images, EFI binaries, firmware update capsules, new bootloader entries, directories, and symlinks) are **strictly preserved**. Automatic pruning of `/boot` is completely disabled.
 6. Restores the pre-existing GPS theme if one existed before apply, or removes `/usr/share/plymouth/themes/gps/`.
 7. **Purely Restorative Guarantee**: The verified bit-for-bit binary images and bootloader configurations are restored directly from backup. `limine-mkinitcpio` is **never executed during rollback**, eliminating any compiler, packaging, or hook failure risk during recovery.
+
+### When Manual Recovery is Required
+If rollback is refused due to conflict (e.g. a kernel was upgraded after GPS theme installation):
+- **Do not force rollback**. Forcing rollback would overwrite your upgraded kernel's initramfs with an older kernel's initramfs.
+- The backup archive in `/var/backups/gps-boot/<timestamp>/` remains available. You can inspect its files and manually restore only the specific configuration you desire:
+  ```bash
+  # Example: Inspect original configs in backup archive
+  ls -la /var/backups/gps-boot/latest/
+  # Revert Plymouth daemon config manually if desired:
+  sudo cp /var/backups/gps-boot/latest/plymouthd.conf.orig /etc/plymouth/plymouthd.conf
+  ```
 
 ---
 

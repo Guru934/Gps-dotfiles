@@ -553,6 +553,8 @@ do_dry_run() {
     printf "  - Rollback is purely restorative: bit-for-bit initramfs and bootloader files are\n"
     printf "    restored directly from backup. 'limine-mkinitcpio' is NEVER run during rollback.\n"
     printf "  - The backup archive is the single source of recovery truth.\n"
+    printf "  - Independent boot artifacts (kernels, initramfs, EFI files) are strictly PRESERVED.\n"
+    printf "  - Conflict detection aborts rollback if managed files were modified independently.\n"
 
     printf "\n%bExact Manual Execution Commands for THIS Machine:%b\n" "$C_BOLD$C_GREEN" "$C_RESET"
     printf "  1. Take dedicated non-expiring Snapper snapshot (omits timeline cleanup):\n"
@@ -712,6 +714,24 @@ do_apply() {
         done < <(find "${BOOT_DIR}" -type f \( -name "initramfs*" -o -name "*initrd*" -o -name "*.img" \) -print0 2>/dev/null || true)
     fi
 
+    # 7. Collect list of files managed or replaced by GPS Plymouth for conflict tracking
+    local managed_files_file="${backup_dir}/.managed_files_list"
+    : > "${managed_files_file}"
+    echo "${PLYMOUTHD_CONF}" >> "${managed_files_file}"
+    echo "${MKINITCPIO_CONF}" >> "${managed_files_file}"
+    if [[ -f "${LIMINE_DEFAULT_CONF}" || "${DETECTED_BOOTLOADER}" == "Limine" ]]; then
+        echo "${LIMINE_DEFAULT_CONF}" >> "${managed_files_file}"
+    fi
+    if [[ -f "${GRUB_DEFAULT_CONF}" || "${DETECTED_BOOTLOADER}" == "GRUB" ]]; then
+        echo "${GRUB_DEFAULT_CONF}" >> "${managed_files_file}"
+    fi
+    for b_conf in "${backed_up_boot_configs[@]+"${backed_up_boot_configs[@]}"}"; do
+        echo "$b_conf" >> "${managed_files_file}"
+    done
+    for b_img in "${backed_up_initramfs[@]+"${backed_up_initramfs[@]}"}"; do
+        echo "$b_img" >> "${managed_files_file}"
+    done
+
     # =========================================================================
     # PHASE B: Verify Backup Completeness & Integrity
     # Before modifying ANY target system file, verify all expected backup files
@@ -792,7 +812,16 @@ do_apply() {
     local manifest_file="${backup_dir}/manifest.json"
     if [[ "${verify_ok}" == "true" ]]; then
         python3 -c "
-import sys, json, os
+import sys, json, os, hashlib
+
+def hash_file(p):
+    if not os.path.isfile(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
 
 manifest_path = sys.argv[1]
 timestamp = sys.argv[2]
@@ -806,7 +835,7 @@ had_mkinitcpio = (sys.argv[9] == 'true')
 had_limine = (sys.argv[10] == 'true')
 had_grub = (sys.argv[11] == 'true')
 backup_list_path = sys.argv[12]
-boot_dir_path = sys.argv[13]
+managed_list_path = sys.argv[13]
 
 backed_up_files = []
 if os.path.isfile(backup_list_path):
@@ -817,14 +846,18 @@ if os.path.isfile(backup_list_path):
     except OSError:
         pass
 
-pre_apply_boot_files = []
-if os.path.isdir(boot_dir_path):
-    for root, dirs, files in os.walk(boot_dir_path):
-        for name in files:
-            full_p = os.path.join(root, name)
-            rel_p = os.path.relpath(full_p, boot_dir_path)
-            pre_apply_boot_files.append(rel_p)
-pre_apply_boot_files.sort()
+managed_files = []
+if os.path.isfile(managed_list_path):
+    with open(managed_list_path, 'r', encoding='utf-8') as f:
+        managed_files = sorted(list(set(line.strip() for line in f if line.strip())))
+    try:
+        os.remove(managed_list_path)
+    except OSError:
+        pass
+
+pre_hashes = {}
+for p in managed_files:
+    pre_hashes[p] = hash_file(p)
 
 manifest = {
     'timestamp': timestamp,
@@ -838,7 +871,10 @@ manifest = {
     'had_limine_default': had_limine,
     'had_grub_default': had_grub,
     'backed_up_files': backed_up_files,
-    'pre_apply_boot_files': pre_apply_boot_files
+    'managed_files': managed_files,
+    'pre_apply_hashes': pre_hashes,
+    'post_apply_hashes': {},
+    'apply_completed': False
 }
 
 with open(manifest_path, 'w', encoding='utf-8') as f:
@@ -855,7 +891,7 @@ with open(manifest_path, 'w', encoding='utf-8') as f:
   "${had_limine_default}" \
   "${had_grub_default}" \
   "${backup_list_file}" \
-  "${BOOT_DIR}"
+  "${managed_files_file}"
 
         if [[ ! -f "${manifest_file}" || ! -s "${manifest_file}" ]]; then
             verify_ok=false
@@ -892,11 +928,13 @@ with open(manifest_path, 'w', encoding='utf-8') as f:
             printf "\n%b[FAILURE DETECTED] Error encountered during apply! Initiating automatic emergency rollback...%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
             apply_in_progress=false
             ROLLBACK_TARGET="${backup_dir}"
+            GPS_EMERGENCY_RECOVERY=true
             if do_rollback; then
                 printf "%b[RESTORED] System safely rolled back to pre-apply state.%b\n" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
             else
                 printf "%b[CRITICAL] Rollback also encountered errors. Backup preserved at %s%b\n" "$C_RED$C_BOLD" "${backup_dir}" "$C_RESET" >&2
             fi
+            GPS_EMERGENCY_RECOVERY=false
             exit 1
         fi
     }
@@ -965,7 +1003,12 @@ with open(conf, 'w', encoding='utf-8') as f:
     fi
 
     # 5. Initramfs regeneration if requested
-    if [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
+    if [[ "${GPS_TEST_MOCK_INITRD_REBUILD:-0}" == "1" ]]; then
+        printf "\n%b[TEST] Regenerating mock initramfs and updating bootloader entries...%b\n" "$C_CYAN" "$C_RESET"
+        if [[ -n "${ROOT_DIR}" && -x "${ROOT_DIR}/usr/bin/limine-mkinitcpio" ]]; then
+            "${ROOT_DIR}/usr/bin/limine-mkinitcpio"
+        fi
+    elif [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
         printf "\n%bRegenerating initramfs and updating bootloader entries...%b\n" "$C_CYAN" "$C_RESET"
         if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
             limine-mkinitcpio
@@ -975,6 +1018,35 @@ with open(conf, 'w', encoding='utf-8') as f:
     else
         printf "Initramfs regeneration skipped (--no-initrd-rebuild or test root).\n"
     fi
+
+    # 6. Record post-apply hashes of all managed files and mark apply complete
+    python3 -c "
+import sys, json, os, hashlib
+
+def hash_file(p):
+    if not os.path.isfile(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+manifest_path = sys.argv[1]
+with open(manifest_path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+managed_files = data.get('managed_files', [])
+post_hashes = {}
+for p in managed_files:
+    post_hashes[p] = hash_file(p)
+
+data['post_apply_hashes'] = post_hashes
+data['apply_completed'] = True
+
+with open(manifest_path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+" "${manifest_file}"
 
     apply_in_progress=false
     trap - ERR
@@ -1059,6 +1131,114 @@ except Exception as e:
         return 1
     fi
 
+    # 0. Pre-flight Conflict Detection: ensure managed files were not modified independently
+    local conflict_res
+    conflict_res="$(python3 -c "
+import sys, json, os, hashlib
+
+def hash_file(p):
+    if not os.path.isfile(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+def resolve_path(p, root_dir):
+    if os.path.exists(p):
+        return p
+    if root_dir and root_dir != '/':
+        for marker in ['/etc/', '/boot/', '/usr/']:
+            if marker in p:
+                suffix = p[p.index(marker) + 1:]
+                candidate = os.path.join(root_dir, suffix)
+                if os.path.exists(candidate):
+                    return candidate
+    return p
+
+manifest_path = sys.argv[1]
+root_dir = sys.argv[2]
+is_emergency = (sys.argv[3] == 'true')
+
+if not os.path.isfile(manifest_path):
+    print('CONFLICT')
+    print('Backup manifest not found')
+    sys.exit(0)
+
+with open(manifest_path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+apply_completed = data.get('apply_completed', False)
+post_hashes = data.get('post_apply_hashes', {})
+pre_hashes = data.get('pre_apply_hashes', {})
+managed_files = data.get('managed_files', [])
+
+conflicts = []
+
+if not is_emergency:
+    if apply_completed and post_hashes:
+        for p in managed_files:
+            actual_path = resolve_path(p, root_dir)
+            post_h = post_hashes.get(p)
+            pre_h = pre_hashes.get(p)
+            curr_h = hash_file(actual_path)
+
+            if curr_h != post_h and curr_h != pre_h:
+                if curr_h is None:
+                    conflicts.append(f'{actual_path} (file removed independently since installation)')
+                elif post_h is None and curr_h is not None:
+                    conflicts.append(f'{actual_path} (file created independently since installation)')
+                else:
+                    conflicts.append(f'{actual_path} (content modified independently since installation)')
+    else:
+        # Incomplete or failed apply: verify no conflicting independent changes
+        for p in managed_files:
+            actual_path = resolve_path(p, root_dir)
+            pre_h = pre_hashes.get(p)
+            curr_h = hash_file(actual_path)
+            if curr_h != pre_h:
+                if 'boot' in actual_path.lower() or curr_h is None:
+                    conflicts.append(f'{actual_path} (unverified state after incomplete apply; cannot prove ownership)')
+                else:
+                    if actual_path.endswith('plymouthd.conf'):
+                        try:
+                            with open(actual_path, 'r', encoding='utf-8') as f:
+                                c = f.read()
+                            if 'Theme=gps' not in c:
+                                conflicts.append(f'{actual_path} (modified independently)')
+                        except Exception:
+                            conflicts.append(f'{actual_path} (unreadable or modified independently)')
+                    elif actual_path.endswith('mkinitcpio.conf'):
+                        try:
+                            with open(actual_path, 'r', encoding='utf-8') as f:
+                                c = f.read()
+                            if 'plymouth' not in c:
+                                conflicts.append(f'{actual_path} (modified independently)')
+                        except Exception:
+                            conflicts.append(f'{actual_path} (unreadable or modified independently)')
+
+if conflicts:
+    print('CONFLICT')
+    for c in conflicts:
+        print(c)
+else:
+    print('OK')
+" "${manifest_file}" "${ROOT_DIR:-/}" "${GPS_EMERGENCY_RECOVERY:-false}")"
+
+    if [[ "${conflict_res}" == CONFLICT* ]]; then
+        printf "%bError: Rollback aborted due to conflict(s). Target files have been modified independently since GPS installation.%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+        printf "Conflicting paths:\n" >&2
+        while IFS= read -r line; do
+            if [[ "$line" != "CONFLICT" && -n "$line" ]]; then
+                printf "  - %s\n" "$line" >&2
+            fi
+        done <<< "${conflict_res}"
+        printf "\nRollback refused to prevent overwriting subsequent system modifications.\n" >&2
+        printf "Backup archive preserved for inspection at:\n  -> %s\n\n" "${backup_dir}" >&2
+        return 1
+    fi
+
     # 1. Restore plymouthd.conf
     if [[ -f "${backup_dir}/plymouthd.conf.orig" ]]; then
         printf "Restoring %s from backup...\n" "${PLYMOUTHD_CONF}"
@@ -1118,37 +1298,8 @@ except Exception as e:
         fi
     fi
 
-    # 5. Prune any new files generated in /boot during apply that were not in pre-apply inventory
-    if [[ -d "${BOOT_DIR}" ]]; then
-        python3 -c "
-import json, os, sys
-manifest_path = sys.argv[1]
-boot_dir = sys.argv[2]
-if not os.path.isdir(boot_dir):
-    sys.exit(0)
-with open(manifest_path, 'r', encoding='utf-8') as f:
-    data = json.load(f)
-pre_apply = set(data.get('pre_apply_boot_files', []))
-# Walk boot_dir bottom-up
-for root, dirs, files in os.walk(boot_dir, topdown=False):
-    for name in files:
-        full_path = os.path.join(root, name)
-        rel_path = os.path.relpath(full_path, boot_dir)
-        if rel_path not in pre_apply:
-            print(f'Pruning file created during apply: {rel_path}')
-            try:
-                os.remove(full_path)
-            except OSError as e:
-                print(f'Warning: could not remove {full_path}: {e}', file=sys.stderr)
-    for name in dirs:
-        full_dir = os.path.join(root, name)
-        try:
-            if not os.listdir(full_dir):
-                os.rmdir(full_dir)
-        except OSError:
-            pass
-" "${manifest_file}" "${BOOT_DIR}"
-    fi
+    # 5. Independent boot artifacts (kernels, initramfs, EFI files, bootloader entries)
+    # are strictly PRESERVED. Automatic /boot pruning is completely disabled.
 
     # 6. Restore or remove GPS theme directory
     if [[ "${M_HAD_THEME}" == "true" && -d "${backup_dir}/theme_gps_preexisting" ]]; then

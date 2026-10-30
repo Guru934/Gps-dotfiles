@@ -173,16 +173,12 @@ class BootSplashInstallerTests(unittest.TestCase):
         self.assertTrue(backed_initramfs.exists())
         self.assertEqual(backed_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
 
-        # Simulate mutation of /boot during bootloader updates
-        (self.fake_boot / "limine.conf").write_text("MUTATED_LIMINE_CONF", encoding="utf-8")
-        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
-        target_initramfs.write_text("MUTATED_INITRAMFS_DATA", encoding="utf-8")
-
         # Rollback
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
 
         # Verify restoration of /boot files
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
         self.assertEqual((self.fake_boot / "limine.conf").read_text(encoding="utf-8"), self.initial_limine_conf)
         self.assertEqual(target_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
 
@@ -443,10 +439,14 @@ class BootSplashInstallerTests(unittest.TestCase):
         binary_data = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03\xed\x9d\x07\x58\x14\x55\x19\xc7\xbf\x3b\xaa\xbb\xcc\xdd"
         target_img.write_bytes(binary_data)
 
-        self.run_installer("--apply")
+        # Configure mock limine-mkinitcpio to regenerate initramfs during apply
+        limine_mk = self.fake_bin / "limine-mkinitcpio"
+        limine_mk.write_text(f"#!/bin/sh\necho 'APPLY_REGENERATED_BYTES' > '{target_img}'\nexit 0\n", encoding="utf-8")
+        limine_mk.chmod(0o755)
 
-        # Mutate the initramfs in /boot
-        target_img.write_bytes(b"\x00\x00\x00_MUTATED_CORRUPTED_INITRAMFS_DATA_123456")
+        res_apply = self.run_installer("--apply", env={"GPS_TEST_MOCK_INITRD_REBUILD": "1"})
+        self.assertEqual(res_apply.returncode, 0)
+        self.assertEqual(target_img.read_bytes(), b"APPLY_REGENERATED_BYTES\n")
 
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
@@ -470,10 +470,14 @@ class BootSplashInstallerTests(unittest.TestCase):
         limine_file = self.fake_boot / "limine.conf"
         limine_file.write_text(complex_limine, encoding="utf-8")
 
-        self.run_installer("--apply")
+        # Configure mock limine-mkinitcpio to regenerate limine.conf during apply
+        limine_mk = self.fake_bin / "limine-mkinitcpio"
+        limine_mk.write_text(f"#!/bin/sh\necho 'APPLY_REGENERATED_LIMINE' > '{limine_file}'\nexit 0\n", encoding="utf-8")
+        limine_mk.chmod(0o755)
 
-        # Mutate limine.conf
-        limine_file.write_text("timeout: 0\n/Corrupted\n  protocol: none\n", encoding="utf-8")
+        res_apply = self.run_installer("--apply", env={"GPS_TEST_MOCK_INITRD_REBUILD": "1"})
+        self.assertEqual(res_apply.returncode, 0)
+        self.assertEqual(limine_file.read_text(encoding="utf-8"), "APPLY_REGENERATED_LIMINE\n")
 
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
@@ -536,29 +540,147 @@ class BootSplashInstallerTests(unittest.TestCase):
         self.run_installer("--rollback")
         self.assertFalse(dest_theme.exists())
 
-    def test_newly_generated_initramfs_files_are_cleaned_up_safely(self):
-        """Fix 4: Newly generated initramfs artifacts created during apply are cleaned up on rollback."""
+    def test_independent_boot_artifacts_are_preserved_on_rollback(self):
+        """Fix 1 & 2: Independent boot artifacts (kernels, initramfs, EFI files, entries, symlinks, dirs) are preserved on rollback."""
         self.run_installer("--apply")
 
-        # Simulate newly generated boot artifacts created after/during apply
+        # Simulate independent boot artifacts created after apply
+        new_kernel = self.fake_boot / "vmlinuz-linux-zen"
+        new_kernel.write_bytes(b"MOCK_NEW_KERNEL_BINARY")
+
         new_img = self.fake_boot / "initramfs-linux-fallback.img"
         new_img.write_text("NEW_FALLBACK_INITRAMFS", encoding="utf-8")
+
+        new_efi = self.fake_boot / "EFI" / "UpdateCapsule" / "firmware.bin"
+        new_efi.parent.mkdir(parents=True, exist_ok=True)
+        new_efi.write_bytes(b"MOCK_FIRMWARE_CAPSULE_UPDATE")
+
         new_entry = self.fake_boot / "loader" / "entries" / "new-entry.conf"
         new_entry.parent.mkdir(parents=True, exist_ok=True)
         new_entry.write_text("title New Entry\n", encoding="utf-8")
 
-        self.assertTrue(new_img.exists())
-        self.assertTrue(new_entry.exists())
+        new_dir = self.fake_boot / "custom_boot_dir"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        (new_dir / "marker.txt").write_text("STAY_INTACT", encoding="utf-8")
+
+        new_symlink = new_dir / "zen_link"
+        new_symlink.symlink_to("../vmlinuz-linux-zen")
 
         res_rb = self.run_installer("--rollback")
         self.assertEqual(res_rb.returncode, 0)
 
-        self.assertFalse(new_img.exists(), "Newly generated initramfs was not pruned on rollback")
-        self.assertFalse(new_entry.exists(), "Newly generated bootloader entry was not pruned on rollback")
+        # Verify all independent files and directories are completely untouched
+        self.assertTrue(new_kernel.exists(), "New kernel binary was deleted on rollback")
+        self.assertEqual(new_kernel.read_bytes(), b"MOCK_NEW_KERNEL_BINARY")
+
+        self.assertTrue(new_img.exists(), "New initramfs was deleted on rollback")
+        self.assertEqual(new_img.read_text(encoding="utf-8"), "NEW_FALLBACK_INITRAMFS")
+
+        self.assertTrue(new_efi.exists(), "New EFI binary was deleted on rollback")
+        self.assertEqual(new_efi.read_bytes(), b"MOCK_FIRMWARE_CAPSULE_UPDATE")
+
+        self.assertTrue(new_entry.exists(), "New bootloader entry was deleted on rollback")
+        self.assertEqual(new_entry.read_text(encoding="utf-8"), "title New Entry\n")
+
+        self.assertTrue(new_dir.exists(), "New directory was removed on rollback")
+        self.assertTrue((new_dir / "marker.txt").exists())
+        self.assertTrue(new_symlink.is_symlink(), "New symlink was deleted on rollback")
 
         target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
         self.assertTrue(target_initramfs.exists())
         self.assertEqual(target_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
+
+    def test_independently_modified_initramfs_aborts_rollback_zero_partial_restoration(self):
+        """Fix 3: An independently modified initramfs causes rollback to abort with zero partial restoration."""
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.run_installer("--apply")
+        self.assertTrue(dest_theme.exists())
+
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        target_initramfs.write_text("INDEPENDENT_KERNEL_UPDATE_CONTENT", encoding="utf-8")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertNotEqual(res_rb.returncode, 0)
+        self.assertIn("conflict", res_rb.stderr.lower())
+        self.assertIn(str(target_initramfs), res_rb.stderr)
+
+        # Zero partial restoration check
+        self.assertTrue(dest_theme.exists(), "Theme was removed despite conflict abortion")
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=gps", conf_text, "plymouthd.conf was restored despite conflict abortion")
+        self.assertEqual(target_initramfs.read_text(encoding="utf-8"), "INDEPENDENT_KERNEL_UPDATE_CONTENT")
+
+    def test_independently_modified_limine_conf_aborts_rollback_zero_partial_restoration(self):
+        """Fix 3: An independently modified Limine configuration causes rollback to abort with zero partial restoration."""
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.run_installer("--apply")
+        self.assertTrue(dest_theme.exists())
+
+        limine_file = self.fake_boot / "limine.conf"
+        limine_file.write_text("timeout: 15\n/Custom Entry\n  protocol: linux\n", encoding="utf-8")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertNotEqual(res_rb.returncode, 0)
+        self.assertIn("conflict", res_rb.stderr.lower())
+        self.assertIn(str(limine_file), res_rb.stderr)
+
+        # Zero partial restoration check
+        self.assertTrue(dest_theme.exists())
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=gps", conf_text)
+        self.assertEqual(limine_file.read_text(encoding="utf-8"), "timeout: 15\n/Custom Entry\n  protocol: linux\n")
+
+    def test_independently_modified_etc_conf_aborts_rollback_safely(self):
+        """Fix 3: An independently modified /etc configuration causes rollback to abort safely."""
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.run_installer("--apply")
+        self.assertTrue(dest_theme.exists())
+
+        mkinitcpio_file = self.fake_etc / "mkinitcpio.conf"
+        mkinitcpio_file.write_text("HOOKS=(base systemd custom_hook_added_by_admin)\n", encoding="utf-8")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertNotEqual(res_rb.returncode, 0)
+        self.assertIn("conflict", res_rb.stderr.lower())
+        self.assertIn(str(mkinitcpio_file), res_rb.stderr)
+
+        # Zero partial restoration
+        self.assertTrue(dest_theme.exists())
+        self.assertEqual(mkinitcpio_file.read_text(encoding="utf-8"), "HOOKS=(base systemd custom_hook_added_by_admin)\n")
+
+    def test_conflict_reports_identify_all_affected_paths(self):
+        """Fix 3: Conflict reports identify all affected conflicting paths explicitly."""
+        self.run_installer("--apply")
+
+        limine_file = self.fake_boot / "limine.conf"
+        limine_file.write_text("timeout: 99\n", encoding="utf-8")
+        mkinitcpio_file = self.fake_etc / "mkinitcpio.conf"
+        mkinitcpio_file.write_text("HOOKS=(admin_edit)\n", encoding="utf-8")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertNotEqual(res_rb.returncode, 0)
+        self.assertIn(str(limine_file), res_rb.stderr)
+        self.assertIn(str(mkinitcpio_file), res_rb.stderr)
+
+    def test_backup_archives_remain_available_after_rejected_rollback(self):
+        """Fix 3: Backup archives remain available after a rejected rollback."""
+        self.run_installer("--apply")
+
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        target_initramfs.write_text("CONFLICT_DATA", encoding="utf-8")
+
+        backups = list(self.fake_backups.glob("*_*"))
+        self.assertEqual(len(backups), 1)
+        bdir = backups[0]
+
+        res_rb = self.run_installer("--rollback")
+        self.assertNotEqual(res_rb.returncode, 0)
+
+        # Archive remains intact and available for manual recovery
+        self.assertTrue(bdir.exists())
+        self.assertTrue((bdir / "manifest.json").exists())
+        self.assertTrue((bdir / "plymouthd.conf.orig").exists())
+        self.assertTrue((bdir / "boot" / "limine.conf").exists())
 
     def test_unrelated_boot_files_are_preserved(self):
         """Fix 4: Unrelated boot files are preserved through apply and rollback."""
