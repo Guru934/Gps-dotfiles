@@ -35,9 +35,9 @@ ShellRoot {
 
     property bool shown: true
     property int page: 0
-    property string uiFont: Qt.application.font.family
-    property string monoFont: "monospace"
-    property string iconFont: "Material Symbols Rounded"
+    property string uiFont: Theme.fontSans
+    property string monoFont: Theme.fontMono
+    property string iconFont: Theme.fontIcon
     property bool iconOk: true
     property string palettePath: ""
     property string paletteSource: "built-in fallback"

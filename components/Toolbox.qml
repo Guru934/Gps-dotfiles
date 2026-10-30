@@ -216,8 +216,9 @@ Item {
         readonly property color red: Theme.statusDanger
         readonly property color redDeep: "#93000a"
         readonly property color amber: Theme.statusWarn
-        readonly property string sans: Theme.fontUi
+        readonly property string sans: Theme.fontSans
         readonly property string mono: Theme.fontMono
+        readonly property string icon: Theme.fontIcon
         function a(c, o) { return Qt.rgba(c.r, c.g, c.b, o) }
     }
     component Lbl: Text {
@@ -2264,7 +2265,7 @@ Item {
         id: pvDlg
         animMs: root.animMs; dlgWidth: 480; title: root.pvTitle; subtitle: "Preview only"
         onDismissed: open = false
-        Repeater { model: root.pvSteps; Lbl { text: modelData; Layout.fillWidth: true; color: th.text; font.family: "JetBrains Mono"; font.pixelSize: 12 } }
+        Repeater { model: root.pvSteps; Lbl { text: modelData; Layout.fillWidth: true; color: th.text; font.family: Theme.fontMono; font.pixelSize: 12 } }
         Mono { visible: root.pvSteps.length === 0; text: "No steps."; color: th.mute }
         Wrap { text: root.pvNote; color: th.amber }
         footer: [ Spacer {}, Btn { text: "Close"; onClicked: pvDlg.open = false },

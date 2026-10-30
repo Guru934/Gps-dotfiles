@@ -80,8 +80,33 @@ Singleton {
         onFileChanged: riceSettingsFile.reload()
     }
 
-    readonly property string fontUi: "Plus Jakarta Sans"
-    readonly property string fontMono: "JetBrains Mono"
+    // Preferred typography families
+    readonly property string fontSansPreferred: "Plus Jakarta Sans"
+    readonly property string fontMonoPreferred: "JetBrains Mono"
+    readonly property string fontIconPreferred: "Material Symbols Rounded"
+
+    // Functional installed fallbacks
+    readonly property string fontSansFallback: "Noto Sans"
+    readonly property string fontMonoFallback: "JetBrainsMono Nerd Font"
+    readonly property string fontIconFallback: "Material Symbols Rounded"
+
+    function resolveFont(preferred, fallbacks) {
+        if (typeof Qt !== "undefined" && Qt.fontFamilies) {
+            const list = Qt.fontFamilies()
+            if (list.indexOf(preferred) >= 0) return preferred
+            for (let i = 0; i < fallbacks.length; i++) {
+                if (list.indexOf(fallbacks[i]) >= 0) return fallbacks[i]
+            }
+        }
+        return fallbacks.length > 0 ? fallbacks[0] : preferred
+    }
+
+    readonly property string fontSans: root.resolveFont(root.fontSansPreferred, [root.fontSansFallback, "DejaVu Sans", "sans-serif"])
+    readonly property string fontMono: root.resolveFont(root.fontMonoPreferred, [root.fontMonoFallback, "Noto Sans Mono", "monospace"])
+    readonly property string fontIcon: root.resolveFont(root.fontIconPreferred, [root.fontIconFallback, "Material Symbols Outlined", "sans-serif"])
+
+    // Preserved alias for backwards compatibility
+    readonly property string fontUi: root.fontSans
 
     // Core tokens: live wallpaper palette when available, design defaults otherwise.
     property color surface: root.live.surface !== undefined ? root.live.surface : "#B30F131C"

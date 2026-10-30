@@ -10,7 +10,7 @@ Text {
 
     text: root.name
     color: Theme.textMuted
-    font.family: "Material Symbols Rounded"
+    font.family: Theme.fontIcon
     font.pixelSize: Theme.iconMd
     font.variableAxes: { "FILL": root.filled ? 1.0 : 0.0 }
     horizontalAlignment: Text.AlignHCenter

@@ -1328,7 +1328,7 @@ Item {
         text: g(name)
         color: tint
         font.pixelSize: size
-        font.family: "DejaVu Sans"
+        font.family: Theme.fontSans
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

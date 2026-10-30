@@ -120,9 +120,9 @@ Scope {
     property color lav: Theme.accentSecondary
     property color amber: Theme.statusWarn
     property color coral: Theme.statusDangerFg
-    property string uiFont: Theme.fontUi
+    property string uiFont: Theme.fontSans
     property string monoFont: Theme.fontMono
-    property string iconFont: "Material Symbols Rounded"
+    property string iconFont: Theme.fontIcon
     property bool iconOk: true
 
     // ───────────── live data (all derived, override only for tests) ─────────────

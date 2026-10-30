@@ -71,6 +71,8 @@ class DesignTokensContractTests(unittest.TestCase):
     def test_typography_tokens_exist(self):
         self.assertIn("readonly property string fontUi:", THEME_QML)
         self.assertIn("readonly property string fontMono:", THEME_QML)
+        self.assertIn("readonly property string fontSans:", THEME_QML)
+        self.assertIn("readonly property string fontIcon:", THEME_QML)
         type_scales = [
             "fontSizeDisplay", "fontSizeHeading", "fontSizeSubheading",
             "fontSizeBody", "fontSizeSecondary", "fontSizeCaption", "fontSizeSmall"

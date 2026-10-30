@@ -19,6 +19,7 @@ QtObject {
     readonly property color error: (typeof Theme !== "undefined" && Theme.statusDanger) ? Theme.statusDanger : "#ffb4ab"
     readonly property color coral: (typeof Theme !== "undefined" && Theme.statusDangerFg) ? Theme.statusDangerFg : "#ff5d7a"
     readonly property string mono: (typeof Theme !== "undefined" && Theme.fontMono) ? Theme.fontMono : "JetBrains Mono"
-    readonly property string head: (typeof Theme !== "undefined" && Theme.fontUi) ? Theme.fontUi : "Plus Jakarta Sans"
-    readonly property string body: (typeof Theme !== "undefined" && Theme.fontUi) ? Theme.fontUi : "Plus Jakarta Sans"
+    readonly property string head: (typeof Theme !== "undefined" && (Theme.fontSans || Theme.fontUi)) ? (Theme.fontSans || Theme.fontUi) : "Plus Jakarta Sans"
+    readonly property string body: (typeof Theme !== "undefined" && (Theme.fontSans || Theme.fontUi)) ? (Theme.fontSans || Theme.fontUi) : "Plus Jakarta Sans"
+    readonly property string icon: (typeof Theme !== "undefined" && Theme.fontIcon) ? Theme.fontIcon : "Material Symbols Rounded"
 }
