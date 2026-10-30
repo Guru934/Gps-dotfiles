@@ -57,8 +57,11 @@
     - Harmonized `Island.qml` contract (`history`, `focusToggle`, `clipboard`, `clip`)
     - Added health checks (`gps-ipc check`) and system status command (`gps-ipc status`)
     - Automated failure and contract test suite (`tests/test_gps_ipc_reliability.py`)
-  - [ ] **P5.4 — Settings and persistence**
-    - Atomic configuration writes, malformed JSON recovery, safe defaults
+  - [x] **P5.4 — Settings and persistence**
+    - Enforced atomic writes via temp file + replace in `settings.qml`, `AIChat.qml`, and `Launcher.qml`
+    - Preserved existing configuration sections during targeted updates
+    - Fault-tolerant JSON handling with safe fallbacks on malformed settings
+    - Automated persistence and atomic write test suite (`tests/test_settings_persistence.py`)
   - [ ] **P5.5 — Graceful dependency handling**
     - Clean UI fallbacks when audio, network, bluetooth, battery, or tools are unavailable
   - [ ] **P5.6 — Integrated reliability verification**

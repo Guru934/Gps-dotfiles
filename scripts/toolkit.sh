@@ -13,7 +13,10 @@ set -u
 STATUS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/tools-last"
 SNIP_FILE="${XDG_RUNTIME_DIR:-/tmp}/tools-snip-${UID:-1000}.png"
 
-write_status() { printf '%s\n' "$1" > "$STATUS_FILE"; }
+write_status() {
+    mkdir -p "$(dirname "$STATUS_FILE")"
+    printf '%s\n' "$1" > "$STATUS_FILE"
+}
 
 select_region() {
     local r

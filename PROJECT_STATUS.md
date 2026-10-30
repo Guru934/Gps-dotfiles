@@ -25,7 +25,13 @@
   - Replaced hardcoded `tide-island` IPC paths in `NotifCenter.qml` with dynamic `gps-ipc` invocations.
   - Added `gps-ipc check [shell|island|settings|all]` and `gps-ipc status` diagnostic commands.
   - Added comprehensive failure, timeout, and routing test suite in `tests/test_gps_ipc_reliability.py` (10 tests passing).
-- [ ] **P5.4 — Settings and Persistence**: In Progress.
+- [x] **P5.4 — Settings and Persistence**: Completed.
+  - Migrated `settings.qml` `writeFile` to atomic write pattern (`.tmp` file in same directory + `mv -f`).
+  - Rewrote `AIChat.qml` model preference persister with atomic Python replacement that preserves existing `hypr`, `monitors`, and `island` sections.
+  - Updated `Launcher.qml` usage frequency writer and `scripts/toolkit.sh` with safe directory creation and atomic replacement.
+  - Added validation for non-array object shapes and corrupt JSON fallbacks in `settings.qml`.
+  - Added automated persistence tests in `tests/test_settings_persistence.py` (5 tests passing).
+- [ ] **P5.5 — Graceful Dependency Handling**: In Progress.
 - [ ] **P5.4 — Settings and Persistence**: Pending.
 - [ ] **P5.5 — Graceful Dependency Handling**: Pending.
 - [ ] **P5.6 — Integrated Reliability Verification**: Pending.

@@ -51,7 +51,7 @@ Item {
     function bump(id) {
         const u = Object.assign({}, usage); u[id] = (u[id] || 0) + 1; usage = u
         // The path is fixed by the component and the value is passed as an argument.
-        Quickshell.execDetached(["sh", "-c", "umask 077; mkdir -p \"$(dirname \"$1\")\"; printf '%s\\n' \"$2\" > \"$1\"", "sh", usagePath, JSON.stringify(u)])
+        Quickshell.execDetached(["sh", "-c", "umask 077; d=\"$(dirname \"$1\")\"; tmp=\"${d}/.$(basename \"$1\").tmp.$$\"; mkdir -p \"$d\" && printf '%s\\n' \"$2\" > \"$tmp\" && mv -f \"$tmp\" \"$1\"", "sh", usagePath, JSON.stringify(u)])
     }
 
     function fuzzy(q, text) {

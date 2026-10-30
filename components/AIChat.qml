@@ -133,7 +133,25 @@ PanelWindow {
 
     function persistModelChoice(name) {
         Quickshell.execDetached(["python3", "-c",
-            "import json,sys\np=sys.argv[1];n=sys.argv[2]\ntry:\n    d=json.load(open(p))\nexcept Exception:\n    d={}\nd.setdefault('ai',{})['model']=n\njson.dump(d,open(p,'w'),indent=2)",
+            "import json, os, sys, tempfile\n" +
+            "p = sys.argv[1]; n = sys.argv[2]; d = {}\n" +
+            "if os.path.isfile(p):\n" +
+            "    try:\n" +
+            "        with open(p, 'r', encoding='utf-8') as f:\n" +
+            "            content = f.read().strip()\n" +
+            "            if content: d = json.loads(content)\n" +
+            "    except Exception: pass\n" +
+            "if not isinstance(d, dict): d = {}\n" +
+            "ai = d.setdefault('ai', {})\n" +
+            "if isinstance(ai, dict): ai['model'] = n\n" +
+            "d_dir = os.path.dirname(p)\n" +
+            "os.makedirs(d_dir, exist_ok=True)\n" +
+            "fd, tmp = tempfile.mkstemp(dir=d_dir, prefix='.rice-settings.tmp-')\n" +
+            "with os.fdopen(fd, 'w', encoding='utf-8') as f:\n" +
+            "    json.dump(d, f, indent=2)\n" +
+            "    f.flush()\n" +
+            "    os.fsync(f.fileno())\n" +
+            "os.replace(tmp, p)",
             root.storePath, name])
     }
 

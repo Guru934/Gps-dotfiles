@@ -160,7 +160,7 @@ ShellRoot {
 
     function sh(script, args) { Quickshell.execDetached(["sh", "-c", script, "sh"].concat(args || [])) }
     function writeFile(path, text) {
-        sh('mkdir -p "$(dirname "$1")" && printf "%s\\n" "$2" > "$1"', [path, text])
+        sh('d="$(dirname "$1")" && mkdir -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && printf "%s\\n" "$2" > "$tmp" && mv -f "$tmp" "$1"', [path, text])
     }
     function kv(txt) {
         const o = {}
@@ -279,7 +279,12 @@ ShellRoot {
         watchChanges: true
         onFileChanged: reload()
         onLoaded: {
-            try { root.store = Object.assign({ hypr: {}, monitors: {}, ai: {} }, JSON.parse(text())) } catch (e) {}
+            try {
+                const parsed = JSON.parse(text())
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    root.store = Object.assign({ hypr: {}, monitors: {}, ai: {} }, parsed)
+                }
+            } catch (e) {}
         }
     }
     FileView {
