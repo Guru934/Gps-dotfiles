@@ -1,0 +1,72 @@
+[Plymouth Theme]
+Name=GPS
+Description=GPS Desktop Plymouth boot splash theme (P4 Design System)
+ModuleName=two-step
+
+[two-step]
+Font=Cantarell 12
+TitleFont=Cantarell Light 24
+MonospaceFont=JetBrainsMono Nerd Font 12
+ImageDir=/usr/share/plymouth/themes/gps
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.55
+TitleHorizontalAlignment=.5
+TitleVerticalAlignment=.382
+HorizontalAlignment=.5
+VerticalAlignment=.58
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.42
+Transition=none
+TransitionDuration=0.0
+BackgroundStartColor=0x0f131c
+BackgroundEndColor=0x0f131c
+ProgressBarBackgroundColor=0x181b25
+ProgressBarForegroundColor=0x2dd4bf
+ProgressBarWidth=280
+ProgressBarHeight=4
+ProgressBarHorizontalAlignment=.5
+ProgressBarVerticalAlignment=.58
+UseProgressBar=true
+ProgressBarShowPercentComplete=false
+DialogClearsFirmwareBackground=true
+MessageBelowAnimation=true
+
+[boot-up]
+UseEndAnimation=false
+UseFirmwareBackground=false
+
+[shutdown]
+UseEndAnimation=false
+UseFirmwareBackground=false
+
+[reboot]
+UseEndAnimation=false
+UseFirmwareBackground=false
+
+[updates]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Installing Updates...
+SubTitle=Do not turn off your computer
+
+[system-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading System...
+SubTitle=Do not turn off your computer
+
+[firmware-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading Firmware...
+SubTitle=Do not turn off your computer
+
+[system-reset]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Resetting System...
+SubTitle=Do not turn off your computer
