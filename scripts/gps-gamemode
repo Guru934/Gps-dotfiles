@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""GPS Game Mode Controller — Manage Hyprland performance toggles.
+
+Disables animations, blur, shadows and gaps via verified Lua calls,
+snapshots previous values and restores them exactly.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def get_state_path() -> Path:
+    state_home = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state_home) / "gps" / "gamemode_state.json"
+
+
+def query_hypr_option(option_name: str) -> dict:
+    try:
+        res = subprocess.run(
+            ["hyprctl", "getoption", "-j", option_name],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout)
+    except Exception:
+        pass
+    return {}
+
+
+def parse_gap_value(data: dict, fallback: int) -> int:
+    # "css": "5 5 5 5" or "int": 5 or "custom": [5]
+    if "int" in data and isinstance(data["int"], int):
+        return data["int"]
+    if "css" in data and isinstance(data["css"], str):
+        parts = data["css"].strip().split()
+        if parts:
+            try:
+                return int(parts[0])
+            except ValueError:
+                pass
+    return fallback
+
+
+def is_active() -> bool:
+    return get_state_path().is_file()
+
+
+def eval_hypr_lua(lua_code: str) -> bool:
+    try:
+        res = subprocess.run(
+            ["hyprctl", "eval", lua_code],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return res.returncode == 0
+    except Exception as exc:
+        sys.stderr.write(f"Failed to eval Hyprland Lua: {exc}\n")
+        return False
+
+
+def enable_gamemode() -> bool:
+    state_path = get_state_path()
+    if not state_path.is_file():
+        # Snapshot current settings
+        anim_data = query_hypr_option("animations:enabled")
+        blur_data = query_hypr_option("decoration:blur:enabled")
+        shadow_data = query_hypr_option("decoration:shadow:enabled")
+        gaps_in_data = query_hypr_option("general:gaps_in")
+        gaps_out_data = query_hypr_option("general:gaps_out")
+
+        snapshot = {
+            "animations_enabled": anim_data.get("bool", True),
+            "blur_enabled": blur_data.get("bool", True),
+            "shadow_enabled": shadow_data.get("bool", True),
+            "gaps_in": parse_gap_value(gaps_in_data, 5),
+            "gaps_out": parse_gap_value(gaps_out_data, 20),
+        }
+
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = state_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        tmp_path.replace(state_path)
+
+    lua = (
+        "hl.config({ "
+        "animations = { enabled = false }, "
+        "decoration = { "
+        "blur = { enabled = false }, "
+        "shadow = { enabled = false } "
+        "}, "
+        "general = { gaps_in = 0, gaps_out = 0 } "
+        "})"
+    )
+    return eval_hypr_lua(lua)
+
+
+def disable_gamemode() -> bool:
+    state_path = get_state_path()
+    snapshot = {}
+    if state_path.is_file():
+        try:
+            snapshot = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            snapshot = {}
+        try:
+            state_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    anim = "true" if snapshot.get("animations_enabled", True) else "false"
+    blur = "true" if snapshot.get("blur_enabled", True) else "false"
+    shadow = "true" if snapshot.get("shadow_enabled", True) else "false"
+    gaps_in = int(snapshot.get("gaps_in", 5))
+    gaps_out = int(snapshot.get("gaps_out", 20))
+
+    lua = (
+        f"hl.config({{ "
+        f"animations = {{ enabled = {anim} }}, "
+        f"decoration = {{ "
+        f"blur = {{ enabled = {blur} }}, "
+        f"shadow = {{ enabled = {shadow} }} "
+        f"}}, "
+        f"general = {{ gaps_in = {gaps_in}, gaps_out = {gaps_out} }} "
+        f"}})"
+    )
+    return eval_hypr_lua(lua)
+
+
+def toggle_gamemode() -> bool:
+    if is_active():
+        return disable_gamemode()
+    return enable_gamemode()
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "status":
+        active = is_active()
+        print(f"active={1 if active else 0}")
+    elif cmd == "enable":
+        ok = enable_gamemode()
+        sys.exit(0 if ok else 1)
+    elif cmd == "disable":
+        ok = disable_gamemode()
+        sys.exit(0 if ok else 1)
+    elif cmd == "toggle":
+        ok = toggle_gamemode()
+        sys.exit(0 if ok else 1)
+    else:
+        sys.stderr.write(f"Usage: {sys.argv[0]} {{status|enable|disable|toggle}}\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.config
+import "../ControlLogic.js" as ControlLogic
 
 Item {
     id: st
@@ -12,8 +13,8 @@ Item {
     readonly property string key: "control"
     readonly property bool active: core.mode === key
     readonly property bool expanded: core.hovered || Boolean(core.controlExpanded) || localExpanded
-    readonly property real w: expanded ? 440 : 180
-    readonly property real h: expanded ? 380 : 36
+    readonly property real w: expanded ? 460 : 180
+    readonly property real h: expanded ? Math.min(560, Math.max(380, controlContent.implicitHeight + 40)) : 36
     readonly property color accent: core.teal
 
     anchors.fill: parent
@@ -24,6 +25,7 @@ Item {
 
     // ───────────── live state (populated only while active) ─────────────
     property bool localExpanded: false
+    property bool dndExpanded: false
 
     property bool hasNmcli: false
     property bool wifiEnabled: false
@@ -43,9 +45,12 @@ Item {
     property bool idleDaemonOn: false
     property int idleTimeoutSec: 0
 
+    property bool keepAwakeOn: false
+    property bool gameModeOn: false
+
     property bool hasPpd: false
     property string powerProfile: ""
-    readonly property var profileOrder: ["power-saver", "balanced", "performance"]
+    property var profileList: ControlLogic.DEFAULT_PROFILES
 
     property int fallbackBrightPct: -1
     property real dragBright: -1
@@ -78,14 +83,23 @@ Item {
         if (kernelVer !== "") parts.push("Linux " + kernelVer)
         return parts.join(" · ")
     }
+
+    readonly property string batteryTimeText: {
+        if (!core.hasBat) return ""
+        const s = core.charging ? core.ttf : (core.bat ? (core.bat.timeToEmpty || 0) : 0)
+        return ControlLogic.formatBatteryTime(s, core.charging)
+    }
+
     readonly property string headerBadgeText: {
         const parts = []
         if (core.hasBat) parts.push(Math.round(core.batPct) + "%")
+        if (batteryTimeText !== "") parts.push(batteryTimeText)
         if (powerProfile !== "") parts.push(powerProfile.toUpperCase())
         return parts.join(" · ")
     }
+
     readonly property string idleSubtitle: {
-        if (!hasIdleTool) return ""
+        if (!hasIdleTool) return "Off"
         if (!idleDaemonOn) return "Off"
         if (idleTimeoutSec > 0) {
             const mins = Math.round(idleTimeoutSec / 60)
@@ -94,14 +108,20 @@ Item {
         return "Active"
     }
 
+    readonly property string dndSubtitle: {
+        return ControlLogic.formatDndSubText(core.dndState, core.dnd, Date.now())
+    }
+
     // ───────────── lifecycle & dismissal ─────────────
     onActiveChanged: {
         if (active) {
             confirmPower = false
+            dndExpanded = false
             triggerProbe()
         } else {
             localExpanded = false
             confirmPower = false
+            dndExpanded = false
             dragBright = -1
             dragVol = -1
             if (sysProbe.running) sysProbe.running = false
@@ -110,6 +130,10 @@ Item {
 
     focus: active && expanded
     Keys.onEscapePressed: {
+        if (dndExpanded) {
+            dndExpanded = false
+            return
+        }
         localExpanded = false
         confirmPower = false
         if (typeof core.setControl === "function") core.setControl("close")
@@ -152,11 +176,14 @@ Item {
             "command -v hyprsunset >/dev/null 2>&1 && echo 'has_sunset=1' || echo 'has_sunset=0'; " +
             "pgrep -x hyprsunset >/dev/null 2>&1 && echo 'sunset_run=1' || echo 'sunset_run=0'; " +
             "echo \"sunset_k=$(ps -C hyprsunset -o args= 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"-t\" && $(i+1)~ /^[0-9]+$/){print $(i+1); exit}}')\"; " +
-            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-idle\" ]; then \"$HOME/Projects/my-rice/scripts/gps-idle\" env-status; elif command -v gps-idle >/dev/null 2>&1; then gps-idle env-status; else command -v hypridle >/dev/null 2>&1 && echo 'has_idle=1' || echo 'has_idle=0'; pgrep -x hypridle >/dev/null 2>&1 && echo 'idle_run=1' || echo 'idle_run=0'; echo 'idle_t=300'; fi; " +
+            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-idle\" ]; then \"$HOME/Projects/my-rice/scripts/gps-idle\" env-status; elif command -v gps-idle >/dev/null 2>&1; then gps-idle env-status; else echo 'has_idle=0'; echo 'idle_run=0'; echo 'idle_t=300'; fi; " +
+            "pgrep -f \"systemd-inhibit.*sleep infinity\" >/dev/null 2>&1 && echo 'keepawake_run=1' || echo 'keepawake_run=0'; " +
+            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-gamemode\" ]; then \"$HOME/Projects/my-rice/scripts/gps-gamemode\" status 2>/dev/null; else echo 'active=0'; fi; " +
             "prof=''; ppd_ok=0; if command -v powerprofilesctl >/dev/null 2>&1; then prof=$(powerprofilesctl get 2>/dev/null); [ -n \"$prof\" ] && ppd_ok=1; fi; echo \"has_ppd=$ppd_ok\"; " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null); " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null); " +
             "echo \"profile=$prof\"; " +
+            "profiles_raw=$(powerprofilesctl list 2>/dev/null | tr '\\n' '|'); [ -z \"$profiles_raw\" ] && profiles_raw=$(cat /sys/firmware/acpi/platform_profile_choices 2>/dev/null); echo \"profiles_raw=$profiles_raw\"; " +
             "echo \"bright=$(brightnessctl -m 2>/dev/null | cut -d, -f4 | tr -d '%')\"; " +
             "echo \"uptime=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)\"; " +
             "echo \"kernel=$(uname -r 2>/dev/null)\"; " +
@@ -191,8 +218,14 @@ Item {
                 const idleSec = parseInt(map.idle_t || "", 10)
                 st.idleTimeoutSec = !isNaN(idleSec) && idleSec > 0 ? idleSec : 0
 
+                st.keepAwakeOn = map.keepawake_run === "1"
+                st.gameModeOn = (map.active === "1" || map.gamemode_run === "1")
+
                 st.hasPpd = map.has_ppd === "1"
                 st.powerProfile = map.profile || ""
+                if (map.profiles_raw) {
+                    st.profileList = ControlLogic.parseProfiles(map.profiles_raw.replace(/\|/g, "\n"))
+                }
 
                 const bp = parseInt(map.bright || "", 10)
                 st.fallbackBrightPct = !isNaN(bp) && bp >= 0 ? bp : -1
@@ -249,6 +282,11 @@ Item {
         runCmd('bluetoothctl power "$1" >/dev/null 2>&1', [next ? "on" : "off"], 500)
     }
 
+    function toggleDnd() {
+        dndExpanded = false
+        core.setDnd(!core.dnd)
+    }
+
     function toggleNightLight() {
         if (!hasSunset) return
         const next = !nightLightOn
@@ -282,6 +320,16 @@ Item {
             runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle stop || "$HOME/Projects/my-rice/scripts/gps-idle" stop', [], 350)
     }
 
+    function toggleKeepAwake() {
+        const next = !keepAwakeOn
+        keepAwakeOn = next
+        if (next) {
+            runCmd('setsid systemd-inhibit --what=idle:sleep --who="GPS" --why="Keep awake" sleep infinity </dev/null >/dev/null 2>&1 &', [], 350)
+        } else {
+            runCmd('pkill -f "systemd-inhibit.*sleep infinity" >/dev/null 2>&1', [], 300)
+        }
+    }
+
     function toggleFlightMode() {
         if (!hasNmcli && !hasBt) return
         const enableFlight = !flightMode
@@ -298,12 +346,21 @@ Item {
         }
     }
 
+    function toggleGameMode() {
+        const next = !gameModeOn
+        gameModeOn = next
+        runCmd('"$HOME/Projects/my-rice/scripts/gps-gamemode" toggle', [], 400)
+    }
+
     function cyclePowerProfile() {
-        if (!hasPpd) return
-        const curIdx = profileOrder.indexOf(powerProfile)
-        const nextProf = profileOrder[(curIdx + 1) % profileOrder.length]
-        powerProfile = nextProf
-        runCmd('powerprofilesctl set "$1" >/dev/null 2>&1', [nextProf], 400)
+        const next = ControlLogic.cycleProfile(powerProfile, profileList)
+        powerProfile = next
+        runCmd('powerprofilesctl set "$1" >/dev/null 2>&1 || (echo "$1" > /sys/firmware/acpi/platform_profile 2>/dev/null)', [next], 400)
+    }
+
+    function toggleMicMute() {
+        if (!core.sourceAudio) return
+        core.sourceAudio.muted = !core.sourceAudio.muted
     }
 
     function openSettings(section) {
@@ -386,7 +443,7 @@ Item {
         Quickshell.execDetached(["systemctl", "poweroff"])
     }
 
-    // ───────────── local self-contained components ─────────────
+    // ───────────── local components ─────────────
     component Ico: Text {
         property string name: ""
         property string alt: ""
@@ -405,17 +462,17 @@ Item {
         property string tooltipText: ""
         signal triggered()
 
-        Layout.preferredWidth: 28
-        Layout.preferredHeight: 28
+        Layout.preferredWidth: 32
+        Layout.preferredHeight: 32
         radius: Theme.radiusCard
         activeFocusOnTab: true
         color: (hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card
         border.width: Theme.borderWidth
-        border.color: hb.activeFocus ? st.core.teal : Theme.outlineSoft
+        border.color: hb.activeFocus ? Theme.accentPrimary : Theme.outlineSoft
         scale: hbMa.pressed ? 0.94 : 1.0
         Behavior on scale { NumberAnimation { duration: 90 } }
 
-        ToolTip.visible: hbMa.containsMouse && tooltipText !== ""
+        ToolTip.visible: (hbMa.containsMouse || hb.activeFocus) && tooltipText !== ""
         ToolTip.text: tooltipText
         ToolTip.delay: 400
 
@@ -426,8 +483,8 @@ Item {
             anchors.centerIn: parent
             name: hb.iconName
             alt: hb.iconAlt
-            font.pixelSize: 15
-            color: (hbMa.containsMouse || hb.activeFocus) ? st.core.text : st.core.dim
+            font.pixelSize: 16
+            color: (hbMa.containsMouse || hb.activeFocus) ? Theme.textMain : Theme.textMuted
         }
 
         MouseArea {
@@ -449,27 +506,40 @@ Item {
         property string trailAlt: ""
         property bool tileOn: false
         property bool tileAvailable: true
+        property bool tileInteractable: true
+        property string tooltipText: ""
         signal toggled()
         signal trailClicked()
 
-        readonly property color inkColor: Theme.brandAccentFg
+        readonly property color activeBg: Theme.brandAccent
+        readonly property color activeFg: Theme.brandAccentFg
+        readonly property color inactiveBg: (tileMa.containsMouse || tile.activeFocus) ? Theme.cardHover : Theme.card
+        readonly property color inactiveFg: Theme.textMain
+
         Layout.fillWidth: true
-        Layout.preferredHeight: 52
-        radius: Theme.radiusMd
-        visible: tileAvailable
-        color: tileOn
-            ? (tileMa.containsMouse ? Qt.lighter(st.core.teal, 1.05) : st.core.teal)
-            : (tileMa.containsMouse ? Theme.cardHover : Theme.card)
-        border.width: tileOn ? 0 : Theme.borderWidth
-        border.color: Theme.outlineSoft
+        Layout.preferredHeight: 54
+        radius: Theme.radiusCard
+        opacity: tileAvailable ? 1.0 : 0.45
+        activeFocusOnTab: tileAvailable && tileInteractable
+
+        color: tileOn ? (tileMa.containsMouse ? Qt.lighter(activeBg, 1.08) : activeBg) : inactiveBg
+        border.width: tile.activeFocus ? 2 : (tileOn ? 0 : Theme.borderWidth)
+        border.color: tile.activeFocus ? Theme.accentPrimary : Theme.outlineSoft
         scale: (tileMa.pressed || trailMa.pressed) ? 0.98 : 1.0
         Behavior on color { ColorAnimation { duration: Theme.animFast } }
         Behavior on scale { NumberAnimation { duration: Theme.animFast; easing.type: Theme.easingStandard } }
 
+        ToolTip.visible: (tileMa.containsMouse || tile.activeFocus) && tooltipText !== ""
+        ToolTip.text: tooltipText
+        ToolTip.delay: 400
+
+        Keys.onReturnPressed: if (tileInteractable) tile.toggled()
+        Keys.onSpacePressed: if (tileInteractable) tile.toggled()
+
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 10
-            anchors.rightMargin: 10
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
             spacing: 10
 
             Rectangle {
@@ -483,7 +553,7 @@ Item {
                     name: tile.iconName
                     alt: tile.iconAlt
                     font.pixelSize: 18
-                    color: tile.tileOn ? tile.inkColor : st.core.dim
+                    color: tile.tileOn ? tile.activeFg : Theme.textMuted
                 }
             }
 
@@ -494,10 +564,10 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: tile.titleText
-                    font.family: st.core.uiFont
+                    font.family: Theme.fontUi
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
-                    color: tile.tileOn ? tile.inkColor : st.core.text
+                    color: tile.tileOn ? tile.activeFg : tile.inactiveFg
                     elide: Text.ElideRight
                 }
 
@@ -505,17 +575,17 @@ Item {
                     Layout.fillWidth: true
                     visible: tile.subText !== ""
                     text: tile.subText
-                    font.family: st.core.monoFont
+                    font.family: Theme.fontMono
                     font.pixelSize: 9
                     font.weight: Font.Medium
-                    color: tile.tileOn ? Qt.rgba(0, 0.13, 0.11, 0.80) : st.core.dim
+                    color: tile.tileOn ? Qt.rgba(tile.activeFg.r, tile.activeFg.g, tile.activeFg.b, 0.85) : Theme.textMuted
                     elide: Text.ElideRight
                 }
             }
 
             Item {
                 visible: tile.trailIcon !== ""
-                Layout.preferredWidth: 20
+                Layout.preferredWidth: 24
                 Layout.preferredHeight: 28
 
                 Ico {
@@ -523,7 +593,7 @@ Item {
                     name: tile.trailIcon
                     alt: tile.trailAlt
                     font.pixelSize: 16
-                    color: tile.tileOn ? Qt.rgba(0, 0.13, 0.11, 0.72) : st.core.dim
+                    color: tile.tileOn ? tile.activeFg : Theme.textMuted
                 }
             }
         }
@@ -531,10 +601,10 @@ Item {
         MouseArea {
             id: tileMa
             anchors.fill: parent
-            anchors.rightMargin: tile.trailIcon !== "" ? 30 : 0
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: tile.toggled()
+            anchors.rightMargin: tile.trailIcon !== "" ? 32 : 0
+            hoverEnabled: tile.tileInteractable
+            cursorShape: tile.tileInteractable ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: if (tile.tileInteractable) tile.toggled()
         }
 
         MouseArea {
@@ -543,10 +613,10 @@ Item {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.right: parent.right
-            width: 30
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: tile.trailClicked()
+            width: 32
+            hoverEnabled: tile.tileInteractable
+            cursorShape: tile.tileInteractable ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: if (tile.tileInteractable) tile.trailClicked()
         }
     }
 
@@ -554,7 +624,7 @@ Item {
         id: srow
         property string iconName: ""
         property string iconAlt: ""
-        property color tone: st.core.teal
+        property color tone: Theme.brandAccent
         property real value: 0
         property real maxValue: 1.0
         property string labelText: ""
@@ -628,13 +698,13 @@ Item {
         }
 
         Text {
-            Layout.preferredWidth: 34
+            Layout.preferredWidth: 38
             horizontalAlignment: Text.AlignRight
             text: srow.labelText
-            font.family: st.core.monoFont
+            font.family: Theme.fontMono
             font.pixelSize: 10
             font.weight: Font.Medium
-            color: st.core.text
+            color: Theme.textMain
             elide: Text.ElideRight
         }
     }
@@ -645,26 +715,35 @@ Item {
         property string iconAlt: ""
         property bool danger: false
         property bool armed: false
+        property string tooltipText: ""
         signal triggered()
 
         Layout.preferredWidth: 36
         Layout.preferredHeight: 36
         radius: 18
+        activeFocusOnTab: true
         color: danger
-            ? (armed ? st.core.coral : (acMa.containsMouse ? Qt.rgba(st.core.coral.r, st.core.coral.g, st.core.coral.b, 0.34) : Qt.rgba(st.core.coral.r, st.core.coral.g, st.core.coral.b, 0.22)))
-            : (acMa.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06))
-        border.width: 1
-        border.color: danger ? Qt.rgba(st.core.coral.r, st.core.coral.g, st.core.coral.b, 0.40) : Qt.rgba(1, 1, 1, 0.06)
+            ? (armed ? Theme.statusDanger : (acMa.containsMouse ? Qt.rgba(Theme.statusDanger.r, Theme.statusDanger.g, Theme.statusDanger.b, 0.34) : Qt.rgba(Theme.statusDanger.r, Theme.statusDanger.g, Theme.statusDanger.b, 0.22)))
+            : ((acMa.containsMouse || ac.activeFocus) ? Theme.cardHover : Theme.card)
+        border.width: ac.activeFocus ? 2 : Theme.borderWidth
+        border.color: ac.activeFocus ? Theme.accentPrimary : (danger ? Qt.rgba(Theme.statusDanger.r, Theme.statusDanger.g, Theme.statusDanger.b, 0.40) : Theme.outlineSoft)
         scale: acMa.pressed ? 0.94 : 1.0
         Behavior on color { ColorAnimation { duration: 140 } }
         Behavior on scale { NumberAnimation { duration: 90 } }
+
+        ToolTip.visible: (acMa.containsMouse || ac.activeFocus) && tooltipText !== ""
+        ToolTip.text: tooltipText
+        ToolTip.delay: 400
+
+        Keys.onReturnPressed: ac.triggered()
+        Keys.onSpacePressed: ac.triggered()
 
         Ico {
             anchors.centerIn: parent
             name: ac.iconName
             alt: ac.iconAlt
             font.pixelSize: 16
-            color: ac.danger ? (ac.armed ? "#000000" : st.core.coral) : st.core.text
+            color: ac.danger ? (ac.armed ? "#000000" : Theme.statusDanger) : Theme.textMain
         }
 
         MouseArea {
@@ -686,7 +765,6 @@ Item {
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 140 } }
 
-        // Left: Wi-Fi + Bluetooth indicators
         Row {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
@@ -697,7 +775,7 @@ Item {
                 name: !st.wifiEnabled ? "wifi_off" : (st.wifiSsid !== "" ? "wifi" : "network_wifi")
                 alt: "W"
                 font.pixelSize: 14
-                color: st.wifiEnabled ? st.core.teal : st.core.dim
+                color: st.wifiEnabled ? Theme.brandAccent : Theme.textMuted
             }
 
             Ico {
@@ -705,11 +783,10 @@ Item {
                 name: !st.btEnabled ? "bluetooth_disabled" : (st.btDevice !== "" ? "bluetooth_connected" : "bluetooth")
                 alt: "B"
                 font.pixelSize: 14
-                color: st.btEnabled ? st.core.teal : st.core.dim
+                color: st.btEnabled ? Theme.brandAccent : Theme.textMuted
             }
         }
 
-        // Center: Battery metric
         Row {
             anchors.centerIn: parent
             spacing: 2
@@ -719,19 +796,18 @@ Item {
                 name: (st.core.charging || st.core.full) ? "bolt" : "battery_5_bar"
                 alt: "+"
                 font.pixelSize: 13
-                color: (!st.core.charging && st.core.batPct <= 20) ? st.core.coral : st.core.teal
+                color: (!st.core.charging && st.core.batPct <= 20) ? Theme.statusDanger : Theme.brandAccent
             }
 
             Text {
                 text: Math.round(st.core.batPct) + "%"
-                font.family: st.core.monoFont
+                font.family: Theme.fontMono
                 font.pixelSize: 10
                 font.weight: Font.DemiBold
-                color: st.core.text
+                color: Theme.textMain
             }
         }
 
-        // Right: Audio telemetry
         Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
@@ -742,15 +818,15 @@ Item {
                 name: st.core.volIcon()
                 alt: "V"
                 font.pixelSize: 14
-                color: st.core.dim
+                color: Theme.textMuted
             }
 
             Text {
                 text: st.core.muted ? "0" : String(Math.round(st.core.volume * 100))
-                font.family: st.core.monoFont
+                font.family: Theme.fontMono
                 font.pixelSize: 9
                 font.weight: Font.DemiBold
-                color: st.core.dim
+                color: Theme.textMuted
             }
         }
 
@@ -761,7 +837,7 @@ Item {
         }
     }
 
-    // ───────────── STATE 02: Expanded Control Center (440x380) ─────────────
+    // ───────────── STATE 02: Expanded Control Center (460 x up to 560) ─────────────
     Item {
         id: expandedView
         anchors.fill: parent
@@ -782,290 +858,435 @@ Item {
             ColumnLayout {
                 id: controlContent
                 width: controlScroll.width
-                spacing: 10
+                spacing: 12
 
-            // Top Row: Title + Battery/Profile Badge + Settings Button
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
+                // Header: Battery Chip + Profile + Media Hub, Toolbox, Settings buttons
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
 
-                Rectangle {
-                    Layout.preferredWidth: 8
-                    Layout.preferredHeight: 8
-                    radius: 4
-                    color: st.core.teal
+                    Rectangle {
+                        visible: st.headerBadgeText !== ""
+                        Layout.preferredHeight: 30
+                        Layout.preferredWidth: Math.min(260, badgeRow.implicitWidth + 18)
+                        radius: Theme.radiusCard
+                        color: badgeMa.containsMouse ? Theme.cardHover : Theme.card
+                        border.width: Theme.borderWidth
+                        border.color: badgeMa.containsMouse ? Theme.accentPrimary : Theme.outlineSoft
+
+                        RowLayout {
+                            id: badgeRow
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 6
+
+                            Ico {
+                                visible: st.core.hasBat
+                                name: st.core.charging ? "battery_charging_full" : "battery_5_bar"
+                                alt: "B"
+                                font.pixelSize: 14
+                                color: (!st.core.charging && st.core.batPct <= 20) ? Theme.statusDanger : Theme.brandAccent
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: st.headerBadgeText
+                                font.family: Theme.fontMono
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                color: Theme.textMain
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        MouseArea {
+                            id: badgeMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: st.cyclePowerProfile()
+                        }
+
+                        ToolTip.visible: badgeMa.containsMouse
+                        ToolTip.text: "Click to cycle power profile (" + (st.powerProfile || "balanced") + ")"
+                        ToolTip.delay: 400
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    HeaderButton {
+                        iconName: "hub"
+                        iconAlt: "M"
+                        tooltipText: "Media Hub"
+                        onTriggered: st.openMediaHub()
+                    }
+
+                    HeaderButton {
+                        iconName: "construction"
+                        iconAlt: "T"
+                        tooltipText: "Toolbox"
+                        onTriggered: st.openToolbox()
+                    }
+
+                    HeaderButton {
+                        iconName: "settings"
+                        iconAlt: "S"
+                        tooltipText: "Settings"
+                        onTriggered: st.openSettings("")
+                    }
                 }
 
-                Text {
-                    text: "CONTROL CENTER"
-                    font.family: st.core.monoFont
-                    font.pixelSize: 10
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: 0.8
-                    color: st.core.text
+                // Two-Column Grid of K1 Tiles
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: 10
+                    rowSpacing: 10
+                    uniformCellWidths: true
+
+                    // 1. Wi-Fi
+                    ToggleTile {
+                        iconName: st.wifiEnabled ? "wifi" : "wifi_off"
+                        iconAlt: "W"
+                        titleText: "Wi-Fi"
+                        subText: !st.hasNmcli ? "No nmcli" : (st.wifiEnabled ? (st.wifiSsid !== "" ? st.wifiSsid : "On") : "Off")
+                        trailIcon: "chevron_right"
+                        trailAlt: ">"
+                        tileOn: st.wifiEnabled
+                        tileAvailable: st.hasNmcli
+                        tooltipText: "Wi-Fi radio toggle · click arrow for network settings"
+                        onToggled: st.toggleWifi()
+                        onTrailClicked: st.openSettings("network")
+                    }
+
+                    // 2. Bluetooth
+                    ToggleTile {
+                        iconName: st.btEnabled ? "bluetooth" : "bluetooth_disabled"
+                        iconAlt: "B"
+                        titleText: "Bluetooth"
+                        subText: !st.hasBt ? "No adapter" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
+                        trailIcon: "chevron_right"
+                        trailAlt: ">"
+                        tileOn: st.btEnabled
+                        tileAvailable: st.hasBt
+                        tooltipText: "Bluetooth power toggle · click arrow for bluetooth settings"
+                        onToggled: st.toggleBluetooth()
+                        onTrailClicked: st.openSettings("network")
+                    }
+
+                    // 3. Do Not Disturb
+                    ToggleTile {
+                        iconName: st.core.dnd ? "notifications_off" : "notifications"
+                        iconAlt: "D"
+                        titleText: "Do not disturb"
+                        subText: st.dndSubtitle
+                        trailIcon: "tune"
+                        trailAlt: "*"
+                        tileOn: st.core.dnd
+                        tileAvailable: true
+                        tooltipText: "Do Not Disturb · tap toggles, chevron selects duration"
+                        onToggled: st.toggleDnd()
+                        onTrailClicked: st.dndExpanded = !st.dndExpanded
+                    }
+
+                    // 4. Idle lock
+                    ToggleTile {
+                        iconName: "timer"
+                        iconAlt: "I"
+                        titleText: "Idle lock"
+                        subText: st.idleSubtitle
+                        tileOn: st.idleDaemonOn
+                        tileAvailable: st.hasIdleTool
+                        tooltipText: "Automated session locking daemon (hypridle)"
+                        onToggled: st.toggleIdleLock()
+                    }
+
+                    // 5. Keep awake
+                    ToggleTile {
+                        iconName: "coffee"
+                        iconAlt: "K"
+                        titleText: "Keep awake"
+                        subText: st.keepAwakeOn ? "Active" : "Off"
+                        tileOn: st.keepAwakeOn
+                        tileAvailable: true
+                        tooltipText: "Inhibit idle sleep and screen timeout (systemd-inhibit)"
+                        onToggled: st.toggleKeepAwake()
+                    }
+
+                    // 6. Flight mode
+                    ToggleTile {
+                        iconName: "flight"
+                        iconAlt: "F"
+                        titleText: "Flight mode"
+                        subText: st.flightMode ? "Enabled" : "Disabled"
+                        tileOn: st.flightMode
+                        tileAvailable: st.hasNmcli || st.hasBt
+                        tooltipText: "Disable all wireless radios simultaneously"
+                        onToggled: st.toggleFlightMode()
+                    }
+
+                    // 7. Night light
+                    ToggleTile {
+                        iconName: "nightlight"
+                        iconAlt: "N"
+                        titleText: "Night light"
+                        subText: !st.hasSunset ? "sudo pacman -S hyprsunset" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
+                        trailIcon: st.hasSunset ? "tune" : ""
+                        trailAlt: "*"
+                        tileOn: st.nightLightOn
+                        tileAvailable: st.hasSunset
+                        tooltipText: st.hasSunset ? "Blue-light filter · click arrow to cycle color temperature" : "hyprsunset is not installed (sudo pacman -S hyprsunset)"
+                        onToggled: st.toggleNightLight()
+                        onTrailClicked: st.cycleNightKelvin()
+                    }
+
+                    // 8. Game mode
+                    ToggleTile {
+                        iconName: "sports_esports"
+                        iconAlt: "G"
+                        titleText: "Game mode"
+                        subText: st.gameModeOn ? "Active" : "Off"
+                        tileOn: st.gameModeOn
+                        tileAvailable: true
+                        tooltipText: "Disable animations, blur, shadows & gaps for max gaming performance"
+                        onToggled: st.toggleGameMode()
+                    }
+
+                    // 9. Power profile
+                    ToggleTile {
+                        iconName: "speed"
+                        iconAlt: "P"
+                        titleText: "Power profile"
+                        subText: st.powerProfile !== "" ? st.powerProfile : "Default"
+                        tileOn: st.powerProfile === "performance"
+                        tileAvailable: st.profileList.length > 0
+                        tooltipText: "Cycle device power profile (" + (st.powerProfile || "balanced") + ")"
+                        onToggled: st.cyclePowerProfile()
+                    }
+
+                    // 10. Microphone mute
+                    ToggleTile {
+                        iconName: (st.core.sourceAudio && st.core.micMuted) ? "mic_off" : "mic"
+                        iconAlt: "M"
+                        titleText: "Microphone"
+                        subText: st.core.sourceAudio ? (st.core.micMuted ? "Muted" : (Math.round(st.core.micVolume * 100) + "%")) : "No input"
+                        tileOn: st.core.sourceAudio ? st.core.micMuted : false
+                        tileAvailable: st.core.sourceAudio !== null
+                        tooltipText: "Toggle microphone mute"
+                        onToggled: st.toggleMicMute()
+                    }
+
+                    // 11. Screenshot (Reserved)
+                    ToggleTile {
+                        iconName: "screenshot_monitor"
+                        iconAlt: "S"
+                        titleText: "Screenshot"
+                        subText: "Reserved"
+                        tileOn: false
+                        tileAvailable: false
+                        tileInteractable: false
+                        tooltipText: "Screenshot capture (reserved slot)"
+                    }
+
+                    // 12. Record (Reserved)
+                    ToggleTile {
+                        iconName: "screen_record"
+                        iconAlt: "R"
+                        titleText: "Record"
+                        subText: "Reserved"
+                        tileOn: false
+                        tileAvailable: false
+                        tileInteractable: false
+                        tooltipText: "Screen recording (reserved slot)"
+                    }
                 }
 
+                // DND Duration Selector Drawer (visible when dndExpanded is true)
                 Rectangle {
-                    visible: st.headerBadgeText !== ""
-                    Layout.preferredHeight: 20
-                    Layout.preferredWidth: Math.min(180, badgeRow.implicitWidth + 16)
-                    radius: 10
-                    color: badgeMa.containsMouse && st.hasPpd ? Qt.rgba(1, 1, 1, 0.11) : Qt.rgba(1, 1, 1, 0.06)
+                    visible: st.dndExpanded
+                    Layout.fillWidth: true
+                    implicitHeight: 40
+                    radius: Theme.radiusCard
+                    color: Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: Theme.outlineSoft
 
                     RowLayout {
-                        id: badgeRow
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 4
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 6
+
+                        Text {
+                            text: "DND for:"
+                            font.family: Theme.fontUi
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            color: Theme.textMuted
+                        }
+
+                        Repeater {
+                            model: [
+                                { label: "15m", mins: 15 },
+                                { label: "30m", mins: 30 },
+                                { label: "1h", mins: 60 },
+                                { label: "2h", mins: 120 },
+                                { label: "Till 8 AM", mins: ControlLogic.calcMinutesUntilNext(8, 0, Date.now()) }
+                            ]
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 26
+                                radius: 6
+                                color: chipMa.containsMouse ? Theme.cardHover : Qt.rgba(1, 1, 1, 0.06)
+                                border.width: 1
+                                border.color: chipMa.containsMouse ? Theme.accentPrimary : Theme.outlineSoft
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: 9
+                                    font.weight: Font.DemiBold
+                                    color: Theme.textMain
+                                }
+
+                                MouseArea {
+                                    id: chipMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        st.core.dndSnooze(modelData.mins)
+                                        st.dndExpanded = false
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sliders Matrix (Volume & Brightness)
+                Rectangle {
+                    visible: st.core.sinkAudio !== null || st.brightAvailable
+                    Layout.fillWidth: true
+                    implicitHeight: slidersCol.implicitHeight + 20
+                    radius: Theme.radiusCard
+                    color: Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: Theme.outlineSoft
+
+                    ColumnLayout {
+                        id: slidersCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        spacing: 10
+
+                        SliderRow {
+                            visible: st.core.sinkAudio !== null
+                            iconName: st.core.volIcon()
+                            iconAlt: "V"
+                            tone: st.core.muted ? Theme.textMuted : Theme.brandAccent
+                            value: st.liveVol
+                            maxValue: 1.5
+                            labelText: st.core.muted ? "Mute" : (Math.round(st.liveVol * 100) + "%")
+                            onIconClicked: if (st.core.sinkAudio) st.core.sinkAudio.muted = !st.core.sinkAudio.muted
+                            onMoved: v => {
+                                st.dragVol = v
+                                st.applyVolume(v)
+                            }
+                            onReleased: v => {
+                                st.applyVolume(v)
+                                st.dragVol = -1
+                            }
+                        }
+
+                        SliderRow {
+                            visible: st.brightAvailable
+                            iconName: "light_mode"
+                            iconAlt: "L"
+                            tone: Theme.statusWarn
+                            value: st.liveBright
+                            maxValue: 1.0
+                            labelText: Math.round(st.liveBright * 100) + "%"
+                            onIconClicked: st.openSettings("display")
+                            onMoved: v => st.dragBright = Math.max(0.05, Math.min(1, v))
+                            onReleased: v => {
+                                const clamped = Math.max(0.05, Math.min(1, v))
+                                st.dragBright = -1
+                                st.commitBrightness(clamped)
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                // Bottom Session Strip & Footer Actions
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    RowLayout {
+                        visible: st.sessionSummary !== ""
+                        Layout.fillWidth: true
+                        spacing: 6
 
                         Ico {
-                            visible: st.core.hasBat
-                            name: st.core.charging ? "battery_charging_full" : "battery_5_bar"
-                            alt: "B"
-                            font.pixelSize: 12
-                            color: (!st.core.charging && st.core.batPct <= 20) ? st.core.coral : st.core.teal
+                            name: "memory"
+                            alt: "M"
+                            font.pixelSize: 14
+                            color: Theme.textMuted
                         }
 
                         Text {
                             Layout.fillWidth: true
-                            text: st.headerBadgeText
-                            font.family: st.core.monoFont
+                            text: st.sessionSummary
+                            font.family: Theme.fontMono
                             font.pixelSize: 9
                             font.weight: Font.Medium
-                            color: st.core.dim
+                            color: Theme.textMuted
                             elide: Text.ElideRight
                         }
                     }
 
-                    MouseArea {
-                        id: badgeMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: st.hasPpd ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: if (st.hasPpd) st.cyclePowerProfile()
-                    }
-                }
-
-                Item { Layout.fillWidth: true }
-
-                HeaderButton {
-                    iconName: "hub"
-                    iconAlt: "M"
-                    tooltipText: "Media Hub"
-                    onTriggered: st.openMediaHub()
-                }
-
-                HeaderButton {
-                    iconName: "construction"
-                    iconAlt: "T"
-                    tooltipText: "Toolbox"
-                    onTriggered: st.openToolbox()
-                }
-
-                HeaderButton {
-                    iconName: "settings"
-                    iconAlt: "S"
-                    tooltipText: "Settings"
-                    onTriggered: st.openSettings("")
-                }
-            }
-
-            // 2x3 Grid of Toggle Tiles
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 2
-                columnSpacing: 8
-                rowSpacing: 8
-                uniformCellWidths: true
-
-                ToggleTile {
-                    iconName: st.wifiEnabled ? "wifi" : "wifi_off"
-                    iconAlt: "W"
-                    titleText: "Wi-Fi"
-                    subText: !st.hasNmcli ? "" : (st.wifiEnabled ? (st.wifiSsid !== "" ? st.wifiSsid : "On") : "Off")
-                    trailIcon: "chevron_right"
-                    trailAlt: ">"
-                    tileOn: st.wifiEnabled
-                    tileAvailable: st.hasNmcli
-                    onToggled: st.toggleWifi()
-                    onTrailClicked: st.openSettings("network")
-                }
-
-                ToggleTile {
-                    iconName: st.btEnabled ? "bluetooth" : "bluetooth_disabled"
-                    iconAlt: "B"
-                    titleText: "Bluetooth"
-                    subText: !st.hasBt ? "" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
-                    trailIcon: "chevron_right"
-                    trailAlt: ">"
-                    tileOn: st.btEnabled
-                    tileAvailable: st.hasBt
-                    onToggled: st.toggleBluetooth()
-                    onTrailClicked: st.openSettings("network")
-                }
-
-                ToggleTile {
-                    iconName: "nightlight"
-                    iconAlt: "N"
-                    titleText: "Night light"
-                    subText: !st.hasSunset ? "" : (st.nightLightOn ? (st.nightKelvin > 0 ? (st.nightKelvin + "K Shift") : "On") : "Off")
-                    trailIcon: "tune"
-                    trailAlt: "*"
-                    tileOn: st.nightLightOn
-                    tileAvailable: st.hasSunset
-                    onToggled: st.toggleNightLight()
-                    onTrailClicked: st.cycleNightKelvin()
-                }
-
-                ToggleTile {
-                    iconName: "notifications_off"
-                    iconAlt: "D"
-                    titleText: "Do not disturb"
-                    subText: st.core.dndSubText !== undefined ? st.core.dndSubText : (st.core.dnd ? (st.core.held.length > 0 ? (st.core.held.length + " held") : "On") : "Off")
-                    tileOn: st.core.dnd
-                    tileAvailable: true
-                    onToggled: st.core.setDnd(!st.core.dnd)
-                }
-
-                ToggleTile {
-                    iconName: "timer"
-                    iconAlt: "I"
-                    titleText: "Idle lock"
-                    subText: st.idleSubtitle
-                    tileOn: st.idleDaemonOn
-                    tileAvailable: st.hasIdleTool
-                    onToggled: st.toggleIdleLock()
-                }
-
-                ToggleTile {
-                    iconName: "flight"
-                    iconAlt: "F"
-                    titleText: "Flight mode"
-                    subText: st.flightMode ? "Enabled" : "Disabled"
-                    tileOn: st.flightMode
-                    tileAvailable: st.hasNmcli || st.hasBt
-                    onToggled: st.toggleFlightMode()
-                }
-            }
-
-            // Sliders Matrix (Volume & Brightness)
-            Rectangle {
-                visible: st.core.sinkAudio !== null || st.brightAvailable
-                Layout.fillWidth: true
-                implicitHeight: slidersCol.implicitHeight + 20
-                radius: 16
-                color: Qt.rgba(1, 1, 1, 0.04)
-                border.width: 1
-                border.color: Qt.rgba(1, 1, 1, 0.04)
-
-                ColumnLayout {
-                    id: slidersCol
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 10
-
-                    SliderRow {
-                        visible: st.core.sinkAudio !== null
-                        iconName: st.core.volIcon()
-                        iconAlt: "V"
-                        tone: st.core.muted ? st.core.dim : st.core.teal
-                        value: st.liveVol
-                        maxValue: 1.5
-                        labelText: st.core.muted ? "Mute" : (Math.round(st.liveVol * 100) + "%")
-                        onIconClicked: if (st.core.sinkAudio) st.core.sinkAudio.muted = !st.core.sinkAudio.muted
-                        onMoved: v => {
-                            st.dragVol = v
-                            st.applyVolume(v)
-                        }
-                        onReleased: v => {
-                            st.applyVolume(v)
-                            st.dragVol = -1
-                        }
-                    }
-
-                    SliderRow {
-                        visible: st.brightAvailable
-                        iconName: "light_mode"
-                        iconAlt: "L"
-                        tone: st.core.amber
-                        value: st.liveBright
-                        maxValue: 1.0
-                        labelText: Math.round(st.liveBright * 100) + "%"
-                        onIconClicked: st.openSettings("display")
-                        onMoved: v => st.dragBright = Math.max(0.05, Math.min(1, v))
-                        onReleased: v => {
-                            const clamped = Math.max(0.05, Math.min(1, v))
-                            st.dragBright = -1
-                            st.commitBrightness(clamped)
-                        }
-                    }
-                }
-            }
-
-            Item { Layout.fillHeight: true }
-
-            // Bottom Session Strip
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                RowLayout {
-                    visible: st.sessionSummary !== ""
-                    Layout.fillWidth: true
-                    spacing: 6
-
-                    Ico {
-                        name: "memory"
-                        alt: "M"
-                        font.pixelSize: 14
-                        color: st.core.dim
-                    }
-
-                    Text {
+                    Item {
+                        visible: st.sessionSummary === ""
                         Layout.fillWidth: true
-                        text: st.sessionSummary
-                        font.family: st.core.monoFont
-                        font.pixelSize: 9
-                        font.weight: Font.Medium
-                        color: st.core.dim
-                        elide: Text.ElideRight
-                    }
-                }
-
-                Item {
-                    visible: st.sessionSummary === ""
-                    Layout.fillWidth: true
-                }
-
-                RowLayout {
-                    spacing: 8
-
-                    ActionCircle {
-                        iconName: "lock"
-                        iconAlt: "L"
-                        onTriggered: st.lockScreen()
                     }
 
-                    ActionCircle {
-                        iconName: "bedtime"
-                        iconAlt: "Z"
-                        onTriggered: st.suspendSystem()
-                    }
+                    RowLayout {
+                        spacing: 8
 
-                    ActionCircle {
-                        iconName: st.confirmPower ? "check" : "power_settings_new"
-                        iconAlt: st.confirmPower ? "!" : "P"
-                        danger: true
-                        armed: st.confirmPower
-                        onTriggered: st.triggerPower()
+                        ActionCircle {
+                            iconName: "lock"
+                            iconAlt: "L"
+                            tooltipText: "Lock screen"
+                            onTriggered: st.lockScreen()
+                        }
+
+                        ActionCircle {
+                            iconName: "bedtime"
+                            iconAlt: "Z"
+                            tooltipText: "Suspend system"
+                            onTriggered: st.suspendSystem()
+                        }
+
+                        ActionCircle {
+                            iconName: st.confirmPower ? "check" : "power_settings_new"
+                            iconAlt: st.confirmPower ? "!" : "P"
+                            danger: true
+                            armed: st.confirmPower
+                            tooltipText: st.confirmPower ? "Click again to confirm power off" : "Power off system"
+                            onTriggered: st.triggerPower()
+                        }
                     }
                 }
             }
         }
     }
-}
 }
