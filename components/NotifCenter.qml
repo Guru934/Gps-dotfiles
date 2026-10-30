@@ -2,21 +2,35 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
 import qs.config
+import "NotifCenterLogic.js" as NotifCenterLogic
+import "PlannerLogic.js" as PlannerLogic
 
 PanelWindow {
     id: root
 
     property var hub: null
     property bool open: false
-    property string filter: "All"
-    property string taskDraft: ""
-    property var tasks: []
+    property int currentSection: 0 // 0: Inbox, 1: Planner, 2: Modes
+    property string searchQuery: ""
+    property string activeAppFilter: "All"
+    property bool unreadOnly: false
+    property var expandedCardMap: ({})
 
-    // Live notification history + DND state from Tide Island (the single
-    // notification daemon). Polled while the center is open - never faked.
+    // Undo state for "Clear all"
+    property bool undoActive: false
+    property int undoSeconds: 5
+    property var stashBeforeClear: []
+
+    // Live notification history + DND state
     property var islandItems: []
-    property bool islandFocus: false
+    property bool dndActive: false
+    property var dndState: null
+    readonly property int unreadCount: NotifCenterLogic.getUnreadCount(root.islandItems)
+    readonly property var appNames: NotifCenterLogic.getAppNames(root.islandItems)
+
     readonly property string repoRoot: (root.hub && root.hub.repoRoot)
         ? root.hub.repoRoot
         : (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice"))
@@ -25,6 +39,16 @@ PanelWindow {
     readonly property string notifHistoryPath: {
         const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
         return stateHome + "/gps/notifications.json"
+    }
+
+    readonly property string notifDndPath: {
+        const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
+        return stateHome + "/gps/dnd.json"
+    }
+
+    readonly property string plannerPath: {
+        const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
+        return stateHome + "/gps/planner.json"
     }
 
     FileView {
@@ -37,37 +61,85 @@ PanelWindow {
                 if (textData && textData.trim().length > 0) {
                     const parsed = JSON.parse(textData)
                     if (parsed && Array.isArray(parsed.entries)) {
-                        root.islandItems = parsed.entries.slice(0, 30)
+                        root.islandItems = parsed.entries
                     }
                 }
             } catch (e) {}
         }
     }
 
-    function parseIslandHistory(raw) {
-        try {
-            const d = JSON.parse(raw)
-            root.islandFocus = !!d.focus
-            root.islandItems = (d.items || []).slice(0, 30)
-        } catch (e) {}
+    FileView {
+        path: root.notifDndPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const textData = text()
+                if (textData && textData.trim().length > 0) {
+                    const parsed = JSON.parse(textData)
+                    root.dndState = parsed
+                    root.dndActive = parsed.mode === "dnd" || parsed.mode === "snooze" || (parsed.schedule && parsed.schedule.enabled)
+                }
+            } catch (e) {}
+        }
     }
+
+    function timeAgo(ts) {
+        return NotifCenterLogic.timeAgo(ts, Date.now())
+    }
+
+    function toggle() { root.open = !root.open }
+    function close() { root.open = false }
+
     function refreshIsland() {
         if (!islandHistoryProc.running) islandHistoryProc.running = true
     }
-    function toggleIslandFocus() {
-        Quickshell.execDetached([root.ipcScript, "island", "focusToggle"])
-        islandSyncTimer.restart()
+
+    function dismissNotif(id) {
+        Quickshell.execDetached([root.ipcScript, "notify", "dismiss", "" + id])
     }
-    function openIslandCenter() {
-        Quickshell.execDetached([root.ipcScript, "island", "control", "open"])
+
+    function invokeAction(id, actionKey) {
+        Quickshell.execDetached([root.ipcScript, "notify", "action", "" + id, actionKey])
     }
-    function timeAgo(ts) {
-        if (!ts) return ""
-        const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
-        if (s < 60) return s + "s ago"
-        if (s < 3600) return Math.floor(s / 60) + "m ago"
-        if (s < 86400) return Math.floor(s / 3600) + "h ago"
-        return Math.floor(s / 86400) + "d ago"
+
+    function markRead(id) {
+        Quickshell.execDetached([root.ipcScript, "notify", "markread", "" + id])
+    }
+
+    function startUndoClear() {
+        root.stashBeforeClear = root.islandItems.slice()
+        root.undoActive = true
+        root.undoSeconds = 5
+        undoCountdownTimer.restart()
+    }
+
+    function cancelUndo() {
+        root.undoActive = false
+        undoCountdownTimer.stop()
+        root.stashBeforeClear = []
+    }
+
+    function commitClear() {
+        root.undoActive = false
+        undoCountdownTimer.stop()
+        root.stashBeforeClear = []
+        Quickshell.execDetached([root.ipcScript, "notify", "clear"])
+    }
+
+    function clearGroup(groupName) {
+        const remaining = NotifCenterLogic.clearGroupFromEntries(root.islandItems, groupName, Date.now())
+        // Dismiss IDs that were removed
+        const toRemove = root.islandItems.filter(e => !remaining.some(r => r.id === e.id))
+        for (let i = 0; i < toRemove.length; i++) {
+            root.dismissNotif(toRemove[i].id)
+        }
+    }
+
+    function toggleExpandCard(id) {
+        const copy = Object.assign({}, root.expandedCardMap)
+        copy[id] = !copy[id]
+        root.expandedCardMap = copy
     }
 
     Process {
@@ -75,315 +147,820 @@ PanelWindow {
         command: [root.ipcScript, "island", "history"]
         stdout: StdioCollector {
             waitForEnd: true
-            onStreamFinished: root.parseIslandHistory(text)
+            onStreamFinished: {
+                try {
+                    const d = JSON.parse(text)
+                    if (d && Array.isArray(d.items)) {
+                        root.islandItems = d.items
+                    }
+                    if (d && typeof d.dnd !== "undefined") {
+                        root.dndActive = !!d.dnd
+                    }
+                } catch (e) {}
+            }
         }
     }
+
     Timer {
-        id: islandSyncTimer
-        interval: 700
-        repeat: false
-        onTriggered: root.refreshIsland()
-    }
-    Timer {
-        interval: 3000
+        id: undoCountdownTimer
+        interval: 1000
         repeat: true
-        running: root.open
-        onTriggered: root.refreshIsland()
-    }
-    onOpenChanged: if (root.open) root.refreshIsland()
-    readonly property var weekDays: {
-        const today = new Date()
-        const mondayOffset = (today.getDay() + 6) % 7
-        const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - mondayOffset)
-        const result = []
-        for (let i = 0; i < 7; i++) {
-            const day = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)
-            result.push({
-                label: ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"][i],
-                number: day.getDate(),
-                today: day.toDateString() === today.toDateString()
-            })
+        onTriggered: {
+            if (root.undoSeconds > 1) {
+                root.undoSeconds--
+            } else {
+                root.commitClear()
+            }
         }
-        return result
-    }
-    readonly property var visibleTasks: {
-        if (root.filter === "Pending") return root.tasks.filter(task => !task.done)
-        if (root.filter === "Done") return root.tasks.filter(task => task.done)
-        return root.tasks
-    }
-
-    function toggle() { root.open = !root.open }
-    function close() {
-        taskInput.focus = false
-        root.open = false
-    }
-    function addTask() {
-        const value = root.taskDraft.trim()
-        if (!value) return
-        root.tasks = root.tasks.concat([{ text: value, done: false }])
-        root.taskDraft = ""
-    }
-    function toggleTask(taskText) {
-        const next = root.tasks.slice()
-        const index = next.findIndex(task => task.text === taskText)
-        if (index < 0) return
-        const task = next[index]
-        next[index] = { text: task.text, done: !task.done }
-        root.tasks = next
     }
 
     Timer {
-        id: autoCloseTimer
-        interval: 350
+        id: markReadOnOpenTimer
+        interval: 1200
         repeat: false
-        onTriggered: root.close()
+        onTriggered: {
+            if (root.open && root.unreadCount > 0) {
+                root.markRead(0)
+            }
+        }
     }
 
-    anchors { top: true; bottom: true; left: true }
-    margins { left: 60 }
-    implicitWidth: 360
+    onOpenChanged: {
+        if (root.open) {
+            root.refreshIsland()
+            markReadOnOpenTimer.restart()
+        } else {
+            markReadOnOpenTimer.stop()
+        }
+    }
+
+    readonly property var activeEntries: root.undoActive ? [] : root.islandItems
+
+    readonly property var filteredEntries: NotifCenterLogic.filterEntries(root.activeEntries, {
+        query: root.searchQuery,
+        appFilter: root.activeAppFilter,
+        unreadOnly: root.unreadOnly
+    })
+
+    readonly property var groupedEntries: NotifCenterLogic.groupEntriesByDay(root.filteredEntries, Date.now())
+
+    // 80% of 800 logical screen height is 640px
+    readonly property int maxDrawerHeight: Math.min(640, Math.floor(Screen.height * 0.80))
+    readonly property int calculatedContentHeight: Math.min(root.maxDrawerHeight, Math.max(320, mainCol.implicitHeight + 36))
+
+    anchors { top: true; left: true }
+    margins {
+        left: 60
+        top: Math.max(20, Math.floor((Screen.height - root.calculatedContentHeight) / 2))
+    }
+    implicitWidth: 380
+    implicitHeight: root.calculatedContentHeight
     color: "transparent"
     visible: root.open
     exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
     Shortcut { sequence: "Super+N"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; enabled: root.open; onActivated: root.close() }
+    Shortcut { sequence: "1"; context: Qt.ApplicationShortcut; enabled: root.open; onActivated: root.currentSection = 0 }
+    Shortcut { sequence: "2"; context: Qt.ApplicationShortcut; enabled: root.open; onActivated: root.currentSection = 1 }
+    Shortcut { sequence: "3"; context: Qt.ApplicationShortcut; enabled: root.open; onActivated: root.currentSection = 2 }
 
     Rectangle {
+        id: cardBg
         anchors.fill: parent
-        anchors.topMargin: 10
-        anchors.bottomMargin: 10
         radius: Theme.radiusPanel
         color: Theme.surface
         border.width: 1
         border.color: Theme.brandAccent
 
-        onVisibleChanged: {
-            if (!visible) taskInput.focus = false
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            z: 20
-            hoverEnabled: true
-            acceptedButtons: Qt.NoButton
-            onEntered: autoCloseTimer.stop()
-            onExited: autoCloseTimer.start()
-        }
-
         Column {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 14
+            id: mainCol
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+            spacing: 12
 
-            Row {
+            // Header: Title, unread count badge, clear all, ESC
+            RowLayout {
                 width: parent.width
                 spacing: 8
-                Text { text: "NOTIFICATION CENTER"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 13; font.bold: true }
-                Item { width: parent.width - 170; height: 1 }
-                Text { text: "ESC"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9 }
+
+                Text {
+                    text: "NOTIFICATIONS"
+                    color: Theme.textMain
+                    font.family: Theme.fontUi
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                Rectangle {
+                    visible: root.unreadCount > 0
+                    radius: 6
+                    color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.18)
+                    border.width: 1
+                    border.color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.40)
+                    implicitWidth: unreadText.implicitWidth + 10
+                    implicitHeight: 18
+
+                    Text {
+                        id: unreadText
+                        anchors.centerIn: parent
+                        text: root.unreadCount + " unread"
+                        color: Theme.brandAccent
+                        font.family: Theme.fontUi
+                        font.pixelSize: 9
+                        font.bold: true
+                    }
+                }
+
+                Item { Layout.fillWidth: true; height: 1 }
+
+                // Clear all button (only shown in Inbox tab when entries exist)
+                Rectangle {
+                    visible: root.currentSection === 0 && root.activeEntries.length > 0 && !root.undoActive
+                    radius: 6
+                    color: clearMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                    border.width: 1
+                    border.color: clearMa.containsMouse ? Theme.border : "transparent"
+                    implicitWidth: clearRow.implicitWidth + 12
+                    implicitHeight: 22
+
+                    Row {
+                        id: clearRow
+                        anchors.centerIn: parent
+                        spacing: 4
+                        Text { text: "󰆴"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Clear all"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                    }
+
+                    MouseArea {
+                        id: clearMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.startUndoClear()
+                    }
+                }
+
+                // Esc indicator / close button
+                Rectangle {
+                    width: 22
+                    height: 22
+                    radius: 6
+                    color: escMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                    Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
+                    MouseArea {
+                        id: escMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.close()
+                    }
+                }
             }
 
-            Row {
+            // Segmented switch (Inbox / Planner / Modes)
+            Rectangle {
                 width: parent.width
-                spacing: 5
-                Repeater {
-                    model: root.weekDays
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: (parent.width - 30) / 7
-                        height: 54
-                        radius: Theme.radiusPill
-                        color: modelData.today ? Theme.brandAccent : Theme.card
-                        border.width: 1
-                        border.color: modelData.today ? Theme.brandAccent : Theme.border
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: 2
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.label; color: modelData.today ? Theme.brandAccentFg : Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.number; color: modelData.today ? Theme.brandAccentFg : Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 15; font.bold: true }
+                height: 32
+                radius: Theme.radiusPill
+                color: Theme.card
+                border.width: 1
+                border.color: Theme.border
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    spacing: 2
+
+                    Repeater {
+                        model: [
+                            { label: "Inbox", badge: root.unreadCount > 0 ? ("" + root.unreadCount) : "" },
+                            { label: "Planner", badge: "" },
+                            { label: "Modes", badge: root.dndActive ? "󰂛" : "" }
+                        ]
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+
+                            width: (parent.width - 4) / 3
+                            height: parent.height
+                            radius: Theme.radiusPill
+                            color: root.currentSection === index ? Theme.brandAccent : (tabMa.containsMouse ? Theme.surfaceAlt : "transparent")
+
+                            Behavior on color {
+                                enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                                ColorAnimation { duration: Theme.animDuration }
+                            }
+
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 5
+
+                                Text {
+                                    text: modelData.label
+                                    color: root.currentSection === index ? Theme.brandAccentFg : (tabMa.containsMouse ? Theme.textMain : Theme.textMuted)
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Rectangle {
+                                    visible: modelData.badge !== ""
+                                    radius: 6
+                                    color: root.currentSection === index ? Qt.rgba(0,0,0,0.2) : Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.2)
+                                    implicitWidth: tabBadgeText.implicitWidth + 8
+                                    implicitHeight: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Text {
+                                        id: tabBadgeText
+                                        anchors.centerIn: parent
+                                        text: modelData.badge
+                                        color: root.currentSection === index ? Theme.brandAccentFg : Theme.brandAccent
+                                        font.family: Theme.fontMono
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: tabMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.currentSection = index
+                            }
                         }
                     }
                 }
             }
 
-            Row {
+            // Undo Banner
+            Rectangle {
+                visible: root.undoActive
                 width: parent.width
-                spacing: 6
-                Repeater {
-                    model: ["All", "Pending", "Done"]
-                    delegate: Rectangle {
-                        required property string modelData
-                        width: filterText.implicitWidth + 18
-                        height: 26
-                        radius: Theme.radiusPill
-                        color: root.filter === modelData ? Theme.brandAccent : Theme.card
-                        Text { id: filterText; anchors.centerIn: parent; text: modelData; color: root.filter === modelData ? Theme.brandAccentFg : Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }
-                        MouseArea { anchors.fill: parent; onClicked: root.filter = modelData }
-                    }
-                }
-            }
+                height: 38
+                radius: 8
+                color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.15)
+                border.width: 1
+                border.color: Theme.brandAccent
 
-            Row {
-                width: parent.width
-                height: 34
-                spacing: 6
-                Rectangle {
-                    width: parent.width - addButton.width - 6
-                    height: parent.height
-                    radius: 9
-                    color: Theme.card
-                    border.width: 1
-                    border.color: Theme.border
-                    TextInput {
-                        id: taskInput
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 8
-                        verticalAlignment: TextInput.AlignVCenter
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+
+                    Text {
+                        text: "Cleared all notifications"
                         color: Theme.textMain
                         font.family: Theme.fontUi
                         font.pixelSize: 11
-                        text: root.taskDraft
-                        onTextChanged: root.taskDraft = text
-                        Keys.onReturnPressed: root.addTask()
+                        font.bold: true
                     }
-                    Text {
-                        anchors.fill: taskInput
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Add an objective…"
-                        color: Theme.textMuted
-                        font.family: Theme.fontUi
-                        font.pixelSize: 11
-                        visible: taskInput.text.length === 0 && !taskInput.activeFocus
+
+                    Item { Layout.fillWidth: true; height: 1 }
+
+                    Rectangle {
+                        radius: 6
+                        color: Theme.brandAccent
+                        implicitWidth: undoBtnText.implicitWidth + 14
+                        implicitHeight: 24
+
+                        Text {
+                            id: undoBtnText
+                            anchors.centerIn: parent
+                            text: "Undo (" + root.undoSeconds + "s)"
+                            color: Theme.brandAccentFg
+                            font.family: Theme.fontUi
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.cancelUndo()
+                        }
                     }
-                }
-                Rectangle {
-                    id: addButton
-                    width: 34; height: 34; radius: 9
-                    color: Theme.brandAccent
-                    Text { anchors.centerIn: parent; text: "+"; color: Theme.brandAccentFg; font.pixelSize: 20 }
-                    MouseArea { anchors.fill: parent; onClicked: root.addTask() }
                 }
             }
 
-            Text { text: "DAILY OBJECTIVES"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
-            ListView {
-                id: taskList
+            // SECTION 0: INBOX
+            Column {
+                visible: root.currentSection === 0
                 width: parent.width
-                height: 112
-                spacing: 6
-                clip: true
-                model: root.visibleTasks
-                delegate: Rectangle {
-                    required property var modelData
-                    required property int index
-                    width: taskList.width
+                spacing: 10
+
+                // Search Bar
+                Rectangle {
+                    width: parent.width
                     height: 32
                     radius: 8
                     color: Theme.card
-                    Row {
+                    border.width: 1
+                    border.color: searchInput.activeFocus ? Theme.brandAccent : Theme.border
+
+                    RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 8
-                        spacing: 8
-                        Rectangle { width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter; radius: 5; color: modelData.done ? Theme.brandAccent : "transparent"; border.width: 1; border.color: modelData.done ? Theme.brandAccent : Theme.textMuted; Text { anchors.centerIn: parent; visible: modelData.done; text: "✓"; color: Theme.brandAccentFg; font.pixelSize: 11; font.bold: true } }
-                        Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.text; color: modelData.done ? Theme.textMuted : Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.strikeout: modelData.done; elide: Text.ElideRight; width: parent.width - 34 }
+                        anchors.rightMargin: 8
+                        spacing: 6
+
+                        Text {
+                            text: "󰍉"
+                            color: Theme.textMuted
+                            font.family: Theme.fontMono
+                            font.pixelSize: 13
+                        }
+
+                        TextInput {
+                            id: searchInput
+                            Layout.fillWidth: true
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: Theme.textMain
+                            font.family: Theme.fontUi
+                            font.pixelSize: 11
+                            text: root.searchQuery
+                            onTextChanged: root.searchQuery = text
+                        }
+
+                        Text {
+                            visible: root.searchQuery === "" && !searchInput.activeFocus
+                            text: "Search notifications…"
+                            color: Theme.textMuted
+                            font.family: Theme.fontUi
+                            font.pixelSize: 11
+                        }
+
+                        Text {
+                            visible: root.searchQuery !== ""
+                            text: "✕"
+                            color: Theme.textMuted
+                            font.pixelSize: 10
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.searchQuery = ""
+                                    searchInput.text = ""
+                                }
+                            }
+                        }
                     }
-                    MouseArea { anchors.fill: parent; onClicked: root.toggleTask(modelData.text) }
                 }
-            }
-            Text {
-                visible: root.visibleTasks.length === 0
-                text: "No objectives yet — add one above."
-                color: Theme.textMuted
-                font.family: Theme.fontUi
-                font.pixelSize: 9
+
+                // Filter chips: All, Unread, + apps
+                Flickable {
+                    width: parent.width
+                    height: 26
+                    contentWidth: chipsRow.implicitWidth
+                    clip: true
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    Row {
+                        id: chipsRow
+                        spacing: 6
+
+                        // "All" chip
+                        Rectangle {
+                            height: 24
+                            radius: Theme.radiusPill
+                            implicitWidth: chipAllText.implicitWidth + 16
+                            color: (root.activeAppFilter === "All" && !root.unreadOnly) ? Theme.brandAccent : Theme.card
+                            border.width: 1
+                            border.color: (root.activeAppFilter === "All" && !root.unreadOnly) ? Theme.brandAccent : Theme.border
+
+                            Text {
+                                id: chipAllText
+                                anchors.centerIn: parent
+                                text: "All"
+                                color: (root.activeAppFilter === "All" && !root.unreadOnly) ? Theme.brandAccentFg : Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.activeAppFilter = "All"
+                                    root.unreadOnly = false
+                                }
+                            }
+                        }
+
+                        // "Unread" chip
+                        Rectangle {
+                            height: 24
+                            radius: Theme.radiusPill
+                            implicitWidth: chipUnreadText.implicitWidth + 16
+                            color: root.unreadOnly ? Theme.brandAccent : Theme.card
+                            border.width: 1
+                            border.color: root.unreadOnly ? Theme.brandAccent : Theme.border
+
+                            Text {
+                                id: chipUnreadText
+                                anchors.centerIn: parent
+                                text: "Unread" + (root.unreadCount > 0 ? (" (" + root.unreadCount + ")") : "")
+                                color: root.unreadOnly ? Theme.brandAccentFg : Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.unreadOnly = !root.unreadOnly
+                                    if (root.unreadOnly) root.activeAppFilter = "All"
+                                }
+                            }
+                        }
+
+                        // Per-app chips
+                        Repeater {
+                            model: root.appNames
+                            delegate: Rectangle {
+                                required property string modelData
+                                height: 24
+                                radius: Theme.radiusPill
+                                implicitWidth: appChipText.implicitWidth + 16
+                                color: (root.activeAppFilter === modelData && !root.unreadOnly) ? Theme.brandAccent : Theme.card
+                                border.width: 1
+                                border.color: (root.activeAppFilter === modelData && !root.unreadOnly) ? Theme.brandAccent : Theme.border
+
+                                Text {
+                                    id: appChipText
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: (root.activeAppFilter === modelData && !root.unreadOnly) ? Theme.brandAccentFg : Theme.textMuted
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        root.unreadOnly = false
+                                        root.activeAppFilter = (root.activeAppFilter === modelData) ? "All" : modelData
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Scrollable Notifications Feed
+                Flickable {
+                    id: inboxFlickable
+                    width: parent.width
+                    height: Math.max(120, Math.min(380, root.maxDrawerHeight - 210))
+                    contentHeight: inboxFeedCol.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                    }
+
+                    Column {
+                        id: inboxFeedCol
+                        width: parent.width
+                        spacing: 12
+
+                        // Friendly Empty State
+                        Column {
+                            visible: root.filteredEntries.length === 0
+                            width: parent.width
+                            spacing: 8
+                            topPadding: 32
+                            bottomPadding: 32
+
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "󰂚"
+                                color: Theme.textMuted
+                                font.family: Theme.fontMono
+                                font.pixelSize: 36
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: root.searchQuery ? "No matching notifications" : "All caught up"
+                                color: Theme.textMain
+                                font.family: Theme.fontUi
+                                font.pixelSize: 13
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: root.searchQuery ? "Try a different search term" : "No new notifications right now."
+                                color: Theme.textMuted
+                                font.family: Theme.fontUi
+                                font.pixelSize: 10
+                            }
+                        }
+
+                        // TODAY GROUP
+                        GroupSection {
+                            title: "TODAY"
+                            groupName: "today"
+                            entries: root.groupedEntries.today
+                            visible: entries.length > 0
+                        }
+
+                        // YESTERDAY GROUP
+                        GroupSection {
+                            title: "YESTERDAY"
+                            groupName: "yesterday"
+                            entries: root.groupedEntries.yesterday
+                            visible: entries.length > 0
+                        }
+
+                        // EARLIER GROUP
+                        GroupSection {
+                            title: "EARLIER"
+                            groupName: "earlier"
+                            entries: root.groupedEntries.earlier
+                            visible: entries.length > 0
+                        }
+                    }
+                }
             }
 
-            Text { text: "FOCUS MODE (DO NOT DISTURB)"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
-            Row {
+            // SECTION 1: PLANNER (Stub for U2 commit)
+            Column {
+                visible: root.currentSection === 1
                 width: parent.width
-                height: 34
-                spacing: 6
-                Rectangle {
-                    width: parent.width - islandCenterButton.width - 6
-                    height: parent.height
-                    radius: 9
-                    color: root.islandFocus ? Theme.brandAccent : Theme.card
-                    border.width: 1
-                    border.color: root.islandFocus ? Theme.brandAccent : Theme.border
-                    Text {
-                        anchors.centerIn: parent
-                        text: root.islandFocus ? "Notifications paused — click to resume" : "Notifications active — click to pause"
-                        color: root.islandFocus ? Theme.brandAccentFg : Theme.textMain
-                        font.family: Theme.fontUi
-                        font.pixelSize: 10
-                        font.bold: true
-                    }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.toggleIslandFocus() }
-                }
-                Rectangle {
-                    id: islandCenterButton
-                    width: 102
-                    height: parent.height
-                    radius: 9
-                    color: Theme.card
-                    border.width: 1
-                    border.color: Theme.border
-                    Text { anchors.centerIn: parent; text: "Open Center"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openIslandCenter() }
+                spacing: 10
+
+                Text {
+                    text: "PLANNER CALENDAR & TASKS"
+                    color: Theme.textMuted
+                    font.family: Theme.fontMono
+                    font.pixelSize: 10
+                    font.bold: true
                 }
             }
 
-            Text { text: "RECENT NOTIFICATIONS"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.2 }
-            ListView {
-                id: islandList
+            // SECTION 2: MODES (Stub for U3 commit)
+            Column {
+                visible: root.currentSection === 2
                 width: parent.width
-                height: 132
-                spacing: 6
-                clip: true
-                model: root.islandItems
-                delegate: NotificationCard {
-                    app: modelData.app || "NOTIFICATION"
-                    summary: modelData.summary
-                    detail: modelData.body
-                    when: root.timeAgo(modelData.ts)
+                spacing: 10
+
+                Text {
+                    text: "MODES & DO NOT DISTURB"
+                    color: Theme.textMuted
+                    font.family: Theme.fontMono
+                    font.pixelSize: 10
+                    font.bold: true
                 }
-            }
-            Text {
-                visible: root.islandItems.length === 0
-                text: "No notifications yet — real ones from any app appear here."
-                color: Theme.textMuted
-                font.family: Theme.fontUi
-                font.pixelSize: 9
-                width: parent.width
-                wrapMode: Text.WordWrap
             }
         }
     }
 
-    component NotificationCard: Rectangle {
-        property string app: "NOTIFICATION"
-        property string summary: ""
-        property string detail: ""
-        property string when: ""
-        width: parent ? parent.width : 320
-        height: 58
+    // Component for grouped notification section (Today / Yesterday / Earlier)
+    component GroupSection: Column {
+        id: groupRoot
+        property string title: ""
+        property string groupName: ""
+        property var entries: []
+        width: parent ? parent.width : 340
+        spacing: 6
+
+        RowLayout {
+            width: parent.width
+
+            Text {
+                text: groupRoot.title + " (" + groupRoot.entries.length + ")"
+                color: Theme.textMuted
+                font.family: Theme.fontMono
+                font.pixelSize: 9
+                font.bold: true
+                font.letterSpacing: 1.1
+            }
+
+            Item { Layout.fillWidth: true; height: 1 }
+
+            Rectangle {
+                radius: 4
+                color: groupClearMa.containsMouse ? Theme.surfaceAlt : "transparent"
+                implicitWidth: groupClearText.implicitWidth + 8
+                implicitHeight: 18
+
+                Text {
+                    id: groupClearText
+                    anchors.centerIn: parent
+                    text: "Clear"
+                    color: Theme.textMuted
+                    font.family: Theme.fontUi
+                    font.pixelSize: 9
+                    font.bold: true
+                }
+
+                MouseArea {
+                    id: groupClearMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.clearGroup(groupRoot.groupName)
+                }
+            }
+        }
+
+        Repeater {
+            model: groupRoot.entries
+            delegate: NotificationCardItem {
+                required property var modelData
+                entry: modelData
+                formattedTime: root.timeAgo(modelData.ts)
+            }
+        }
+    }
+
+    // Interactive Notification Card Delegate
+    component NotificationCardItem: Rectangle {
+        id: cardItem
+        property var entry: null
+        property string formattedTime: ""
+        readonly property bool isExpanded: !!root.expandedCardMap[entry ? entry.id : 0]
+
+        width: parent ? parent.width : 340
+        implicitHeight: cardCol.implicitHeight + 16
         radius: 10
         color: Theme.card
         border.width: 1
-        border.color: Theme.border
-        Column {
-            anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
-            spacing: 2
-            Row {
-                spacing: 6
-                Text { text: app; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 8; font.bold: true }
-                Text { text: when; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 8 }
+        border.color: cardMouse.containsMouse ? Theme.brandAccent : Theme.border
+
+        Behavior on border.color {
+            enabled: Theme.animationsEnabled && !Theme.reducedMotion
+            ColorAnimation { duration: 120 }
+        }
+
+        MouseArea {
+            id: cardMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: {
+                if (entry) {
+                    root.markRead(entry.id)
+                    root.toggleExpandCard(entry.id)
+                }
             }
-            Text { text: summary; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true; width: parent.width; elide: Text.ElideRight }
-            Text { visible: detail !== ""; text: detail; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9; width: parent.width; elide: Text.ElideRight }
+        }
+
+        Column {
+            id: cardCol
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
+            spacing: 4
+
+            // Top row: icon/app, time, unread indicator, dismiss
+            RowLayout {
+                width: parent.width
+                spacing: 6
+
+                // App icon or glyph
+                Rectangle {
+                    width: 16
+                    height: 16
+                    radius: 4
+                    color: Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.15)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: (entry && entry.appName && entry.appName.length > 0) ? entry.appName.charAt(0).toUpperCase() : "󰂚"
+                        color: Theme.brandAccent
+                        font.family: Theme.fontUi
+                        font.pixelSize: 9
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: entry ? (entry.appName || entry.app || "Notification") : ""
+                    color: Theme.brandAccent
+                    font.family: Theme.fontUi
+                    font.pixelSize: 10
+                    font.bold: true
+                    Layout.maximumWidth: 160
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: cardItem.formattedTime
+                    color: Theme.textMuted
+                    font.family: Theme.fontMono
+                    font.pixelSize: 8
+                }
+
+                // Unread dot
+                Rectangle {
+                    visible: entry && !entry.read
+                    width: 6
+                    height: 6
+                    radius: 3
+                    color: Theme.brandAccent
+                }
+
+                Item { Layout.fillWidth: true; height: 1 }
+
+                // Dismiss button ✕
+                Rectangle {
+                    width: 18
+                    height: 18
+                    radius: 4
+                    color: dismissCardMa.containsMouse ? Qt.rgba(Theme.accentWarning.r, Theme.accentWarning.g, Theme.accentWarning.b, 0.2) : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "✕"
+                        color: dismissCardMa.containsMouse ? Theme.accentWarning : Theme.textMuted
+                        font.pixelSize: 9
+                    }
+
+                    MouseArea {
+                        id: dismissCardMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (entry) root.dismissNotif(entry.id)
+                        }
+                    }
+                }
+            }
+
+            // Summary
+            Text {
+                width: parent.width
+                text: entry ? (entry.summary || "") : ""
+                color: Theme.textMain
+                font.family: Theme.fontUi
+                font.pixelSize: 11
+                font.bold: true
+                wrapMode: Text.WordWrap
+                maximumLineCount: cardItem.isExpanded ? 10 : 2
+                elide: Text.ElideRight
+            }
+
+            // Expandable Body
+            Text {
+                visible: entry && entry.body && entry.body.length > 0
+                width: parent.width
+                text: entry ? entry.body : ""
+                textFormat: Text.PlainText
+                color: Theme.textMuted
+                font.family: Theme.fontUi
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+                maximumLineCount: cardItem.isExpanded ? 20 : 1
+                elide: Text.ElideRight
+            }
+
+            // Action Buttons
+            Row {
+                visible: entry && Array.isArray(entry.actions) && entry.actions.length > 0
+                spacing: 6
+                topPadding: 2
+
+                Repeater {
+                    model: entry ? (entry.actions || []) : []
+                    delegate: Rectangle {
+                        required property var modelData
+                        height: 22
+                        radius: 5
+                        implicitWidth: actionBtnText.implicitWidth + 14
+                        color: actMa.containsMouse ? Theme.surfaceAlt : Theme.cardAlt
+                        border.width: 1
+                        border.color: Theme.border
+
+                        Text {
+                            id: actionBtnText
+                            anchors.centerIn: parent
+                            text: modelData.text || modelData.identifier
+                            color: Theme.textMain
+                            font.family: Theme.fontUi
+                            font.pixelSize: 9
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: actMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (entry) root.invokeAction(entry.id, modelData.identifier)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
