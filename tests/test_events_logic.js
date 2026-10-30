@@ -199,6 +199,108 @@ function runTests() {
     assert.strictEqual(dndCritNotif.urgency, "critical");
 
     console.log("All EventsLogic Power Tests Passed Successfully!");
+
+    // --- Device Events Tests ---
+    console.log("Running EventsLogic Device Tests...");
+
+    const devState = EventsLogic.createInitialDeviceState();
+
+    // 14. USB connect
+    let devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "usb", action: "connected", name: "SanDisk Ultra" },
+        devState,
+        {},
+        false,
+        1000
+    );
+    assert.strictEqual(devRes.actions.length, 2);
+    assert.strictEqual(devRes.actions[0].type, "notification");
+    assert.strictEqual(devRes.actions[0].summary, "USB Storage Connected");
+    assert.strictEqual(devRes.actions[0].body, "SanDisk Ultra");
+    assert.strictEqual(devRes.actions[1].type, "sound");
+    assert.strictEqual(devRes.actions[1].event, "device-connect");
+
+    // 15. Debounce: immediate duplicate USB event within 2s is dropped
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "usb", action: "connected", name: "SanDisk Ultra" },
+        devRes.state,
+        {},
+        false,
+        1500 // 500ms later (< 2000ms debounce)
+    );
+    assert.strictEqual(devRes.actions.length, 0, "Rapid duplicate device event must be debounced");
+
+    // 16. USB disconnect after debounce window
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "usb", action: "disconnected", name: "SanDisk Ultra" },
+        devRes.state,
+        {},
+        false,
+        3500 // > 2000ms later
+    );
+    assert.strictEqual(devRes.actions.length, 2);
+    assert.strictEqual(devRes.actions[0].summary, "USB Storage Removed");
+    assert.strictEqual(devRes.actions[1].event, "device-disconnect");
+
+    // 17. Bluetooth connect & disconnect
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "bluetooth", action: "connected", name: "Sony WH-1000XM4" },
+        devRes.state,
+        {},
+        false,
+        5000
+    );
+    assert.strictEqual(devRes.actions.length, 2);
+    assert.strictEqual(devRes.actions[0].summary, "Bluetooth Connected");
+    assert.strictEqual(devRes.actions[0].body, "Sony WH-1000XM4");
+    assert.strictEqual(devRes.actions[1].event, "device-connect");
+
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "bluetooth", action: "disconnected", name: "Sony WH-1000XM4" },
+        devRes.state,
+        {},
+        false,
+        7500
+    );
+    assert.strictEqual(devRes.actions.length, 2);
+    assert.strictEqual(devRes.actions[0].summary, "Bluetooth Disconnected");
+    assert.strictEqual(devRes.actions[1].event, "device-disconnect");
+
+    // 18. Wi-Fi connect & disconnect (quiet by default, no sound)
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "wifi", action: "connected", name: "GPS-Home-5G" },
+        devRes.state,
+        {},
+        false,
+        10000
+    );
+    assert.strictEqual(devRes.actions.length, 1, "Wi-Fi connect should have notification only by default");
+    assert.strictEqual(devRes.actions[0].summary, "Wi-Fi Connected");
+    assert.strictEqual(devRes.actions[0].body, "GPS-Home-5G");
+    assert.strictEqual(devRes.actions[0].urgency, "low");
+
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "wifi", action: "disconnected", name: "GPS-Home-5G" },
+        devRes.state,
+        {},
+        false,
+        12500
+    );
+    assert.strictEqual(devRes.actions.length, 1);
+    assert.strictEqual(devRes.actions[0].summary, "Wi-Fi Disconnected");
+
+    // 19. Device sound silencing under DND
+    devRes = EventsLogic.evaluateDeviceEvent(
+        { type: "usb", action: "connected", name: "USB Stick" },
+        devRes.state,
+        {},
+        true, // dndActive = true
+        15000
+    );
+    assert.strictEqual(devRes.actions.length, 1, "Device sound must be silenced during DND");
+    assert.strictEqual(devRes.actions[0].type, "notification");
+
+    console.log("All EventsLogic Device Tests Passed Successfully!");
 }
 
 runTests();

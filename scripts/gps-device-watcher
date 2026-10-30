@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""GPS Device Watcher - Lightweight D-Bus watcher process owned by the GPS shell.
+
+Listens on the system D-Bus for:
+- UDisks2: USB and removable storage connect / disconnect
+- BlueZ: Bluetooth device connect / disconnect
+- NetworkManager: Wi-Fi connect / disconnect
+
+Outputs one JSON line per event to stdout for Quickshell consumption:
+  {"type": "usb", "action": "connected", "name": "SanDisk 3.2Gen1"}
+  {"type": "bluetooth", "action": "connected", "name": "Bose QC35"}
+  {"type": "wifi", "action": "connected", "name": "Home-5G"}
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import signal
+import sys
+from typing import Any, Dict, Optional
+
+# Ensure line-buffered stdout
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+
+
+def emit_event(event_type: str, action: str, name: str, extra: Optional[Dict[str, Any]] = None) -> None:
+    payload = {
+        "type": event_type,
+        "action": action,
+        "name": name,
+    }
+    if extra:
+        payload.update(extra)
+    print(json.dumps(payload), flush=True)
+
+
+class DeviceWatcher:
+    def __init__(self, bus: Any = None):
+        self.bus = bus
+        self.known_drives: Dict[str, str] = {}
+        self.known_bt: Dict[str, str] = {}
+        self.active_wifi: str = ""
+
+    def handle_udisks_added(self, path: str, interfaces: Dict[str, Dict[str, Any]]) -> None:
+        drive_iface = interfaces.get("org.freedesktop.UDisks2.Drive")
+        block_iface = interfaces.get("org.freedesktop.UDisks2.Block")
+
+        if drive_iface:
+            conn_bus = str(drive_iface.get("ConnectionBus", "")).lower()
+            removable = bool(drive_iface.get("Removable", False))
+            if conn_bus == "usb" or removable:
+                vendor = str(drive_iface.get("Vendor", "")).strip()
+                model = str(drive_iface.get("Model", "")).strip()
+                name = f"{vendor} {model}".strip() or "USB Drive"
+                self.known_drives[str(path)] = name
+                emit_event("usb", "connected", name, {"path": str(path)})
+                return
+
+        if block_iface:
+            # Check if block device has label or is partition on USB
+            hint = str(block_iface.get("IdLabel", "")).strip()
+            drive_path = str(block_iface.get("Drive", ""))
+            if hint and drive_path in self.known_drives:
+                name = f"{self.known_drives[drive_path]} ({hint})"
+                emit_event("usb", "connected", name, {"path": str(path)})
+
+    def handle_udisks_removed(self, path: str, interfaces: list[str]) -> None:
+        path_str = str(path)
+        if path_str in self.known_drives:
+            name = self.known_drives.pop(path_str)
+            emit_event("usb", "disconnected", name, {"path": path_str})
+
+    def handle_bluez_properties(self, interface: str, changed: Dict[str, Any], invalidated: list[str], path: str) -> None:
+        if interface != "org.bluez.Device1":
+            return
+        if "Connected" not in changed:
+            return
+
+        connected = bool(changed["Connected"])
+        path_str = str(path)
+
+        # Retrieve device name or alias
+        name = "Bluetooth Device"
+        if "Name" in changed:
+            name = str(changed["Name"])
+        elif "Alias" in changed:
+            name = str(changed["Alias"])
+        elif path_str in self.known_bt:
+            name = self.known_bt[path_str]
+
+        self.known_bt[path_str] = name
+        action = "connected" if connected else "disconnected"
+        emit_event("bluetooth", action, name, {"path": path_str})
+
+    def handle_nm_properties(self, interface: str, changed: Dict[str, Any], invalidated: list[str], path: str) -> None:
+        if interface == "org.freedesktop.NetworkManager.Connection.Active":
+            if "State" in changed:
+                state = int(changed["State"])
+                conn_type = str(changed.get("Type", ""))
+                name = str(changed.get("Id", ""))
+                # NM_ACTIVE_CONNECTION_STATE_ACTIVATED = 2
+                # NM_ACTIVE_CONNECTION_STATE_DEACTIVATING = 3
+                # NM_ACTIVE_CONNECTION_STATE_DEACTIVATED = 4
+                if conn_type in ("802-11-wireless", ""):
+                    if state == 2 and name:
+                        self.active_wifi = name
+                        emit_event("wifi", "connected", name)
+                    elif state in (3, 4) and self.active_wifi:
+                        emit_event("wifi", "disconnected", self.active_wifi)
+                        self.active_wifi = ""
+
+
+def setup_dbus_listeners(watcher: DeviceWatcher, bus: Any) -> None:
+    # 1. UDisks2 ObjectManager signals
+    bus.add_signal_receiver(
+        watcher.handle_udisks_added,
+        signal_name="InterfacesAdded",
+        dbus_interface="org.freedesktop.DBus.ObjectManager",
+        bus_name="org.freedesktop.UDisks2",
+    )
+    bus.add_signal_receiver(
+        watcher.handle_udisks_removed,
+        signal_name="InterfacesRemoved",
+        dbus_interface="org.freedesktop.DBus.ObjectManager",
+        bus_name="org.freedesktop.UDisks2",
+    )
+
+    # 2. BlueZ device property changes
+    bus.add_signal_receiver(
+        watcher.handle_bluez_properties,
+        signal_name="PropertiesChanged",
+        dbus_interface="org.freedesktop.DBus.Properties",
+        bus_name="org.bluez",
+        path_keyword="path",
+    )
+
+    # 3. NetworkManager active connection changes
+    bus.add_signal_receiver(
+        watcher.handle_nm_properties,
+        signal_name="PropertiesChanged",
+        dbus_interface="org.freedesktop.DBus.Properties",
+        bus_name="org.freedesktop.NetworkManager",
+        path_keyword="path",
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="GPS Device Watcher")
+    parser.add_argument("--test-emit", type=str, help="Emit a raw test event and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Test D-Bus connection and exit")
+    args = parser.parse_args()
+
+    if args.test_emit:
+        try:
+            data = json.loads(args.test_emit)
+            emit_event(data.get("type", "unknown"), data.get("action", "unknown"), data.get("name", "unknown"))
+            return 0
+        except Exception as e:
+            print(f"Error parsing --test-emit JSON: {e}", file=sys.stderr)
+            return 1
+
+    try:
+        import dbus
+        import dbus.mainloop.glib
+        from gi.repository import GLib
+
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        bus = dbus.SystemBus()
+    except Exception as e:
+        print(f"GPS Device Watcher: Failed to connect to system D-Bus: {e}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print("Connected to D-Bus successfully.")
+        return 0
+
+    watcher = DeviceWatcher(bus)
+    setup_dbus_listeners(watcher, bus)
+
+    loop = GLib.MainLoop()
+
+    def handle_signal(sig, frame):
+        loop.quit()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    try:
+        loop.run()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

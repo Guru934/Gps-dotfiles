@@ -253,12 +253,178 @@ function evaluatePower(current, prevState, userSettings, dndActive) {
     };
 }
 
+function createInitialDeviceState() {
+    return {
+        debounceMap: {},
+        activeWifi: ""
+    };
+}
+
+/**
+ * Evaluates device events (USB, Bluetooth, Wi-Fi) with debounce and DND rules.
+ *
+ * @param {Object} event - { type: "usb"|"bluetooth"|"wifi", action: "connected"|"disconnected", name: string }
+ * @param {Object} prevState - Device state tracker
+ * @param {Object} userSettings - Configuration overrides
+ * @param {boolean} dndActive - Whether Do Not Disturb is active
+ * @param {number} [nowMs] - Current timestamp in ms (for testing)
+ * @returns {Object} { state: newState, actions: Array<{type, ...}> }
+ */
+function evaluateDeviceEvent(event, prevState, userSettings, dndActive, nowMs) {
+    const settings = mergeSettings(userSettings);
+    const state = Object.assign({}, prevState || createInitialDeviceState());
+    state.debounceMap = Object.assign({}, state.debounceMap || {});
+    const actions = [];
+
+    if (!event || !event.type || !event.action) {
+        return { state: state, actions: actions };
+    }
+
+    const type = event.type.toLowerCase();
+    const action = event.action.toLowerCase();
+    const name = (event.name || "").trim();
+    const now = typeof nowMs === "number" ? nowMs : Date.now();
+
+    // Debounce deduplication: avoid flapping device connections within 2 seconds
+    const dedupeKey = type + ":" + action + ":" + name;
+    if (state.debounceMap[dedupeKey] !== undefined) {
+        const lastTime = state.debounceMap[dedupeKey];
+        if (now - lastTime < 2000) {
+            return { state: state, actions: actions };
+        }
+    }
+    state.debounceMap[dedupeKey] = now;
+
+    if (type === "usb") {
+        const devName = name || "Removable Storage";
+        if (action === "connected") {
+            if (settings.notifyUsb) {
+                actions.push({
+                    type: "notification",
+                    app: "System",
+                    summary: "USB Storage Connected",
+                    body: devName,
+                    urgency: "normal",
+                    icon: "drive-removable-media"
+                });
+            }
+            if (settings.soundUsb && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "device-connect"
+                });
+            }
+        } else if (action === "disconnected") {
+            if (settings.notifyUsb) {
+                actions.push({
+                    type: "notification",
+                    app: "System",
+                    summary: "USB Storage Removed",
+                    body: devName,
+                    urgency: "normal",
+                    icon: "drive-removable-media"
+                });
+            }
+            if (settings.soundUsb && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "device-disconnect"
+                });
+            }
+        }
+    } else if (type === "bluetooth") {
+        const devName = name || "Bluetooth Device";
+        if (action === "connected") {
+            if (settings.notifyBluetooth) {
+                actions.push({
+                    type: "notification",
+                    app: "System",
+                    summary: "Bluetooth Connected",
+                    body: devName,
+                    urgency: "normal",
+                    icon: "bluetooth"
+                });
+            }
+            if (settings.soundBluetooth && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "device-connect"
+                });
+            }
+        } else if (action === "disconnected") {
+            if (settings.notifyBluetooth) {
+                actions.push({
+                    type: "notification",
+                    app: "System",
+                    summary: "Bluetooth Disconnected",
+                    body: devName,
+                    urgency: "normal",
+                    icon: "bluetooth"
+                });
+            }
+            if (settings.soundBluetooth && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "device-disconnect"
+                });
+            }
+        }
+    } else if (type === "wifi") {
+        const ssid = name || "Wi-Fi";
+        if (action === "connected") {
+            state.activeWifi = ssid;
+            if (settings.notifyWifi) {
+                actions.push({
+                    type: "notification",
+                    app: "Network",
+                    summary: "Wi-Fi Connected",
+                    body: ssid,
+                    urgency: "low",
+                    icon: "network-wireless"
+                });
+            }
+            // Wi-Fi sound is quiet by default
+            if (settings.soundWifi && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "notification"
+                });
+            }
+        } else if (action === "disconnected") {
+            state.activeWifi = "";
+            if (settings.notifyWifi) {
+                actions.push({
+                    type: "notification",
+                    app: "Network",
+                    summary: "Wi-Fi Disconnected",
+                    body: "Offline",
+                    urgency: "low",
+                    icon: "network-wireless-offline"
+                });
+            }
+            if (settings.soundWifi && !dndActive) {
+                actions.push({
+                    type: "sound",
+                    event: "notification"
+                });
+            }
+        }
+    }
+
+    return {
+        state: state,
+        actions: actions
+    };
+}
+
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         DEFAULT_EVENTS_SETTINGS,
         normalizePercentage,
         mergeSettings,
         createInitialPowerState,
-        evaluatePower
+        evaluatePower,
+        createInitialDeviceState,
+        evaluateDeviceEvent
     };
 }

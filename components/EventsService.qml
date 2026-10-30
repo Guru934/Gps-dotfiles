@@ -10,11 +10,14 @@ Scope {
 
     property var hub: null
     readonly property string home: Quickshell.env("HOME")
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (home + "/Projects/my-rice")
     readonly property string storePath: home + "/.config/quickshell/rice-settings.json"
     readonly property string dndPath: home + "/.local/state/gps/dnd.json"
+    readonly property string watcherScript: repoRoot + "/scripts/gps-device-watcher"
 
     property var eventsSettings: EventsLogic.DEFAULT_EVENTS_SETTINGS
     property var powerState: EventsLogic.createInitialPowerState()
+    property var deviceState: EventsLogic.createInitialDeviceState()
     property bool dndActive: false
 
     // UPower telemetry bindings
@@ -40,6 +43,23 @@ Scope {
         onFileChanged: root.loadDnd()
     }
 
+    // Lightweight D-Bus device watcher owned by the shell
+    Process {
+        id: watcherProc
+        command: [root.watcherScript]
+        running: true
+        stdout: SplitParser {
+            onRead: line => {
+                const clean = (line || "").trim()
+                if (!clean) return
+                try {
+                    const ev = JSON.parse(clean)
+                    root.handleDeviceEvent(ev)
+                } catch (e) {}
+            }
+        }
+    }
+
     Component.onCompleted: {
         root.loadSettings()
         root.loadDnd()
@@ -60,6 +80,13 @@ Scope {
         }
         const res = EventsLogic.evaluatePower(current, root.powerState, root.eventsSettings, root.dndActive)
         root.powerState = res.state
+        root.executeActions(res.actions)
+    }
+
+    function handleDeviceEvent(ev) {
+        if (!ev || typeof ev !== "object") return
+        const res = EventsLogic.evaluateDeviceEvent(ev, root.deviceState, root.eventsSettings, root.dndActive)
+        root.deviceState = res.state
         root.executeActions(res.actions)
     }
 
@@ -150,12 +177,14 @@ Scope {
         function status(): string {
             return JSON.stringify({
                 powerState: root.powerState,
+                deviceState: root.deviceState,
                 settings: root.eventsSettings,
                 dndActive: root.dndActive,
                 batPresent: root.batPresent,
                 batPercentage: root.batPercentage,
                 onBattery: root.onBattery,
-                devState: root.devState
+                devState: root.devState,
+                watcherRunning: watcherProc.running
             })
         }
 
@@ -168,6 +197,18 @@ Scope {
             }
             const res = EventsLogic.evaluatePower(current, root.powerState, root.eventsSettings, root.dndActive)
             root.powerState = res.state
+            root.executeActions(res.actions)
+            return JSON.stringify({ actions: res.actions, state: res.state })
+        }
+
+        function testDevice(type: string, action: string, name: string): string {
+            const ev = {
+                type: type,
+                action: action,
+                name: name
+            }
+            const res = EventsLogic.evaluateDeviceEvent(ev, root.deviceState, root.eventsSettings, root.dndActive)
+            root.deviceState = res.state
             root.executeActions(res.actions)
             return JSON.stringify({ actions: res.actions, state: res.state })
         }
