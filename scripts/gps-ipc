@@ -149,7 +149,29 @@ case "$cmd" in
                 call_qs "$ipath" island markReadNotification "$@"
                 ;;
             dnd)
-                call_qs "$ipath" island dnd "$@"
+                sub="${1:-toggle}"
+                shift || true
+                call_qs "$ipath" island dnd "$sub" "$@"
+                ;;
+            snooze)
+                mins="${1:-30}"
+                shift || true
+                call_qs "$ipath" island dndSnooze "$mins" "$@"
+                ;;
+            schedule)
+                sub="${1:-on}"
+                shift || true
+                case "$sub" in
+                    on)
+                        call_qs "$ipath" island dndSchedule true "$@"
+                        ;;
+                    off)
+                        call_qs "$ipath" island dndSchedule false "$@"
+                        ;;
+                    *)
+                        call_qs "$ipath" island dndSchedule true "$sub" "$@"
+                        ;;
+                esac
                 ;;
             status)
                 call_qs "$ipath" island notifyStatus "$@"

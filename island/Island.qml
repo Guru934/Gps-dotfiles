@@ -867,6 +867,38 @@ Scope {
         }
     }
 
+    readonly property string dndSubText: {
+        if (!root.dnd) return "Off"
+        if (root.dndState && root.dndState.mode === "snooze") {
+            const rem = Math.max(0, Math.ceil((root.dndState.snoozeUntil - Date.now()) / 60000))
+            return rem > 0 ? (rem + "m snooze") : "Snooze exp"
+        }
+        if (root.dndState && root.dndState.mode === "schedule") {
+            return "Scheduled"
+        }
+        if (root.held.length > 0) return root.held.length + " held"
+        return "On"
+    }
+
+    Timer {
+        interval: 10000
+        repeat: true
+        running: true
+        onTriggered: {
+            const now = Date.now()
+            const active = NotificationStore.isDndActive(root.dndState, now, 1)
+            if (active !== root.dnd) {
+                root.dnd = active
+                if (!active && root.held.length > 0) {
+                    root.held.forEach(q => { q.age = 0 })
+                    root.notifQueue = root.held.concat(root.notifQueue).slice(0, root.maxToasts)
+                    root.held = []
+                }
+                root.updateVisibility()
+            }
+        }
+    }
+
     property bool dnd: false
     property var notifQueue: []              // [{n: Notification, ts, age, timeout}] newest first
     property var held: []                    // queued silently while DND is on

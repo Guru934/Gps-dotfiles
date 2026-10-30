@@ -922,7 +922,7 @@ Item {
                     iconName: "notifications_off"
                     iconAlt: "D"
                     titleText: "Do not disturb"
-                    subText: st.core.dnd ? (st.core.held.length > 0 ? (st.core.held.length + " held") : "On") : "Off"
+                    subText: st.core.dndSubText !== undefined ? st.core.dndSubText : (st.core.dnd ? (st.core.held.length > 0 ? (st.core.held.length + " held") : "On") : "Off")
                     tileOn: st.core.dnd
                     tileAvailable: true
                     onToggled: st.core.setDnd(!st.core.dnd)
