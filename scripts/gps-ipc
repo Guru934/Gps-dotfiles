@@ -131,6 +131,35 @@ case "$cmd" in
         fi
         ;;
 
+    notify|notification)
+        action="${1:-status}"
+        shift || true
+        ipath="$(island_target_path)"
+        case "$action" in
+            history)
+                call_qs "$ipath" island history "$@"
+                ;;
+            clear)
+                call_qs "$ipath" island clearNotifications "$@"
+                ;;
+            dismiss)
+                call_qs "$ipath" island dismissNotification "$@"
+                ;;
+            markread)
+                call_qs "$ipath" island markReadNotification "$@"
+                ;;
+            dnd)
+                call_qs "$ipath" island dnd "$@"
+                ;;
+            status)
+                call_qs "$ipath" island notifyStatus "$@"
+                ;;
+            *)
+                call_qs "$ipath" island notify "$action" "$@"
+                ;;
+        esac
+        ;;
+
     mediahub)
         action="${1:-toggle}"
         shift || true
@@ -200,9 +229,10 @@ case "$cmd" in
         ;;
 
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|check|status> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|check|status> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
+        echo "  notify <history|clear|dismiss <id>|markread [id]|dnd [on|off|toggle]|status>" >&2
         echo "  settings [action] [args...]" >&2
         echo "  clipboard [action]" >&2
         echo "  mediahub [action]" >&2

@@ -29,6 +29,7 @@ import Quickshell.Services.Pipewire
 import Quickshell.Services.Notifications
 import qs.config
 import "IslandVisibility.js" as IslandVisibility
+import "NotificationStore.js" as NotificationStore
 
 Scope {
     id: root
@@ -813,15 +814,93 @@ Scope {
     }
 
     // ───────────── notifications (D-Bus server) + do-not-disturb ─────────────
+    readonly property string notifStateDir: {
+        const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
+        return stateHome + "/gps"
+    }
+    readonly property string notifHistoryPath: root.notifStateDir + "/notifications.json"
+    readonly property string notifDndPath: root.notifStateDir + "/dnd.json"
+
+    property var notifStore: NotificationStore.createStore()
+    property var dndState: NotificationStore.createDefaultDnd()
+
+    function saveNotifStore() {
+        const raw = NotificationStore.serialize(root.notifStore)
+        const path = root.notifHistoryPath
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && (umask 077 && printf "%s\\n" "$2" > "$tmp") && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", path, raw])
+    }
+
+    function saveDndState() {
+        const raw = NotificationStore.serializeDnd(root.dndState)
+        const path = root.notifDndPath
+        const script = 'd="$(dirname "$1")" && mkdir -m 0700 -p "$d" && tmp="${d}/.$(basename "$1").tmp.$$" && (umask 077 && printf "%s\\n" "$2" > "$tmp") && chmod 0600 "$tmp" && mv -f "$tmp" "$1"'
+        Quickshell.execDetached(["sh", "-c", script, "sh", path, raw])
+    }
+
+    FileView {
+        path: root.notifHistoryPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const textData = text()
+                if (textData && textData.trim().length > 0) {
+                    root.notifStore = NotificationStore.deserialize(textData)
+                }
+            } catch (e) {}
+        }
+    }
+
+    FileView {
+        path: root.notifDndPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const textData = text()
+                if (textData && textData.trim().length > 0) {
+                    root.dndState = NotificationStore.deserializeDnd(textData)
+                    root.dnd = NotificationStore.isDndActive(root.dndState, Date.now(), 1)
+                }
+            } catch (e) {}
+        }
+    }
+
     property bool dnd: false
     property var notifQueue: []              // [{n: Notification, ts, age, timeout}] newest first
     property var held: []                    // queued silently while DND is on
     function addNotif(n) {
+        const nowMs = Date.now()
+        const res = NotificationStore.add(root.notifStore, {
+            id: n.id,
+            dbusId: n.id,
+            appName: n.appName,
+            appIcon: n.appIcon,
+            summary: n.summary,
+            body: n.body,
+            urgency: n.urgency,
+            actions: n.actions,
+            image: n.image
+        }, nowMs)
+
+        if (res.muted) {
+            n.dismiss()
+            return
+        }
+
+        root.saveNotifStore()
+
         n.tracked = true
         n.closed.connect(function () { root.dropNotif(n) })
         const crit = n.urgency === NotificationUrgency.Critical
-        const item = { n: n, ts: Date.now() / 1000, age: 0, timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 6) }
-        if (dnd && !crit) { held = [item].concat(held).slice(0, 30); return }
+        const isDnd = NotificationStore.isDndActive(root.dndState, nowMs, n.urgency)
+
+        const item = { n: n, ts: nowMs / 1000, age: 0, timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 4) }
+        if (isDnd) {
+            held = [item].concat(held).slice(0, 30)
+            return
+        }
         notifQueue = [item].concat(notifQueue.filter(q => q.n !== n)).slice(0, maxToasts)
         root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
     }
@@ -835,6 +914,10 @@ Scope {
     function dismissNotif(item) {
         const n = item.n
         notifQueue = notifQueue.filter(q => q !== item)
+        if (n && n.id && root.notifStore) {
+            NotificationStore.dismiss(root.notifStore, n.id, Date.now())
+            root.saveNotifStore()
+        }
         n.dismiss()
         if (notifQueue.length === 0) {
             root.clearEvent("notify")
@@ -848,10 +931,18 @@ Scope {
     }
     function invokeAction(item, action) {
         action.invoke()
+        if (item.n && item.n.id && root.notifStore) {
+            NotificationStore.markRead(root.notifStore, item.n.id, Date.now())
+            root.saveNotifStore()
+        }
         if (!item.n.resident) notifQueue = notifQueue.filter(q => q !== item)
     }
     function setDnd(on) {
         dnd = on
+        if (root.dndState) {
+            root.dndState.mode = on ? "dnd" : "off"
+            root.saveDndState()
+        }
         if (!on && held.length > 0) {                 // release what piled up as a reviewable stack
             held.forEach(q => { q.age = 0 })
             notifQueue = held.concat(notifQueue).slice(0, maxToasts)
@@ -901,7 +992,41 @@ Scope {
     // focus preview:           qs -p <path> ipc call island debug focus
     IpcHandler {
         target: "island"
-        function dnd(state: string) { root.setDnd(state === "toggle" ? !root.dnd : state === "on") }
+        function dnd(state: string) {
+            if (state === "toggle") root.setDnd(!root.dnd)
+            else if (state === "on") root.setDnd(true)
+            else if (state === "off") root.setDnd(false)
+            else if (state === "status") {
+                return JSON.stringify({
+                    dnd: root.dnd,
+                    mode: root.dndState ? root.dndState.mode : "off",
+                    allowCritical: root.dndState ? root.dndState.allowCritical : true,
+                    held: root.held.length
+                })
+            }
+        }
+        function dndSnooze(minutes: int): string {
+            if (!root.dndState) root.dndState = NotificationStore.createDefaultDnd()
+            root.dndState.mode = "snooze"
+            const mins = (minutes > 0) ? minutes : 30
+            root.dndState.snoozeUntil = Date.now() + mins * 60 * 1000
+            root.saveDndState()
+            root.dnd = true
+            root.postEvent("dnd", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
+            root.updateVisibility()
+            return JSON.stringify({ ok: true, snoozeUntil: root.dndState.snoozeUntil })
+        }
+        function dndSchedule(enabled: bool, fromTime: string, toTime: string): string {
+            if (!root.dndState) root.dndState = NotificationStore.createDefaultDnd()
+            root.dndState.schedule.enabled = enabled
+            if (fromTime) root.dndState.schedule.from = fromTime
+            if (toTime) root.dndState.schedule.to = toTime
+            root.dndState.mode = enabled ? "schedule" : "off"
+            root.saveDndState()
+            root.dnd = NotificationStore.isDndActive(root.dndState, Date.now(), 1)
+            root.updateVisibility()
+            return JSON.stringify({ ok: true, schedule: root.dndState.schedule })
+        }
         function launcher(state: string) { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
         function control(action: string) { root.setControl(action) }
         function show() {
@@ -933,6 +1058,49 @@ Scope {
             return IslandVisibility.formatStatus(root.currentMode, root.currentReason, !root.isResting, root.isPinned)
         }
         function clear() { root.dismissAllNotifs() }
+        function clearNotifications(): string {
+            if (root.notifStore) {
+                NotificationStore.clearAll(root.notifStore)
+                root.saveNotifStore()
+            }
+            root.dismissAllNotifs()
+            return JSON.stringify({ ok: true })
+        }
+        function dismissNotification(id: int): string {
+            if (root.notifStore) {
+                NotificationStore.dismiss(root.notifStore, id, Date.now())
+                root.saveNotifStore()
+            }
+            for (var i = 0; i < root.notifQueue.length; i++) {
+                if (root.notifQueue[i].n && root.notifQueue[i].n.id === id) {
+                    root.dismissNotif(root.notifQueue[i])
+                    break
+                }
+            }
+            return JSON.stringify({ ok: true })
+        }
+        function markReadNotification(id: int): string {
+            if (root.notifStore) {
+                if (id === 0 || isNaN(id)) {
+                    NotificationStore.markAllRead(root.notifStore, Date.now())
+                } else {
+                    NotificationStore.markRead(root.notifStore, id, Date.now())
+                }
+                root.saveNotifStore()
+            }
+            return JSON.stringify({ ok: true })
+        }
+        function notifyStatus(): string {
+            return JSON.stringify({
+                activeOwner: true,
+                totalStored: root.notifStore ? root.notifStore.entries.length : 0,
+                activeToasts: root.notifQueue.length,
+                heldCount: root.held.length,
+                dnd: root.dnd,
+                dndMode: root.dndState ? root.dndState.mode : "off",
+                allowCritical: root.dndState ? root.dndState.allowCritical : true
+            })
+        }
         function debug(mode: string) { root.debugMode = mode }
         function mediaHub(action: string) { root.openMediaHub() }
         function toolbox(action: string) { root.openToolbox() }
@@ -949,18 +1117,8 @@ Scope {
         }
         function history(): string {
             var items = []
-            for (var i = 0; i < root.notifQueue.length; i++) {
-                var q = root.notifQueue[i]
-                if (q && q.n) {
-                    items.push({
-                        id: q.n.id !== undefined ? q.n.id : (i + 1),
-                        app: q.n.appName || "Notification",
-                        summary: q.n.summary || "",
-                        body: q.n.body || "",
-                        time: Date.now() - ((q.age || 0) * 1000),
-                        urgency: q.n.urgency !== undefined ? q.n.urgency : 1
-                    })
-                }
+            if (root.notifStore && Array.isArray(root.notifStore.entries)) {
+                items = root.notifStore.entries.slice(0, 50)
             }
             return JSON.stringify({
                 focus: root.focusOn,

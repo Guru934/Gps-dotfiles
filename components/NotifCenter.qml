@@ -22,6 +22,28 @@ PanelWindow {
         : (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice"))
     readonly property string ipcScript: root.repoRoot + "/scripts/gps-ipc"
 
+    readonly property string notifHistoryPath: {
+        const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")
+        return stateHome + "/gps/notifications.json"
+    }
+
+    FileView {
+        path: root.notifHistoryPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const textData = text()
+                if (textData && textData.trim().length > 0) {
+                    const parsed = JSON.parse(textData)
+                    if (parsed && Array.isArray(parsed.entries)) {
+                        root.islandItems = parsed.entries.slice(0, 30)
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
     function parseIslandHistory(raw) {
         try {
             const d = JSON.parse(raw)
