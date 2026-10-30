@@ -1,22 +1,26 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from tests.helpers import HermeticTestCase
+
 HELPER = REPO_ROOT / "scripts" / "pet-alert"
 if not HELPER.exists():
     HELPER = Path.home() / ".local/bin/pet-alert"
 
 
-class PetAlertHelperTests(unittest.TestCase):
+class PetAlertHelperTests(HermeticTestCase):
     def run_helper(self, mode, payload=""):
         with tempfile.TemporaryDirectory() as runtime:
-            env = dict(os.environ, XDG_RUNTIME_DIR=runtime, PET_ALERT_WAIT_SECONDS="0")
+            env = dict(self.hermetic.env, XDG_RUNTIME_DIR=runtime, PET_ALERT_WAIT_SECONDS="0")
             result = subprocess.run([str(HELPER), mode], input=payload, text=True,
                                     env=env, capture_output=True, check=True)
             path = Path(runtime) / "pet" / "alerts.jsonl"
@@ -48,7 +52,7 @@ class PetAlertHelperTests(unittest.TestCase):
 
     def test_codex_response_returns_documented_decision(self):
         with tempfile.TemporaryDirectory() as runtime:
-            env = dict(os.environ, XDG_RUNTIME_DIR=runtime, PET_ALERT_WAIT_SECONDS="2")
+            env = dict(self.hermetic.env, XDG_RUNTIME_DIR=runtime, PET_ALERT_WAIT_SECONDS="2")
             payload = json.dumps({
                 "hook_event_name": "PermissionRequest", "session_id": "s1",
                 "turn_id": "r1", "cwd": "/tmp", "tool_name": "Bash",

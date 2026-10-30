@@ -4,11 +4,15 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.helpers import HermeticTestCase
 FONTS_CONF = ROOT / "dots" / "fontconfig" / "fonts.conf"
 SETUP_SCRIPT = ROOT / "scripts" / "setup-fonts.sh"
 
@@ -97,18 +101,18 @@ class FontconfigInstallerTests(unittest.TestCase):
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "<!-- preexisting user config -->\n")
 
 
-class FontResolutionTests(unittest.TestCase):
+class FontResolutionTests(HermeticTestCase):
     """Asserts fontconfig matching with fc-match, gracefully skipping missing optional fonts."""
 
     def fc_match(self, query, fmt="%{family}"):
         cmd = ["fc-match", "-f", fmt, query]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = self.hermetic.run(cmd, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"fc-match failed on {query}: {res.stderr}")
         return res.stdout.strip()
 
     def is_font_installed(self, family_name):
         cmd = ["fc-list", f":family={family_name}", "family"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = self.hermetic.run(cmd, capture_output=True, text=True)
         return bool(res.stdout.strip())
 
     def test_rendering_properties(self):

@@ -5,7 +5,12 @@ import json
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.sound_engine import get_repo_root, resolve_sound_file
 
@@ -81,7 +86,7 @@ class SoundAssetTests(unittest.TestCase):
                 "default=noprint_wrappers=1:nokey=1",
                 str(fpath),
             ]
-            res = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            res = subprocess.run(probe_cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
             duration_s = float(res.stdout.strip())
             self.assertLess(
                 duration_s,
@@ -92,6 +97,7 @@ class SoundAssetTests(unittest.TestCase):
             # Check peak volume via ffmpeg volumedetect filter
             vol_cmd = [
                 "ffmpeg",
+                "-nostdin",
                 "-i",
                 str(fpath),
                 "-af",
@@ -100,7 +106,7 @@ class SoundAssetTests(unittest.TestCase):
                 "null",
                 "-",
             ]
-            vol_res = subprocess.run(vol_cmd, capture_output=True, text=True, check=True)
+            vol_res = subprocess.run(vol_cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
             # Find max_volume: -X.X dB
             max_vol = None
             for line in vol_res.stderr.splitlines():

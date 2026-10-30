@@ -13,8 +13,13 @@ import subprocess
 import tempfile
 import time
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import sound_engine
 from scripts.sound_engine import (

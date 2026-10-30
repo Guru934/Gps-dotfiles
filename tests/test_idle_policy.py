@@ -4,10 +4,15 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.helpers import HermeticTestCase
+
 SCRIPTS_DIR = ROOT / "scripts"
 DOTS_HYPR_DIR = ROOT / "dots" / "hypr"
 HYPRIDLE_CONF = DOTS_HYPR_DIR / "hypridle.conf"
@@ -15,7 +20,7 @@ IDLE_BRIGHT_SCRIPT = SCRIPTS_DIR / "gps-idle-bright"
 IDLE_SUSPEND_SCRIPT = SCRIPTS_DIR / "gps-idle-suspend"
 
 
-class HypridleConfigTests(unittest.TestCase):
+class HypridleConfigTests(HermeticTestCase):
     """Contract tests for hypridle.conf configuration file."""
 
     def test_hypridle_conf_exists(self):
@@ -23,7 +28,7 @@ class HypridleConfigTests(unittest.TestCase):
 
     def test_hypridle_conf_syntax_and_registration(self):
         """Verify hypridle can parse the config and registers all four expected rules."""
-        res = subprocess.run(
+        res = self.hermetic.run(
             ["hypridle", "-c", str(HYPRIDLE_CONF), "-v"],
             capture_output=True,
             text=True,
@@ -55,7 +60,7 @@ class HypridleConfigTests(unittest.TestCase):
             )
             temp_path = f.name
         try:
-            res = subprocess.run(
+            res = self.hermetic.run(
                 ["hypridle", "-c", temp_path, "-v"],
                 capture_output=True,
                 text=True,
@@ -67,10 +72,11 @@ class HypridleConfigTests(unittest.TestCase):
                 os.unlink(temp_path)
 
 
-class BrightnessSaveRestoreTests(unittest.TestCase):
+class BrightnessSaveRestoreTests(HermeticTestCase):
     """Unit tests for gps-idle-bright save/restore logic with mocked brightnessctl."""
 
     def setUp(self):
+        super().setUp()
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
         self.state_file = self.tmp_path / "saved_bright.state"
@@ -104,13 +110,14 @@ class BrightnessSaveRestoreTests(unittest.TestCase):
         self.mock_bin.chmod(self.mock_bin.stat().st_mode | stat.S_IEXEC)
 
         self.env = {
-            **os.environ,
+            **self.hermetic.env,
             "GPS_IDLE_STATE_FILE": str(self.state_file),
             "GPS_IDLE_BRIGHTNESS_BIN": str(self.mock_bin),
         }
 
     def tearDown(self):
         self.tmp_dir.cleanup()
+        super().tearDown()
 
     def test_dim_saves_initial_brightness_and_dims_non_zero(self):
         res = subprocess.run(
@@ -175,10 +182,11 @@ class BrightnessSaveRestoreTests(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
 
 
-class BatterySuspendTelemetryTests(unittest.TestCase):
+class BatterySuspendTelemetryTests(HermeticTestCase):
     """Unit tests for gps-idle-suspend battery detection and safety checks."""
 
     def setUp(self):
+        super().setUp()
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
         self.power_dir = self.tmp_path / "power_supply"
@@ -191,13 +199,14 @@ class BatterySuspendTelemetryTests(unittest.TestCase):
         self.mock_suspend.chmod(self.mock_suspend.stat().st_mode | stat.S_IEXEC)
 
         self.env = {
-            **os.environ,
+            **self.hermetic.env,
             "GPS_POWER_SUPPLY_DIR": str(self.power_dir),
             "GPS_IDLE_SUSPEND_BIN": str(self.mock_suspend),
         }
 
     def tearDown(self):
         self.tmp_dir.cleanup()
+        super().tearDown()
 
     def _setup_power_devices(self, ac_online=1, bat_status="Charging"):
         ac_dir = self.power_dir / "ACAD"

@@ -1,22 +1,28 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 """Automated unit and contract tests for unified lock wrapper (gps-lock) and idle controller (gps-idle)."""
 import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.helpers import HermeticTestCase
+
 SCRIPTS_DIR = ROOT / "scripts"
 GPS_LOCK_SCRIPT = SCRIPTS_DIR / "gps-lock"
 GPS_IDLE_SCRIPT = SCRIPTS_DIR / "gps-idle"
 
 
-class GpsLockWrapperTests(unittest.TestCase):
+class GpsLockWrapperTests(HermeticTestCase):
     """Unit tests for scripts/gps-lock wrapper."""
 
     def setUp(self):
+        super().setUp()
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
         self.mock_bin_dir = self.tmp_path / "bin"
@@ -25,6 +31,7 @@ class GpsLockWrapperTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp_dir.cleanup()
+        super().tearDown()
 
     def test_gps_lock_script_exists_and_executable(self):
         self.assertTrue(GPS_LOCK_SCRIPT.is_file())
@@ -41,8 +48,8 @@ class GpsLockWrapperTests(unittest.TestCase):
         mock_hyprlock.chmod(mock_hyprlock.stat().st_mode | stat.S_IEXEC)
 
         env = {
-            **os.environ,
-            "PATH": f"{self.mock_bin_dir}:{os.environ.get('PATH', '')}",
+            **self.hermetic.env,
+            "PATH": f"{self.mock_bin_dir}:{self.hermetic.env.get('PATH', '')}",
         }
 
         res = subprocess.run([str(GPS_LOCK_SCRIPT)], env=env, capture_output=True, text=True)
@@ -60,8 +67,8 @@ class GpsLockWrapperTests(unittest.TestCase):
         mock_hyprlock.chmod(mock_hyprlock.stat().st_mode | stat.S_IEXEC)
 
         env = {
-            **os.environ,
-            "PATH": f"{self.mock_bin_dir}:{os.environ.get('PATH', '')}",
+            **self.hermetic.env,
+            "PATH": f"{self.mock_bin_dir}:{self.hermetic.env.get('PATH', '')}",
         }
 
         res = subprocess.run([str(GPS_LOCK_SCRIPT)], env=env, capture_output=True, text=True)
@@ -72,10 +79,11 @@ class GpsLockWrapperTests(unittest.TestCase):
         self.assertIn("hyprlock.conf", invoked_args)
 
 
-class GpsIdleControllerTests(unittest.TestCase):
+class GpsIdleControllerTests(HermeticTestCase):
     """Unit tests for scripts/gps-idle lifecycle management."""
 
     def setUp(self):
+        super().setUp()
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp_dir.name)
         self.pid_file = self.tmp_path / "gps-hypridle.pid"
@@ -88,8 +96,8 @@ class GpsIdleControllerTests(unittest.TestCase):
         self.mock_idle.chmod(self.mock_idle.stat().st_mode | stat.S_IEXEC)
 
         self.env = {
-            **os.environ,
-            "PATH": f"{self.mock_bin_dir}:{os.environ.get('PATH', '')}",
+            **self.hermetic.env,
+            "PATH": f"{self.mock_bin_dir}:{self.hermetic.env.get('PATH', '')}",
             "GPS_IDLE_PID_FILE": str(self.pid_file),
         }
 
@@ -102,6 +110,7 @@ class GpsIdleControllerTests(unittest.TestCase):
             except Exception:
                 pass
         self.tmp_dir.cleanup()
+        super().tearDown()
 
     def test_gps_idle_script_exists_and_executable(self):
         self.assertTrue(GPS_IDLE_SCRIPT.is_file())

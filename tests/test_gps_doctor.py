@@ -8,11 +8,15 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.helpers import HermeticTestCase
 DOCTOR_SCRIPT = ROOT / "scripts" / "gps-doctor"
 RUN_GPS_SCRIPT = ROOT / "scripts" / "run-gps.fish"
 GPS_IPC_SCRIPT = ROOT / "scripts" / "gps-ipc"
@@ -236,7 +240,7 @@ class DoctorAuditReportTests(unittest.TestCase):
             self.assertEqual(tray_check["status"], "WARN")
 
 
-class DoctorCliContractTests(unittest.TestCase):
+class DoctorCliContractTests(HermeticTestCase):
     """Contract tests for scripts/gps-doctor CLI execution and --json output."""
 
     def test_gps_doctor_executable(self):
@@ -244,7 +248,7 @@ class DoctorCliContractTests(unittest.TestCase):
         self.assertTrue(os.access(DOCTOR_SCRIPT, os.X_OK))
 
     def test_gps_doctor_json_schema(self):
-        res = subprocess.run([str(DOCTOR_SCRIPT), "--json"], capture_output=True, text=True)
+        res = self.hermetic.run([str(DOCTOR_SCRIPT), "--json"], capture_output=True, text=True)
         # Even if exit code is 1 (due to current session state), stdout must be valid JSON
         data = json.loads(res.stdout)
         self.assertIn("status", data)
@@ -275,7 +279,7 @@ class DoctorCliContractTests(unittest.TestCase):
         self.assertIn("notifications", check_names)
 
     def test_gps_ipc_doctor_command(self):
-        res = subprocess.run([str(GPS_IPC_SCRIPT), "health", "--json"], capture_output=True, text=True)
+        res = self.hermetic.run([str(GPS_IPC_SCRIPT), "health", "--json"], capture_output=True, text=True)
         data = json.loads(res.stdout)
         self.assertIn("checks", data)
 

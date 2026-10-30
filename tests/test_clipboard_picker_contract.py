@@ -2,10 +2,15 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.helpers import HermeticTestCase
+
 SHELL_QML = (ROOT / "shell.qml").read_text(encoding="utf-8")
 PICKER_QML = (ROOT / "components/ClipboardPicker.qml").read_text(encoding="utf-8")
 TOOLSTAB_QML = (ROOT / "components/dashboard/ToolsTab.qml").read_text(encoding="utf-8")
@@ -13,7 +18,7 @@ HYPRLAND_LUA = (ROOT / "dots/hypr/hyprland.lua").read_text(encoding="utf-8")
 GPS_IPC = (ROOT / "scripts/gps-ipc").read_text(encoding="utf-8")
 
 
-class ClipboardPickerContractTests(unittest.TestCase):
+class ClipboardPickerContractTests(HermeticTestCase):
     """Verifies picker layer-shell contracts, unified IPC routes, and single entry points."""
 
     def test_picker_surface_layer_shell_contracts(self):
@@ -48,13 +53,13 @@ class ClipboardPickerContractTests(unittest.TestCase):
     def test_gps_clipboard_cli_list_and_status(self):
         """scripts/gps-clipboard status and list output valid JSON."""
         script = ROOT / "scripts/gps-clipboard"
-        status_proc = subprocess.run([str(script), "status"], capture_output=True, text=True)
+        status_proc = self.hermetic.run([str(script), "status"], capture_output=True, text=True)
         self.assertEqual(status_proc.returncode, 0)
         status_data = json.loads(status_proc.stdout)
         self.assertTrue(status_data["ok"])
         self.assertIn("paused", status_data)
 
-        list_proc = subprocess.run([str(script), "list"], capture_output=True, text=True)
+        list_proc = self.hermetic.run([str(script), "list"], capture_output=True, text=True)
         self.assertEqual(list_proc.returncode, 0)
         list_data = json.loads(list_proc.stdout)
         self.assertTrue(list_data["ok"])
