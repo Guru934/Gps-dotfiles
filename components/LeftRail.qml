@@ -849,28 +849,28 @@ PanelWindow {
                 id: powerBtn
                 width: 32
                 height: 28
-                radius: 8
+                radius: Theme.radiusSm
                 anchors.horizontalCenter: parent.horizontalCenter
                 color: root.powerPopupOpen
-                    ? "#FF4D6D"
-                    : (pwrBtnMouse.containsMouse ? "#3D1A26" : "#28131B")
-                border.width: 1
-                border.color: (root.powerPopupOpen || pwrBtnMouse.containsMouse) ? "#FF4D6D" : "#6E2B3E"
+                    ? Theme.statusDangerBorder
+                    : (pwrBtnMouse.containsMouse ? Theme.statusDangerBg : Qt.alpha(Theme.statusDangerBg, 0.45))
+                border.width: Theme.borderWidth
+                border.color: (root.powerPopupOpen || pwrBtnMouse.containsMouse) ? Theme.statusDangerBorder : Qt.alpha(Theme.statusDangerBorder, 0.45)
 
                 scale: pwrBtnMouse.pressed ? 0.90 : (pwrBtnMouse.containsMouse ? 1.06 : 1.0)
                 Behavior on scale {
                     enabled: Theme.animationsEnabled && !Theme.reducedMotion
-                    NumberAnimation { duration: 140; easing.type: Easing.OutBack }
+                    NumberAnimation { duration: Theme.animFast; easing.type: Easing.OutBack }
                 }
-                Behavior on color { ColorAnimation { duration: 160 } }
-                Behavior on border.color { ColorAnimation { duration: 160 } }
+                Behavior on color { ColorAnimation { duration: Theme.animFast } }
+                Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
                 Text {
                     anchors.centerIn: parent
                     text: "󰐥"
-                    color: root.powerPopupOpen ? "#140A0E" : "#FF5C77"
+                    color: root.powerPopupOpen ? Theme.surfaceDeep : Theme.statusDangerFg
                     font.family: Theme.fontMono
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontSizeBody
                     font.bold: true
                 }
 
@@ -939,10 +939,10 @@ PanelWindow {
         Rectangle {
             id: pwrCard
             anchors.fill: parent
-            radius: 14
+            radius: Theme.radiusCard
             color: Theme.surface
-            border.width: 1
-            border.color: "#FF4D6D"
+            border.width: Theme.borderWidth
+            border.color: Theme.statusDangerBorder
 
             HoverHandler {
                 id: pwrPopupHover
@@ -962,9 +962,9 @@ PanelWindow {
                     left: parent.left
                     right: parent.right
                     top: parent.top
-                    margins: 12
+                    margins: Theme.paddingMd
                 }
-                spacing: 6
+                spacing: Theme.spacingSm
 
                 Row {
                     width: parent.width
@@ -973,9 +973,9 @@ PanelWindow {
                         text: root.pendingPowerLabel !== ""
                             ? ("CONFIRM " + root.pendingPowerLabel.toUpperCase() + "?")
                             : "󰐥  SYSTEM POWER"
-                        color: "#FF5C77"
+                        color: Theme.statusDangerFg
                         font.family: Theme.fontUi
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSizeSecondary
                         font.bold: true
                         font.letterSpacing: 1.1
                     }
@@ -983,7 +983,7 @@ PanelWindow {
                         text: "✕"
                         color: Theme.textMuted
                         font.family: Theme.fontUi
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontSizeSecondary
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
@@ -1005,24 +1005,24 @@ PanelWindow {
                             { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "command -v gps-lock >/dev/null && exec gps-lock || exec $HOME/Projects/my-rice/scripts/gps-lock"] },
                             { icon: "󰤄", label: "Suspend",     color: Theme.accentSecondary,confirm: false, cmd: ["systemctl", "suspend"] },
                             { icon: "󰍃", label: "Log Out",     color: Theme.statusWarn,      confirm: true,  cmd: ["hyprctl", "dispatch", "hl.dsp.exit()"] },
-                            { icon: "󰜉", label: "Reboot",      color: "#FB923C",            confirm: true,  cmd: ["systemctl", "reboot"] },
-                            { icon: "󰐥", label: "Shut Down",   color: "#FF4D6D",            confirm: true,  cmd: ["systemctl", "poweroff"] }
+                            { icon: "󰜉", label: "Reboot",      color: Theme.statusWarn,      confirm: true,  cmd: ["systemctl", "reboot"] },
+                            { icon: "󰐥", label: "Shut Down",   color: Theme.statusDangerBorder, confirm: true, cmd: ["systemctl", "poweroff"] }
                         ]
 
                         Rectangle {
                             id: pwrOption
                             required property var modelData
                             width: pwrCol.width
-                            height: 32
-                            radius: 8
+                            height: Theme.controlHeightMd
+                            radius: Theme.radiusSm
                             color: pwrOptMouse.containsMouse ? Theme.cardHover : Theme.card
-                            border.width: 1
-                            border.color: pwrOptMouse.containsMouse ? pwrOption.modelData.color : Theme.border
+                            border.width: Theme.borderWidth
+                            border.color: pwrOptMouse.containsMouse ? pwrOption.modelData.color : Theme.outlineSoft
 
                             scale: pwrOptMouse.pressed ? 0.97 : (pwrOptMouse.containsMouse ? 1.02 : 1.0)
                             Behavior on scale {
                                 enabled: Theme.animationsEnabled && !Theme.reducedMotion
-                                NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                                NumberAnimation { duration: Theme.animFast; easing.type: Theme.easingStandard }
                             }
                             Behavior on color { ColorAnimation { duration: Theme.animDuration } }
                             Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
@@ -1033,14 +1033,14 @@ PanelWindow {
                                     leftMargin: 10
                                     rightMargin: 10
                                 }
-                                spacing: 8
+                                spacing: Theme.spacingSm
 
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: pwrOption.modelData.icon
                                     color: pwrOption.modelData.color
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 14
+                                    font.pixelSize: Theme.fontSizeSubheading
                                 }
 
                                 Text {
@@ -1048,7 +1048,7 @@ PanelWindow {
                                     text: pwrOption.modelData.label
                                     color: Theme.textMain
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSizeSecondary
                                     font.bold: pwrOptMouse.containsMouse
                                 }
                             }
@@ -1080,15 +1080,15 @@ PanelWindow {
                     Rectangle {
                         width: (parent.width - 6) / 2
                         height: 34
-                        radius: 8
-                        color: "#FF4D6D"
+                        radius: Theme.radiusSm
+                        color: Theme.statusDangerBorder
 
                         Text {
                             anchors.centerIn: parent
                             text: "Yes, " + root.pendingPowerLabel
-                            color: "#140A0E"
+                            color: Theme.onAccent
                             font.family: Theme.fontUi
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeSecondary
                             font.bold: true
                         }
 
@@ -1107,17 +1107,17 @@ PanelWindow {
                     Rectangle {
                         width: (parent.width - 6) / 2
                         height: 34
-                        radius: 8
+                        radius: Theme.radiusSm
                         color: Theme.card
-                        border.width: 1
-                        border.color: Theme.border
+                        border.width: Theme.borderWidth
+                        border.color: Theme.outlineSoft
 
                         Text {
                             anchors.centerIn: parent
                             text: "Cancel"
                             color: Theme.textMain
                             font.family: Theme.fontUi
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeSecondary
                             font.bold: true
                         }
 

@@ -1,4 +1,5 @@
 import QtQuick
+import qs.config
 
 // Material Symbols icon. Ligature name goes in `name`; callers override the
 // inherited Text properties (font.pixelSize, color) as usual.
@@ -8,9 +9,9 @@ Text {
     property bool filled: false
 
     text: root.name
-    color: "#BACAC5"
+    color: Theme.textMuted
     font.family: "Material Symbols Rounded"
-    font.pixelSize: 18
+    font.pixelSize: Theme.iconMd
     font.variableAxes: { "FILL": root.filled ? 1.0 : 0.0 }
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter

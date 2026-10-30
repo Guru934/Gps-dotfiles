@@ -72,10 +72,10 @@ PanelWindow {
 
     function batteryColor() {
         if (!root.batPresent) return Theme.textMuted
-        if (root.battCharging || root.battFull) return "#4DF0D0"
-        if (root.battPct <= 15) return "#FF5C77"
-        if (root.battPct <= 30) return "#F5C17A"
-        return "#6EE7A8"
+        if (root.battCharging || root.battFull) return Theme.brandAccent
+        if (root.battPct <= 15) return Theme.statusDanger
+        if (root.battPct <= 30) return Theme.statusWarn
+        return Theme.statusGood
     }
 
     function fmtDuration(sec) {
@@ -86,10 +86,10 @@ PanelWindow {
     }
 
     function profileAccent(id) {
-        if (id === "performance") return "#FF5C77"
-        if (id === "balanced") return "#60A5FA"
-        if (id === "power-saver") return "#6EE7A8"
-        return "#DDB8FF"
+        if (id === "performance") return Theme.statusDanger
+        if (id === "balanced") return Theme.brandAccent
+        if (id === "power-saver") return Theme.statusGood
+        return Theme.accentSecondary
     }
 
     function profileLabel(id) {
@@ -472,16 +472,16 @@ PanelWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             width: degText.implicitWidth + 10
                             height: 16
-                            radius: 8
-                            color: Qt.rgba(1.0, 0.76, 0.48, 0.16)
-                            border.width: 1
-                            border.color: "#F5C17A"
+                            radius: Theme.radiusSm
+                            color: Qt.alpha(Theme.statusWarn, 0.16)
+                            border.width: Theme.borderWidth
+                            border.color: Theme.statusWarn
 
                             Text {
                                 id: degText
                                 anchors.centerIn: parent
                                 text: "degraded"
-                                color: "#F5C17A"
+                                color: Theme.statusWarn
                                 font.family: Theme.fontMono
                                 font.pixelSize: 8
                             }

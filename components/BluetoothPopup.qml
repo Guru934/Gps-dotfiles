@@ -123,12 +123,12 @@ PanelWindow {
             // Error banner (honest failures only)
             Rectangle {
                 width: parent.width; height: errText.implicitHeight + 12
-                radius: 8; color: "#3A2226"; border.width: 1; border.color: Theme.statusDanger
+                radius: Theme.radiusSm; color: Theme.statusDangerBg; border.width: Theme.borderWidth; border.color: Theme.statusDangerBorder
                 visible: root.hub && root.hub.btError !== ""
                 Text {
                     id: errText; anchors.fill: parent; anchors.margins: 6
                     text: root.hub ? root.hub.btError : ""
-                    color: Theme.statusDanger; font.family: Theme.fontUi; font.pixelSize: 10
+                    color: Theme.statusDangerFg; font.family: Theme.fontUi; font.pixelSize: Theme.fontSizeCaption
                     wrapMode: Text.WordWrap
                 }
             }
@@ -136,12 +136,12 @@ PanelWindow {
             // Notice banner (loading / success states)
             Rectangle {
                 width: parent.width; height: noticeText.implicitHeight + 12
-                radius: 8; color: Theme.card; border.width: 1; border.color: Theme.border
+                radius: Theme.radiusSm; color: Theme.card; border.width: Theme.borderWidth; border.color: Theme.outlineSoft
                 visible: root.hub && root.hub.btError === "" && root.hub.btNotice !== ""
                 Text {
                     id: noticeText; anchors.fill: parent; anchors.margins: 6
                     text: root.hub ? root.hub.btNotice : ""
-                    color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: 10
+                    color: Theme.brandAccent; font.family: Theme.fontUi; font.pixelSize: Theme.fontSizeCaption
                     wrapMode: Text.WordWrap
                 }
             }
@@ -197,10 +197,10 @@ PanelWindow {
                     required property var modelData
                     width: devList.width
                     height: 58
-                    radius: 10
-                    color: modelData.connected ? "#243B3A" : Theme.card
-                    border.width: 1
-                    border.color: modelData.connected ? Theme.brandAccent : Theme.border
+                    radius: Theme.radiusMd
+                    color: modelData.connected ? Qt.alpha(Theme.brandAccent, 0.18) : Theme.card
+                    border.width: Theme.borderWidth
+                    border.color: modelData.connected ? Theme.brandAccent : Theme.outlineSoft
                     Column {
                         anchors.fill: parent
                         anchors.margins: 8

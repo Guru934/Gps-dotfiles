@@ -760,8 +760,8 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
 
     IpcHandler {
         target: "settings"
-        function toggle(): void { root.shown = !root.shown }
-        function open(name: string): void {
+        function toggle() { root.shown = !root.shown }
+        function open(name: string) {
             const i = root.pages.findIndex(p => p.title.toLowerCase().indexOf(name.toLowerCase()) === 0)
             if (i >= 0) root.page = i
             root.shown = true

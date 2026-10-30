@@ -130,18 +130,18 @@ Scope {
 
     IpcHandler {
         target: "pet"
-        function panel(): void { root.togglePanel() }
-        function toggle(): void { settings.enabled = !settings.enabled }
-        function wave(): void { brain.wave() }
-        function dance(): void { brain.dance() }
-        function hop(): void { brain.hop() }
-        function nap(): void { brain.doSleep() }
-        function respawn(): void { brain.respawn() }
-        function callHere(): void { root.petActions.callHere() }
-        function perch(): void { brain.goPerch() }
-        function alert(sticky: bool): void { root.alert(sticky) }
-        function clear(): void { root.clear() }
-        function skin(id: string): void { if (S.skins[id]) settings.character = id }
+        function panel() { root.togglePanel() }
+        function toggle() { settings.enabled = !settings.enabled }
+        function wave() { brain.wave() }
+        function dance() { brain.dance() }
+        function hop() { brain.hop() }
+        function nap() { brain.doSleep() }
+        function respawn() { brain.respawn() }
+        function callHere() { root.petActions.callHere() }
+        function perch() { brain.goPerch() }
+        function alert(sticky: bool) { root.alert(sticky) }
+        function clear() { root.clear() }
+        function skin(id: string) { if (S.skins[id]) settings.character = id }
         function status(): string {
             return JSON.stringify({ mode: brain.mode, ground: brain.groundId, x: Math.round(brain.px), y: Math.round(brain.py),
                 energy: Math.round(brain.energy), mood: Math.round(brain.mood), music: root.musicPlaying,

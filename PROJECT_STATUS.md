@@ -13,6 +13,11 @@
 - [x] **P4.2 — Reusable Visual Primitives**: Completed.
   - Core primitives created in `components/`: `GlassSurface`, `GlassCard`, `SectionHeader`, `IconButton`, `GpsButton`, `StatusIndicator`, `Separator`.
   - Comprehensive unit test coverage in `tests/test_reusable_components.py`.
-- [ ] **P4.3 — Major Surface Migration**: In Progress.
+- [x] **P4.3 — Major Surface Migration**: Completed.
+  - LeftRail, Island, and Control Center aligned to canonical theme tokens and status danger/warn/success semantics.
+  - Dashboard components (DashIcon, SysProbe, DashTabBar) updated and validated with qmllint.
+  - Popup components (BatteryPopup, WifiPopup, BluetoothPopup, NotifCenter, NotifToast) unified with theme tokens.
+  - Pet components (PetTheme, Pet.qml) and Settings Hub cleaned of QML syntax anomalies.
+- [ ] **P4.4 — Hyprland Visual Rules**: In Progress.
 - [ ] **P4.4 — Hyprland Visual Rules**: Pending.
 - [ ] **P4.5 — Final Visual Audit & Session Verification**: Pending.

@@ -29,11 +29,11 @@
   - [x] **P4.2 — Reusable components**
     - Implement shared primitives: `GlassSurface`, `GlassCard`, `SectionHeader`, `IconButton`, `GpsButton`, `StatusIndicator`, `Separator`
     - Automated tests for visual primitives (`test_reusable_components.py`)
-  - [ ] **P4.3 — Major surface migration**
-    - LeftRail & Island unified styling
-    - Control Center & Dashboard consolidation
+  - [x] **P4.3 — Major surface migration**
+    - LeftRail & Island unified styling (tokens, power dialog, status indicators)
+    - Control Center & Dashboard consolidation (DashIcon, SysProbe, DashTabBar, tile styling)
     - Popups (Battery, Wi-Fi, Bluetooth, NotifCenter, NotifToast)
-    - Pet panels and Media Hub / Toolbox integration
+    - Pet panels and Settings Hub IPC syntax fixes
   - [ ] **P4.4 — Hyprland visual rules**
     - Coordinate `dots/hypr/hyprland.lua` window/layer rules with GPS design tokens
     - Enforce exceptions for terminals, video playback, overlays

@@ -111,15 +111,15 @@ Scope {
     property bool privacySuppressed: false
 
     // ───────────── look ─────────────
-    property color pillColor: "#000000"
-    property color text: "#e0e2ed"
-    property color dim: "#859490"
-    property color teal: "#57f1db"
-    property color lav: "#ddb8ff"
-    property color amber: "#ffd47b"
-    property color coral: "#ff5d7a"
-    property string uiFont: Qt.application.font.family
-    property string monoFont: "monospace"
+    property color pillColor: Theme.surfaceDeep
+    property color text: Theme.textMain
+    property color dim: Theme.textDim
+    property color teal: Theme.brandAccent
+    property color lav: Theme.accentSecondary
+    property color amber: Theme.statusWarn
+    property color coral: Theme.statusDangerFg
+    property string uiFont: Theme.fontUi
+    property string monoFont: Theme.fontMono
     property string iconFont: "Material Symbols Rounded"
     property bool iconOk: true
 

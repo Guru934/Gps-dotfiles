@@ -349,8 +349,8 @@ Item {
         onLoaded: {
             const m = /model name\s*:\s*(.+)/.exec(text())
             if (m) {
-                const short = /Core\(TM\)\s+(.+)/.exec(m[1])
-                root.cpuModel = short ? short[1].trim() : m[1].trim()
+                const shortModel = /Core\(TM\)\s+(.+)/.exec(m[1])
+                root.cpuModel = shortModel ? shortModel[1].trim() : m[1].trim()
                 root.cpuModelLong = m[1].replace(/\((R|TM)\)/g, "").replace(/\s+/g, " ").trim()
             }
         }

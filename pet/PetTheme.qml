@@ -17,8 +17,8 @@ QtObject {
     readonly property color secondary: (typeof Theme !== "undefined" && Theme.accentSecondary) ? Theme.accentSecondary : "#ddb8ff"
     readonly property color tertiary: (typeof Theme !== "undefined" && Theme.accentTertiary) ? Theme.accentTertiary : "#ffd47b"
     readonly property color error: (typeof Theme !== "undefined" && Theme.statusDanger) ? Theme.statusDanger : "#ffb4ab"
-    readonly property color coral: "#ff5d7a"
+    readonly property color coral: (typeof Theme !== "undefined" && Theme.statusDangerFg) ? Theme.statusDangerFg : "#ff5d7a"
     readonly property string mono: (typeof Theme !== "undefined" && Theme.fontMono) ? Theme.fontMono : "JetBrains Mono"
     readonly property string head: (typeof Theme !== "undefined" && Theme.fontUi) ? Theme.fontUi : "Plus Jakarta Sans"
-    readonly property string body: "Inter"
+    readonly property string body: (typeof Theme !== "undefined" && Theme.fontUi) ? Theme.fontUi : "Plus Jakarta Sans"
 }

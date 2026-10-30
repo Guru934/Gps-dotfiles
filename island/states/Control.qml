@@ -407,11 +407,11 @@ Item {
 
         Layout.preferredWidth: 28
         Layout.preferredHeight: 28
-        radius: 14
+        radius: Theme.radiusCard
         activeFocusOnTab: true
-        color: (hbMa.containsMouse || hb.activeFocus) ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
-        border.width: 1
-        border.color: hb.activeFocus ? st.core.teal : Qt.rgba(1, 1, 1, 0.06)
+        color: (hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card
+        border.width: Theme.borderWidth
+        border.color: hb.activeFocus ? st.core.teal : Theme.outlineSoft
         scale: hbMa.pressed ? 0.94 : 1.0
         Behavior on scale { NumberAnimation { duration: 90 } }
 
@@ -452,19 +452,19 @@ Item {
         signal toggled()
         signal trailClicked()
 
-        readonly property color inkColor: "#00201c"
+        readonly property color inkColor: Theme.brandAccentFg
         Layout.fillWidth: true
         Layout.preferredHeight: 52
-        radius: 12
+        radius: Theme.radiusMd
         visible: tileAvailable
         color: tileOn
             ? (tileMa.containsMouse ? Qt.lighter(st.core.teal, 1.05) : st.core.teal)
-            : (tileMa.containsMouse ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.06))
-        border.width: tileOn ? 0 : 1
-        border.color: Qt.rgba(1, 1, 1, 0.05)
+            : (tileMa.containsMouse ? Theme.cardHover : Theme.card)
+        border.width: tileOn ? 0 : Theme.borderWidth
+        border.color: Theme.outlineSoft
         scale: (tileMa.pressed || trailMa.pressed) ? 0.98 : 1.0
-        Behavior on color { ColorAnimation { duration: 140 } }
-        Behavior on scale { NumberAnimation { duration: 90 } }
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        Behavior on scale { NumberAnimation { duration: Theme.animFast; easing.type: Theme.easingStandard } }
 
         RowLayout {
             anchors.fill: parent
