@@ -145,6 +145,12 @@ case "$cmd" in
             dismiss)
                 call_qs "$ipath" island dismissNotification "$@"
                 ;;
+            action)
+                id="${1:-0}"
+                key="${2:-default}"
+                shift 2 || true
+                call_qs "$ipath" island actionNotification "$id" "$key" "$@"
+                ;;
             markread)
                 call_qs "$ipath" island markReadNotification "$@"
                 ;;
@@ -166,7 +172,7 @@ case "$cmd" in
                         call_qs "$ipath" island dndSchedule true "$@"
                         ;;
                     off)
-                        call_qs "$ipath" island dndSchedule false "$@"
+                        call_qs "$ipath" island dndSchedule false "" "" "$@"
                         ;;
                     *)
                         call_qs "$ipath" island dndSchedule true "$sub" "$@"

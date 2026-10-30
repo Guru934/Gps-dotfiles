@@ -73,6 +73,21 @@ class NotificationBackendContractTests(unittest.TestCase):
         self.assertIn("store-body)", GPS_IPC)
         self.assertIn("clear)", GPS_IPC)
 
+    def test_action_notification_ipc_contract(self):
+        """Island and gps-ipc must expose action command to invoke notification actions."""
+        self.assertIn("actionNotification", ISLAND_QML)
+        self.assertIn("action)", GPS_IPC)
+
+    def test_held_notification_release_posts_notify_event(self):
+        """Releasing held notifications must post 'notify' event to display them."""
+        self.assertIn('root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)', ISLAND_QML)
+
+    def test_notif_center_live_fileview_watch_contract(self):
+        """NotifCenter must watch notification history for live updates."""
+        self.assertIn("path: root.notifHistoryPath", NOTIF_CENTER_QML)
+        self.assertIn("watchChanges: true", NOTIF_CENTER_QML)
+        self.assertIn("onFileChanged: reload()", NOTIF_CENTER_QML)
+
 
 if __name__ == "__main__":
     unittest.main()

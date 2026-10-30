@@ -894,8 +894,9 @@ Scope {
                 root.dnd = active
                 if (!active && root.held.length > 0) {
                     root.held.forEach(q => { q.age = 0 })
-                    root.notifQueue = root.held.concat(root.notifQueue).slice(0, root.maxToasts)
+                    root.notifQueue = root.held.concat(root.notifQueue.filter(q => !root.held.some(h => h.n === q.n))).slice(0, root.maxToasts)
                     root.held = []
+                    root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
                 }
                 root.updateVisibility()
             }
@@ -1013,10 +1014,12 @@ Scope {
         }
         if (!on && held.length > 0) {                 // release what piled up as a reviewable stack
             held.forEach(q => { q.age = 0 })
-            notifQueue = held.concat(notifQueue).slice(0, maxToasts)
+            notifQueue = held.concat(notifQueue.filter(q => !held.some(h => h.n === q.n))).slice(0, maxToasts)
             held = []
+            root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
+        } else {
+            root.postEvent("dnd", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
         }
-        root.postEvent("dnd", IslandVisibility.PRIORITY.TRANSIENT, root.durations.workspace)
         root.updateVisibility()
     }
     function ago(ts) { const s = Math.max(0, Math.floor(now - ts)); return s < 10 ? "now" : s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h" }
@@ -1154,6 +1157,24 @@ Scope {
                 }
             }
             return JSON.stringify({ ok: true })
+        }
+        function actionNotification(id: int, actionKey: string): string {
+            for (var i = 0; i < root.notifQueue.length; i++) {
+                var q = root.notifQueue[i]
+                if (q.n && (q.n.id === id || id === 0)) {
+                    if (q.n.actions) {
+                        for (var j = 0; j < q.n.actions.length; j++) {
+                            var a = q.n.actions[j]
+                            if (a.identifier === actionKey) {
+                                root.invokeAction(q, a)
+                                return JSON.stringify({ ok: true, id: q.n.id, invoked: actionKey })
+                            }
+                        }
+                    }
+                    return JSON.stringify({ ok: false, error: "action not found" })
+                }
+            }
+            return JSON.stringify({ ok: false, error: "notification not found" })
         }
         function markReadNotification(id: int): string {
             if (root.notifStore) {
