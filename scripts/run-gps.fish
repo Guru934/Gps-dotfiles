@@ -91,13 +91,14 @@ end
 # 3. Extract the current wallpaper theme before launching UI surfaces.
 "$REPO_DIR/scripts/extract-theme.py" >"$HOME/.config/quickshell/theme.log" 2>&1; or true
 
-# 4. Start cliphist clipboard watchers for Tide Island.
-if not pgrep -f "wl-paste --type text --watch cliphist store" >/dev/null 2>&1
-    nohup wl-paste --type text --watch cliphist store >/tmp/cliphist-text.log 2>&1 &
+# 4. Start clipboard watchers using the GPS privacy-preserving clip-store wrapper.
+set -l clip_store "$REPO_DIR/scripts/gps-clip-store"
+if not pgrep -f "wl-paste --type text --watch .*gps-clip-store" >/dev/null 2>&1
+    nohup wl-paste --type text --watch "$clip_store" >/tmp/cliphist-text.log 2>&1 &
     disown
 end
-if not pgrep -f "wl-paste --type image --watch cliphist store" >/dev/null 2>&1
-    nohup wl-paste --type image --watch cliphist store >/tmp/cliphist-image.log 2>&1 &
+if not pgrep -f "wl-paste --type image --watch .*gps-clip-store" >/dev/null 2>&1
+    nohup wl-paste --type image --watch "$clip_store" >/tmp/cliphist-image.log 2>&1 &
     disown
 end
 

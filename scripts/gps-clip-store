@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# gps-clip-store — Privacy-preserving clipboard watcher wrapper for GPS.
+# Invoked by wl-paste --watch to filter sensitive entries and enforce limits
+# before storing in cliphist.
+set -euo pipefail
+
+# 1. Graceful exit if cliphist is missing
+if ! command -v cliphist >/dev/null 2>&1; then
+    exit 0
+fi
+
+# 2. Check if clipboard history is paused
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/gps"
+if [[ -f "$STATE_DIR/clipboard_paused" ]]; then
+    exit 0
+fi
+if [[ -f "$STATE_DIR/clipboard_settings.json" ]]; then
+    if grep -q '"paused"[[:space:]]*:[[:space:]]*true' "$STATE_DIR/clipboard_settings.json" 2>/dev/null; then
+        exit 0
+    fi
+fi
+
+# 3. Privacy filter: exclude password manager clipboard entries
+# Standard MIME type used by 1Password, KeepassXC, Bitwarden, etc.
+if command -v wl-paste >/dev/null 2>&1; then
+    if wl-paste --list-types 2>/dev/null | grep -qi "passwordManagerHint"; then
+        exit 0
+    fi
+fi
+
+# 4. Enforce 1 MB max entry size (1048576 bytes) & avoid partial/corrupt entries
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/gps"
+mkdir -p -m 0700 "$RUN_DIR" 2>/dev/null || RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+
+TMP_ENTRY=$(mktemp "$RUN_DIR/clip_store.XXXXXX")
+trap 'rm -f "$TMP_ENTRY"' EXIT
+
+# Read up to 1048577 bytes (1 MB + 1 byte) to detect overflow
+head -c 1048577 > "$TMP_ENTRY"
+
+SIZE=$(wc -c < "$TMP_ENTRY" 2>/dev/null || echo 0)
+if [[ "$SIZE" -eq 0 || "$SIZE" -gt 1048576 ]]; then
+    exit 0
+fi
+
+# 5. Store into cliphist with 200 items limit
+cliphist -max-items 200 store < "$TMP_ENTRY"
