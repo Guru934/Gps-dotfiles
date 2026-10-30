@@ -444,8 +444,8 @@ hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell notif
 hl.bind(mainMod .. " + comma", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc settings toggle"))
 -- Lock the session: unified lock wrapper (gps-lock)
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(repo .. "/scripts/gps-lock"))
--- Clipboard history: toggles the active island clipboard panel via unified router.
-hl.bind(mainMod .. " + V", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc clipboard toggle"))
+-- Clipboard history: toggles the unified GPS clipboard picker via shell router.
+hl.bind(mainMod .. " + V", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell clipboard toggle"))
 -- Control Center: Super+Alt+C (Super+C remains the focused-window close bind).
 hl.bind(mainMod .. " + ALT + C", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc island control toggle"))
 -- Launch the GPS desktop once the compositor is up. Deferred to

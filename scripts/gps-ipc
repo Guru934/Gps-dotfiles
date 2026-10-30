@@ -122,12 +122,19 @@ case "$cmd" in
     clipboard|clip)
         action="${1:-toggle}"
         shift || true
-        ipath="$(island_target_path)"
         backend="$(get_backend)"
         if [[ "$backend" == "tide" ]]; then
+            ipath="$(island_target_path)"
             call_qs "$ipath" clipboard "$action" "$@"
         else
-            call_qs "$ipath" island clipboard "$action" "$@"
+            case "$action" in
+                toggle|open|close)
+                    call_qs "$REPO_DIR/shell.qml" clipboard "$action" "$@"
+                    ;;
+                *)
+                    exec "$REPO_DIR/scripts/gps-clipboard" "$action" "$@"
+                    ;;
+            esac
         fi
         ;;
 

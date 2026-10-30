@@ -329,7 +329,7 @@ Item {
     }
 
     function openClipHist() {
-        Quickshell.execDetached([root.projectPath + "/scripts/gps-ipc", "clipboard", "toggle"])
+        Quickshell.execDetached([root.projectPath + "/scripts/gps-ipc", "shell", "clipboard", "toggle"])
         if (root.hub) root.hub.closeDashboard()
     }
 
@@ -880,32 +880,11 @@ Item {
                         icon: "content_paste"
                         tint: Theme.accentPrimary
                         title: "CLIPBOARD HISTORY"
-                        sub: "tide clipboard panel (cliphist backend)"
+                        sub: root.histItems >= 0
+                            ? (root.histItems + " item(s) stored")
+                            : "open clipboard picker"
                         trailing: "OPEN"
                         onTapped: root.openClipHist()
-                    }
-
-                    ToolRow {
-                        Layout.fillWidth: true
-                        icon: "clear_all"
-                        tint: Theme.textMuted
-                        title: "CLEAR CLIPBOARD"
-                        sub: "wl-copy --clear"
-                        trailing: "CLEAR"
-                        onTapped: root.clearClipboard()
-                    }
-
-                    ToolRow {
-                        Layout.fillWidth: true
-                        icon: "delete_sweep"
-                        tint: Theme.statusDanger
-                        title: "WIPE CLIP HISTORY"
-                        sub: root.histItems >= 0
-                            ? (root.histItems + " item(s) stored \u00b7 cliphist wipe")
-                            : "cliphist wipe"
-                        trailing: "WIPE"
-                        confirmActive: root.pendingWipe
-                        onTapped: root.tapConfirm("wipe")
                     }
                 }
             }

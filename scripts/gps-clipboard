@@ -1,0 +1,327 @@
+#!/usr/bin/env node
+// GPS Clipboard CLI and backend engine
+// Authoritative clipboard operations: list, copy, delete, pin, clear, pause, thumb.
+
+const fs = require("fs");
+const path = require("path");
+const { spawn, spawnSync, execFileSync } = require("child_process");
+
+const REPO_DIR = path.resolve(__dirname, "..");
+const CS = require(path.join(REPO_DIR, "components/ClipboardService.js"));
+
+const STATE_DIR = process.env.XDG_STATE_HOME
+    ? path.join(process.env.XDG_STATE_HOME, "gps")
+    : path.join(process.env.HOME || "", ".local/state/gps");
+
+const CACHE_DIR = process.env.XDG_CACHE_HOME
+    ? path.join(process.env.XDG_CACHE_HOME, "gps")
+    : path.join(process.env.HOME || "", ".cache/gps");
+
+const PINNED_FILE = path.join(STATE_DIR, "clipboard_pinned.json");
+const SETTINGS_FILE = path.join(STATE_DIR, "clipboard_settings.json");
+const PAUSED_FLAG_FILE = path.join(STATE_DIR, "clipboard_paused");
+const THUMBS_DIR = path.join(CACHE_DIR, "clip-thumbs");
+
+function ensureDirs() {
+    try {
+        fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    } catch (e) {}
+    try {
+        fs.mkdirSync(THUMBS_DIR, { recursive: true, mode: 0o700 });
+    } catch (e) {}
+}
+
+function loadPinned() {
+    try {
+        if (fs.existsSync(PINNED_FILE)) {
+            const data = fs.readFileSync(PINNED_FILE, "utf8");
+            return CS.deserializeJson(data, CS.createDefaultPinnedStore());
+        }
+    } catch (e) {}
+    return CS.createDefaultPinnedStore();
+}
+
+function savePinned(store) {
+    ensureDirs();
+    const tmp = PINNED_FILE + ".tmp." + Date.now();
+    fs.writeFileSync(tmp, CS.serializeJson(store), { mode: 0o600 });
+    fs.renameSync(tmp, PINNED_FILE);
+}
+
+function isPaused() {
+    try {
+        if (fs.existsSync(PAUSED_FLAG_FILE)) return true;
+        if (fs.existsSync(SETTINGS_FILE)) {
+            const data = fs.readFileSync(SETTINGS_FILE, "utf8");
+            const s = CS.deserializeJson(data, {});
+            return Boolean(s.paused);
+        }
+    } catch (e) {}
+    return false;
+}
+
+function setPaused(val) {
+    ensureDirs();
+    const paused = Boolean(val);
+    try {
+        if (paused) {
+            fs.writeFileSync(PAUSED_FLAG_FILE, "1", { mode: 0o600 });
+        } else {
+            if (fs.existsSync(PAUSED_FLAG_FILE)) fs.unlinkSync(PAUSED_FLAG_FILE);
+        }
+        let settings = CS.createDefaultSettings();
+        if (fs.existsSync(SETTINGS_FILE)) {
+            settings = CS.deserializeJson(fs.readFileSync(SETTINGS_FILE, "utf8"), settings);
+        }
+        settings.paused = paused;
+        const tmp = SETTINGS_FILE + ".tmp." + Date.now();
+        fs.writeFileSync(tmp, CS.serializeJson(settings), { mode: 0o600 });
+        fs.renameSync(tmp, SETTINGS_FILE);
+    } catch (e) {}
+    return paused;
+}
+
+function cmdList() {
+    let output = "";
+    try {
+        output = execFileSync("cliphist", ["list"], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+    } catch (e) {
+        output = "";
+    }
+
+    const history = CS.parseList(output, 200);
+    const pinnedStore = loadPinned();
+    const merged = CS.mergeHistoryAndPins(history, pinnedStore);
+    const paused = isPaused();
+
+    // Check thumbnail presence for image entries
+    merged.forEach(item => {
+        if (item.isImage && item.id > 0) {
+            const thumbPath = path.join(THUMBS_DIR, `${item.id}.png`);
+            if (fs.existsSync(thumbPath)) {
+                item.thumbPath = thumbPath;
+            }
+        }
+    });
+
+    console.log(JSON.stringify({
+        ok: true,
+        items: merged,
+        count: merged.length,
+        paused: paused
+    }));
+}
+
+function cmdCopy(idArg) {
+    const id = CS.validateId(idArg);
+    if (id === null) {
+        console.error(JSON.stringify({ ok: false, error: "invalid_id" }));
+        process.exit(1);
+    }
+
+    // Try decoding via cliphist first
+    try {
+        const decode = spawn("cliphist", ["decode", String(id)]);
+        const copy = spawn("wl-copy", []);
+
+        decode.stdout.pipe(copy.stdin);
+
+        copy.on("close", (code) => {
+            if (code === 0) {
+                console.log(JSON.stringify({ ok: true, copied: id }));
+            } else {
+                console.error(JSON.stringify({ ok: false, error: `wl-copy exit ${code}` }));
+                process.exit(1);
+            }
+        });
+
+        decode.on("error", (err) => {
+            // If cliphist decode fails, check if this is a pinned item with stored text
+            fallbackPinnedCopy(id);
+        });
+    } catch (e) {
+        fallbackPinnedCopy(id);
+    }
+}
+
+function fallbackPinnedCopy(id) {
+    const pinnedStore = loadPinned();
+    const item = pinnedStore.pinned.find(p => p.id === id);
+    if (item && item.text) {
+        const copy = spawn("wl-copy", []);
+        copy.stdin.end(item.text);
+        copy.on("close", (code) => {
+            if (code === 0) {
+                console.log(JSON.stringify({ ok: true, copied: id, fallback: true }));
+            } else {
+                console.error(JSON.stringify({ ok: false, error: "copy_failed" }));
+                process.exit(1);
+            }
+        });
+    } else {
+        console.error(JSON.stringify({ ok: false, error: "item_not_found" }));
+        process.exit(1);
+    }
+}
+
+function cmdDelete(idArg) {
+    const id = CS.validateId(idArg);
+    if (id === null) {
+        console.error(JSON.stringify({ ok: false, error: "invalid_id" }));
+        process.exit(1);
+    }
+
+    // Unpin if pinned
+    const pinnedStore = loadPinned();
+    CS.removePin(pinnedStore, id);
+    savePinned(pinnedStore);
+
+    // Delete from cliphist
+    try {
+        const listOut = execFileSync("cliphist", ["list"], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+        const lines = listOut.split("\n");
+        const match = lines.find(l => {
+            const tab = l.indexOf("\t");
+            return tab > 0 && l.slice(0, tab).trim() === String(id);
+        });
+
+        if (match) {
+            const del = spawnSync("cliphist", ["delete"], { input: match + "\n", encoding: "utf8" });
+        }
+    } catch (e) {}
+
+    // Clean up cached thumbnail if present
+    try {
+        const thumb = path.join(THUMBS_DIR, `${id}.png`);
+        if (fs.existsSync(thumb)) fs.unlinkSync(thumb);
+    } catch (e) {}
+
+    console.log(JSON.stringify({ ok: true, deleted: id }));
+}
+
+function cmdPin(idArg) {
+    const id = CS.validateId(idArg);
+    if (id === null) {
+        console.error(JSON.stringify({ ok: false, error: "invalid_id" }));
+        process.exit(1);
+    }
+
+    let preview = "";
+    let kind = "text";
+
+    // Find the item in cliphist list
+    try {
+        const listOut = execFileSync("cliphist", ["list"], { encoding: "utf8" });
+        const lines = listOut.split("\n");
+        const match = lines.find(l => {
+            const tab = l.indexOf("\t");
+            return tab > 0 && l.slice(0, tab).trim() === String(id);
+        });
+        if (match) {
+            const item = CS.parseLine(match);
+            if (item) {
+                preview = item.preview;
+                kind = item.kind;
+            }
+        }
+    } catch (e) {}
+
+    const pinnedStore = loadPinned();
+    const res = CS.togglePin(pinnedStore, { id: id, preview: preview, kind: kind }, Date.now());
+    savePinned(pinnedStore);
+
+    console.log(JSON.stringify({ ok: true, id: id, pinned: res.pinned, totalPinned: res.count }));
+}
+
+function cmdClear() {
+    try {
+        execFileSync("cliphist", ["wipe"]);
+    } catch (e) {}
+
+    // Clean thumbnail cache
+    try {
+        if (fs.existsSync(THUMBS_DIR)) {
+            const files = fs.readdirSync(THUMBS_DIR);
+            for (const f of files) {
+                try { fs.unlinkSync(path.join(THUMBS_DIR, f)); } catch (e) {}
+            }
+        }
+    } catch (e) {}
+
+    console.log(JSON.stringify({ ok: true, cleared: true }));
+}
+
+function cmdPause(sub) {
+    const current = isPaused();
+    if (sub === "on" || sub === "1" || sub === "true") {
+        setPaused(true);
+    } else if (sub === "off" || sub === "0" || sub === "false") {
+        setPaused(false);
+    } else if (sub === "toggle") {
+        setPaused(!current);
+    }
+    console.log(JSON.stringify({ ok: true, paused: isPaused() }));
+}
+
+function cmdThumb(idArg) {
+    const id = CS.validateId(idArg);
+    if (id === null) {
+        console.error(JSON.stringify({ ok: false, error: "invalid_id" }));
+        process.exit(1);
+    }
+
+    ensureDirs();
+    const dest = path.join(THUMBS_DIR, `${id}.png`);
+    if (fs.existsSync(dest)) {
+        console.log(JSON.stringify({ ok: true, id: id, path: dest, cached: true }));
+        return;
+    }
+
+    try {
+        const out = execFileSync("cliphist", ["decode", String(id)], { maxBuffer: 10 * 1024 * 1024 });
+        fs.writeFileSync(dest, out);
+        console.log(JSON.stringify({ ok: true, id: id, path: dest, cached: false }));
+    } catch (e) {
+        console.error(JSON.stringify({ ok: false, error: "decode_failed" }));
+        process.exit(1);
+    }
+}
+
+// CLI argument routing
+const args = process.argv.slice(2);
+const action = args[0] || "list";
+
+switch (action) {
+    case "list":
+        cmdList();
+        break;
+    case "copy":
+        cmdCopy(args[1]);
+        break;
+    case "delete":
+        cmdDelete(args[1]);
+        break;
+    case "pin":
+        cmdPin(args[1]);
+        break;
+    case "clear":
+    case "wipe":
+        cmdClear();
+        break;
+    case "pause":
+        cmdPause(args[1] || "status");
+        break;
+    case "thumb":
+        cmdThumb(args[1]);
+        break;
+    case "status":
+        console.log(JSON.stringify({
+            ok: true,
+            paused: isPaused(),
+            pinnedCount: loadPinned().pinned.length
+        }));
+        break;
+    default:
+        console.error(`Usage: gps-clipboard <list|copy <id>|delete <id>|pin <id>|clear|pause [on|off|toggle]|thumb <id>|status>`);
+        process.exit(1);
+}

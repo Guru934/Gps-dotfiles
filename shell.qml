@@ -186,6 +186,59 @@ Scope {
         function previousTrack() { mediaHubWindow.previousMusicTrack() }
         function stopPlayback() { mediaHubWindow.stopMusicPlayback() }
         function seekPlayback(position: real) { mediaHubWindow.seekMusicPlayback(position) }
+        function setPage(p: int) { if (mediaHubWindow.hubItem) mediaHubWindow.hubItem.page = p }
+        function getDownloadsState(): string {
+            if (!mediaHubWindow.hubItem) return JSON.stringify({ loaded: false })
+            var h = mediaHubWindow.hubItem
+            return JSON.stringify({
+                loaded: true,
+                page: h.page,
+                connected: h.downloadBackendConnected,
+                ready: h.downloadsStateReady,
+                toolStatus: h.downloadsBackend ? h.downloadsBackend.toolStatus : null,
+                dlInspecting: h.dlInspecting,
+                dlBusy: h.dlBusy,
+                dlCanMerge: h.dlCanMerge,
+                dlError: h.dlError,
+                dlInspection: h.dlInspection,
+                downloads: h.downloads,
+                downloading: h.downloadsBackend ? h.downloadsBackend.downloading : false,
+                activeJobId: h.downloadsBackend ? h.downloadsBackend.activeJobId : ""
+            })
+        }
+        function inspectUrl(url: string): string {
+            if (!mediaHubWindow.hubItem) return JSON.stringify({ ok: false, reason: "not_loaded" })
+            mediaHubWindow.hubItem.dlUrlText = url
+            var ok = mediaHubWindow.hubItem.inspectDownloadUrl()
+            return JSON.stringify({ ok: ok })
+        }
+        function setDownloadDest(dest: string) {
+            if (mediaHubWindow.hubItem) mediaHubWindow.hubItem.dlDirectory = dest
+        }
+        function enqueueDownload(): string {
+            if (!mediaHubWindow.hubItem) return JSON.stringify({ ok: false, reason: "not_loaded" })
+            var ok = mediaHubWindow.hubItem.enqueueInspectedDownload()
+            return JSON.stringify({ ok: ok })
+        }
+        function cancelJob(jobId: string): string {
+            if (!mediaHubWindow.hubItem) return JSON.stringify({ ok: false, reason: "not_loaded" })
+            var job = mediaHubWindow.hubItem.downloadJob(jobId)
+            if (job) mediaHubWindow.hubItem.dlAction(job, "cancel")
+            return JSON.stringify({ ok: true })
+        }
+        function clearQueue(): string {
+            if (!mediaHubWindow.hubItem) return JSON.stringify({ ok: false, reason: "not_loaded" })
+            mediaHubWindow.hubItem.downloads = []
+            return JSON.stringify({ ok: true })
+        }
+    }
+
+    IpcHandler {
+        target: "clipboard"
+        function toggle() { root.toggleClipboard() }
+        function open() { root.openClipboard() }
+        function close() { root.closeClipboard() }
+        function count(): int { return clipboardPicker.itemCount }
     }
 
     IpcHandler {
@@ -714,6 +767,18 @@ Scope {
         mediaHubWindow.toggle()
     }
 
+    function openClipboard() {
+        clipboardPicker.open()
+    }
+
+    function closeClipboard() {
+        clipboardPicker.close()
+    }
+
+    function toggleClipboard() {
+        clipboardPicker.toggle()
+    }
+
     function openToolbox() {
         toolboxWindow.open()
     }
@@ -1234,6 +1299,7 @@ Scope {
     WifiPopup          { hub: root }
     BluetoothPopup     { hub: root }
     BatteryPopup       { id: batteryPopup; hub: root }
+    ClipboardPicker    { id: clipboardPicker; hub: root }
     Pet                { id: pet }
     onToastVisibleChanged: if (root.toastVisible) pet.wave()
 }
