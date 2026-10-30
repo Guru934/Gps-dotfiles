@@ -176,6 +176,18 @@ case "$cmd" in
             status)
                 call_qs "$ipath" island notifyStatus "$@"
                 ;;
+            store-body)
+                val="${1:-on}"
+                shift || true
+                case "$val" in
+                    off|false|0)
+                        call_qs "$ipath" island setStoreBody false "$@"
+                        ;;
+                    *)
+                        call_qs "$ipath" island setStoreBody true "$@"
+                        ;;
+                esac
+                ;;
             *)
                 call_qs "$ipath" island notify "$action" "$@"
                 ;;

@@ -42,25 +42,44 @@ Item {
     onVisibleChanged: if (!visible) waveStart = -1; else maybeWave()
     onExpandedChanged: if (!expanded) maybeWave()
 
-    function acts(note) {
+    function acts(q) {
         const r = []
-        if (!note) return r
+        if (!q || !q.n) return r
+        const note = q.n
         for (let i = 0; i < note.actions.length; i++) if (note.actions[i].identifier !== "default") r.push(note.actions[i])
         return r.slice(0, 2)
     }
     function defaultAction(note) {
+        if (!note) return null
         for (let i = 0; i < note.actions.length; i++) if (note.actions[i].identifier === "default") return note.actions[i]
         return null
     }
     function open(q) {                       // click on the card: run the app's default action if it has one
+        if (!q) return
         const d = defaultAction(q.n)
         if (d) st.core.invokeAction(q, d); else st.core.dismissNotif(q)
     }
-    function title(note) { return note ? (note.summary !== "" ? note.summary : note.appName) : "" }
+    function title(q) {
+        if (!q) return ""
+        if (q.entry && q.entry.summary) return q.entry.summary
+        const note = q.n
+        return note ? (note.summary !== "" ? note.summary : note.appName) : ""
+    }
+    function bodyText(q) {
+        if (!q) return ""
+        if (q.entry && q.entry.body !== undefined) return q.entry.body
+        const note = q.n
+        return note ? (note.body !== "" ? note.body : note.appName) : ""
+    }
+    function appNameText(q) {
+        if (!q) return ""
+        if (q.entry && q.entry.appName) return q.entry.appName
+        return q.n ? q.n.appName : ""
+    }
 
     // ── small local widgets ──
-    component Txt: Text { color: st.core.text; font.family: st.core.uiFont; font.pixelSize: 13; elide: Text.ElideRight }
-    component Mono: Text { color: st.core.dim; font.family: st.core.monoFont; font.pixelSize: 10; elide: Text.ElideRight }
+    component Txt: Text { color: st.core.text; font.family: st.core.uiFont; font.pixelSize: 13; elide: Text.ElideRight; textFormat: Text.PlainText }
+    component Mono: Text { color: st.core.dim; font.family: st.core.monoFont; font.pixelSize: 10; elide: Text.ElideRight; textFormat: Text.PlainText }
     component Ico: Text {
         property string alt: ""
         property string name: ""
@@ -72,10 +91,11 @@ Item {
     component Avatar: Item {
         id: av
         property int size: 36
+        property var item: null
         property var note: null
         property color tone: st.core.teal
         implicitWidth: size; implicitHeight: size
-        readonly property string src: note ? st.core.iconSrc(note) : ""
+        readonly property string src: item ? st.core.iconSrc(item.entry, item.n) : (note ? st.core.iconSrc(null, note) : "")
         Rectangle { id: avMask; anchors.fill: parent; radius: width / 2; visible: false; layer.enabled: true }
         Rectangle {
             anchors.fill: parent; radius: width / 2; visible: img.status !== Image.Ready
@@ -86,7 +106,8 @@ Item {
             id: img
             anchors.fill: parent; visible: status === Image.Ready
             source: av.src; asynchronous: true; fillMode: Image.PreserveAspectCrop
-            sourceSize.width: av.size * 2; sourceSize.height: av.size * 2
+            sourceSize.width: Math.min(128, Math.max(32, av.size * 2))
+            sourceSize.height: Math.min(128, Math.max(32, av.size * 2))
             layer.enabled: true
             layer.effect: MultiEffect { maskEnabled: true; maskSource: avMask; maskThresholdMin: 0.5; maskSpreadAtMin: 1.0 }
         }
@@ -141,15 +162,15 @@ Item {
             RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14; spacing: 12
                 PixelPet { Layout.alignment: Qt.AlignVCenter }
-                Avatar { size: 36; note: st.n; tone: st.tone }
+                Avatar { size: 36; item: st.item; note: st.n; tone: st.tone }
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 2
                     RowLayout {
                         spacing: 8
-                        Txt { text: st.title(st.n); font.weight: Font.DemiBold; Layout.fillWidth: true }
+                        Txt { text: st.title(st.item); font.weight: Font.DemiBold; Layout.fillWidth: true }
                         Mono { text: st.item ? st.core.ago(st.item.ts) : "" }
                     }
-                    Txt { text: st.n ? st.n.body : ""; color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
+                    Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
                 }
                 Rectangle {
                     implicitHeight: 24; implicitWidth: br.implicitWidth + 20; radius: 12
@@ -175,15 +196,15 @@ Item {
         RowLayout {
             anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 12; spacing: 12
             PixelPet { Layout.alignment: Qt.AlignVCenter }
-            Avatar { size: 36; note: st.n; tone: st.tone }
+            Avatar { size: 36; item: st.item; note: st.n; tone: st.tone }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 2
                 RowLayout {
                     spacing: 8
-                    Txt { text: st.title(st.n); font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    Txt { text: st.title(st.item); font.weight: Font.DemiBold; Layout.fillWidth: true }
                     Mono { text: st.item ? st.core.ago(st.item.ts) : ""; font.letterSpacing: 1 }
                 }
-                Txt { text: st.n ? (st.n.body !== "" ? st.n.body : st.n.appName) : ""; color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
+                Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
             }
             CloseBtn { onClicked: if (st.item) st.core.dismissNotif(st.item) }
         }
@@ -196,15 +217,16 @@ Item {
         Behavior on opacity { NumberAnimation { duration: 160 } }
         RowLayout {
             Layout.fillWidth: true; spacing: 10
-            Avatar { size: 28; note: st.n; tone: st.tone }
-            Mono { text: st.n ? st.n.appName.toUpperCase() : ""; color: st.tone; font.weight: Font.DemiBold; font.letterSpacing: 1; Layout.fillWidth: true }
+            Avatar { size: 28; item: st.item; note: st.n; tone: st.tone }
+            Mono { text: st.appNameText(st.item).toUpperCase(); color: st.tone; font.weight: Font.DemiBold; font.letterSpacing: 1; Layout.fillWidth: true }
             Mono { text: st.count > 1 ? "1 / " + st.count : ""; visible: st.count > 1 }
             Mono { text: st.item ? st.core.ago(st.item.ts) + " ago" : "" }
         }
-        Txt { text: st.title(st.n); font.weight: Font.DemiBold; Layout.fillWidth: true }
+        Txt { text: st.title(st.item); font.weight: Font.DemiBold; Layout.fillWidth: true }
         Text {
             Layout.fillWidth: true; Layout.fillHeight: true
-            text: st.n ? st.n.body : ""; color: st.core.dim; font.family: st.core.uiFont; font.pixelSize: 12
+            textFormat: Text.PlainText
+            text: st.bodyText(st.item); color: st.core.dim; font.family: st.core.uiFont; font.pixelSize: 12
             wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; verticalAlignment: Text.AlignTop
         }
         RowLayout {
@@ -213,7 +235,7 @@ Item {
             Item { Layout.fillWidth: true }
             Pillbtn { text: "Dismiss"; onClicked: if (st.item) st.core.dismissNotif(st.item) }
             Repeater {
-                model: st.expanded ? st.acts(st.n) : []
+                model: st.expanded ? st.acts(st.item) : []
                 delegate: Pillbtn {
                     required property var modelData
                     required property int index

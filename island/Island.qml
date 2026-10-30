@@ -416,6 +416,9 @@ Scope {
         }
     }
     function controlPanelChanged(inside) {
+        if (root.notifQueue.length > 0 && !root.isPinned && !root.manualShow) {
+            return
+        }
         if (inside) {
             controlPanelEntered = true
             root.hoverLeaveExpiry = 0
@@ -694,7 +697,7 @@ Scope {
             windowFocused: Hyprland.activeToplevel !== null,
             fullscreen: Boolean(Hyprland.focusedWorkspace && Hyprland.focusedWorkspace.hasFullscreen),
             workspaceEmpty: wsEmpty,
-            hovered: root.hovered,
+            hovered: (root.notifQueue.length > 0 && !root.isPinned && !root.manualShow) ? false : root.hovered,
             pinned: root.isPinned,
             manualShow: root.manualShow,
             manualHide: root.manualHide,
@@ -925,15 +928,48 @@ Scope {
 
         n.tracked = true
         n.closed.connect(function () { root.dropNotif(n) })
+        n.summaryChanged.connect(function () { root.updateNotif(n) })
+        n.bodyChanged.connect(function () { root.updateNotif(n) })
         const crit = n.urgency === NotificationUrgency.Critical
         const isDnd = NotificationStore.isDndActive(root.dndState, nowMs, n.urgency)
 
-        const item = { n: n, ts: nowMs / 1000, age: 0, timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 4) }
+        const item = {
+            n: n,
+            entry: res.added,
+            ts: nowMs / 1000,
+            age: 0,
+            timeout: crit ? 0 : (n.expireTimeout > 0 ? Math.min(n.expireTimeout, 15) : 4)
+        }
         if (isDnd) {
             held = [item].concat(held).slice(0, 30)
             return
         }
         notifQueue = [item].concat(notifQueue.filter(q => q.n !== n)).slice(0, maxToasts)
+        const dur = crit ? 3600000 : (item.timeout > 0 ? item.timeout * 1000 : root.durations.notification)
+        root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, dur)
+    }
+    function updateNotif(n) {
+        const nowMs = Date.now()
+        const res = NotificationStore.add(root.notifStore, {
+            id: n.id,
+            dbusId: n.id,
+            appName: n.appName,
+            appIcon: n.appIcon,
+            summary: n.summary,
+            body: n.body,
+            urgency: n.urgency,
+            actions: n.actions,
+            image: n.image
+        }, nowMs)
+        root.saveNotifStore()
+        for (let i = 0; i < root.notifQueue.length; i++) {
+            if (root.notifQueue[i].n === n) {
+                root.notifQueue[i].entry = res.added
+                root.notifQueue[i].ts = nowMs / 1000
+                root.notifQueue[i].age = 0
+                break
+            }
+        }
         root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
     }
     function dropNotif(n) {
@@ -984,37 +1020,45 @@ Scope {
         root.updateVisibility()
     }
     function ago(ts) { const s = Math.max(0, Math.floor(now - ts)); return s < 10 ? "now" : s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h" }
-    function iconSrc(n) {
-        if (n.image && n.image !== "") return n.image.charAt(0) === "/" ? "file://" + n.image : n.image
-        if (n.appIcon && n.appIcon !== "") return n.appIcon.charAt(0) === "/" ? "file://" + n.appIcon : Quickshell.iconPath(n.appIcon, true)
+    function iconSrc(entry, n) {
+        if (entry && entry.image && entry.image !== "") return entry.image.charAt(0) === "/" ? "file://" + entry.image : entry.image
+        if (n) {
+            if (n.image && n.image !== "") return n.image.charAt(0) === "/" ? "file://" + n.image : n.image
+            if (n.appIcon && n.appIcon !== "") return n.appIcon.charAt(0) === "/" ? "file://" + n.appIcon : Quickshell.iconPath(n.appIcon, true)
+        }
         return ""
     }
-    Loader {
-        active: root.notifsEnabled
-        sourceComponent: Component {
-            NotificationServer {
-                bodySupported: true
-                actionsSupported: true
-                imageSupported: true
-                onNotification: n => root.addNotif(n)
-            }
-        }
+    NotificationServer {
+        id: notifServer
+        keepOnReload: false
+        bodySupported: true
+        actionsSupported: true
+        imageSupported: true
+        onNotification: n => root.addNotif(n)
     }
     // age toasts only while the pointer is away; critical ones stay until dismissed
     Timer {
         interval: 1000; repeat: true; running: root.notifQueue.length > 0
         onTriggered: {
             root.now = Date.now() / 1000
-            if (root.hovered) return
+            if (root.hovered) {
+                root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
+                return
+            }
             const keep = []
+            let hasCritical = false
             for (const q of root.notifQueue) {
                 q.age += 1
+                if (q.timeout === 0) hasCritical = true
                 if (q.timeout > 0 && q.age >= q.timeout) q.n.expire()
                 else keep.push(q)
             }
             if (keep.length !== root.notifQueue.length) {
                 root.notifQueue = keep
                 if (keep.length === 0) root.clearEvent("notify")
+            }
+            if (hasCritical && keep.length > 0) {
+                root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, root.durations.notification)
             }
         }
     }
@@ -1122,6 +1166,13 @@ Scope {
             }
             return JSON.stringify({ ok: true })
         }
+        function setStoreBody(enabled: bool): string {
+            if (!root.notifStore) root.notifStore = NotificationStore.createStore()
+            if (!root.notifStore.settings) root.notifStore.settings = NotificationStore.createDefaultSettings()
+            root.notifStore.settings.storeBody = enabled
+            root.saveNotifStore()
+            return JSON.stringify({ ok: true, storeBody: enabled })
+        }
         function notifyStatus(): string {
             return JSON.stringify({
                 activeOwner: true,
@@ -1130,7 +1181,8 @@ Scope {
                 heldCount: root.held.length,
                 dnd: root.dnd,
                 dndMode: root.dndState ? root.dndState.mode : "off",
-                allowCritical: root.dndState ? root.dndState.allowCritical : true
+                allowCritical: root.dndState ? root.dndState.allowCritical : true,
+                storeBody: root.notifStore && root.notifStore.settings ? root.notifStore.settings.storeBody !== false : true
             })
         }
         function debug(mode: string) { root.debugMode = mode }

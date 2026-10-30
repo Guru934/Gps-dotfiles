@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ISLAND_QML = (ROOT / "island/Island.qml").read_text(encoding="utf-8")
 SHELL_QML = (ROOT / "shell.qml").read_text(encoding="utf-8")
 NOTIF_CENTER_QML = (ROOT / "components/NotifCenter.qml").read_text(encoding="utf-8")
+NOTIFY_STATE_QML = (ROOT / "island/states/Notify.qml").read_text(encoding="utf-8")
 GPS_IPC = (ROOT / "scripts/gps-ipc").read_text(encoding="utf-8")
 
 
@@ -52,6 +53,25 @@ class NotificationBackendContractTests(unittest.TestCase):
                 data = {"version": 1, "entries": []}
 
             self.assertEqual(data["entries"], [])
+
+    def test_notify_popup_uses_plaintext_and_bounded_image(self):
+        """Notify.qml must enforce Text.PlainText and bounded image dimensions to prevent injection and OOM."""
+        self.assertIn("textFormat: Text.PlainText", NOTIFY_STATE_QML)
+        self.assertIn("sourceSize.width: Math.min(128,", NOTIFY_STATE_QML)
+        self.assertIn("sourceSize.height: Math.min(128,", NOTIFY_STATE_QML)
+
+    def test_critical_notification_stays_alive_contract(self):
+        """Critical notifications must stay alive (timeout: 0) and not expire automatically."""
+        self.assertIn("const crit = n.urgency === NotificationUrgency.Critical", ISLAND_QML)
+        self.assertIn("timeout: crit ? 0 :", ISLAND_QML)
+        self.assertIn("hasCritical", ISLAND_QML)
+
+    def test_store_body_and_clear_history_contract(self):
+        """Island and gps-ipc must expose store-body and clear commands."""
+        self.assertIn("setStoreBody", ISLAND_QML)
+        self.assertIn("clearNotifications", ISLAND_QML)
+        self.assertIn("store-body)", GPS_IPC)
+        self.assertIn("clear)", GPS_IPC)
 
 
 if __name__ == "__main__":
