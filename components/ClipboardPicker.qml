@@ -30,12 +30,14 @@ PanelWindow {
         root.searchQuery = ""
         root.selectedIndex = 0
         root.isOpen = true
+        Quickshell.execDetached([root.ipcScript, "island", "externalInteraction", "true"])
         refresh()
     }
 
     function close() {
         root.isOpen = false
         root.confirmWipe = false
+        Quickshell.execDetached([root.ipcScript, "island", "externalInteraction", "false"])
     }
 
     function toggle() {

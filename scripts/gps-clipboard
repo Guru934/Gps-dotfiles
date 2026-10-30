@@ -122,21 +122,30 @@ function cmdCopy(idArg) {
     // Try decoding via cliphist first
     try {
         const decode = spawn("cliphist", ["decode", String(id)]);
-        const copy = spawn("wl-copy", []);
+        const chunks = [];
 
-        decode.stdout.pipe(copy.stdin);
+        decode.stdout.on("data", (chunk) => {
+            chunks.push(chunk);
+        });
 
-        copy.on("close", (code) => {
-            if (code === 0) {
-                console.log(JSON.stringify({ ok: true, copied: id }));
+        decode.on("close", (code) => {
+            if (code === 0 && chunks.length > 0) {
+                const buffer = Buffer.concat(chunks);
+                const copy = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"], detached: true });
+                copy.stdin.end(buffer, () => {
+                    copy.unref();
+                    console.log(JSON.stringify({ ok: true, copied: id }));
+                });
+                copy.on("error", (err) => {
+                    console.error(JSON.stringify({ ok: false, error: err.message }));
+                    process.exit(1);
+                });
             } else {
-                console.error(JSON.stringify({ ok: false, error: `wl-copy exit ${code}` }));
-                process.exit(1);
+                fallbackPinnedCopy(id);
             }
         });
 
-        decode.on("error", (err) => {
-            // If cliphist decode fails, check if this is a pinned item with stored text
+        decode.on("error", () => {
             fallbackPinnedCopy(id);
         });
     } catch (e) {
@@ -148,15 +157,14 @@ function fallbackPinnedCopy(id) {
     const pinnedStore = loadPinned();
     const item = pinnedStore.pinned.find(p => p.id === id);
     if (item && item.text) {
-        const copy = spawn("wl-copy", []);
-        copy.stdin.end(item.text);
-        copy.on("close", (code) => {
-            if (code === 0) {
-                console.log(JSON.stringify({ ok: true, copied: id, fallback: true }));
-            } else {
-                console.error(JSON.stringify({ ok: false, error: "copy_failed" }));
-                process.exit(1);
-            }
+        const copy = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"], detached: true });
+        copy.stdin.end(item.text, () => {
+            copy.unref();
+            console.log(JSON.stringify({ ok: true, copied: id, fallback: true }));
+        });
+        copy.on("error", (err) => {
+            console.error(JSON.stringify({ ok: false, error: err.message }));
+            process.exit(1);
         });
     } else {
         console.error(JSON.stringify({ ok: false, error: "item_not_found" }));
@@ -251,14 +259,16 @@ function cmdClear() {
     console.log(JSON.stringify({ ok: true, cleared: true }));
 }
 
-function cmdPause(sub) {
+function cmdPause(sub = "toggle") {
     const current = isPaused();
-    if (sub === "on" || sub === "1" || sub === "true") {
+    if (!sub || sub === "toggle") {
+        setPaused(!current);
+    } else if (sub === "on" || sub === "1" || sub === "true") {
         setPaused(true);
     } else if (sub === "off" || sub === "0" || sub === "false") {
         setPaused(false);
-    } else if (sub === "toggle") {
-        setPaused(!current);
+    } else if (sub === "status") {
+        // Just report current status without changing
     }
     console.log(JSON.stringify({ ok: true, paused: isPaused() }));
 }
@@ -309,7 +319,7 @@ switch (action) {
         cmdClear();
         break;
     case "pause":
-        cmdPause(args[1] || "status");
+        cmdPause(args[1] || "toggle");
         break;
     case "thumb":
         cmdThumb(args[1]);
