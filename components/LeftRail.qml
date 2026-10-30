@@ -49,6 +49,25 @@ PanelWindow {
     property string pendingPowerLabel: ""
     property var pendingPowerCmd: []
 
+    // Screen Recording Indicator State
+    property bool isRecording: false
+    readonly property string recordStatePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/gps/record-state.json"
+
+    FileView {
+        id: railRecordStateFile
+        path: root.recordStatePath
+        watchChanges: true
+        onLoaded: {
+            try {
+                const data = JSON.parse(railRecordStateFile.text())
+                root.isRecording = Boolean(data && data.recording === true)
+            } catch (e) {
+                root.isRecording = false
+            }
+        }
+        onFileChanged: railRecordStateFile.reload()
+    }
+
     IpcHandler {
         target: "rail"
         function togglePower() { root.powerPopupOpen = !root.powerPopupOpen }
@@ -198,8 +217,9 @@ PanelWindow {
             + "bt_conn=$(bluetoothctl info 2>/dev/null | grep -q 'Connected: yes' && echo 1 || echo 0); "
             + "vol_line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); "
             + "med_line=$(playerctl metadata --format '{{status}}|{{title}}' 2>/dev/null | head -n1); "
-            + "printf 'WIFI:%s|%s\\nBT:%s|%s\\nVOL:%s\\nMED:%s\\n' "
-            + "\"$wifi_radio\" \"$wifi_line\" \"$bt_power\" \"$bt_conn\" \"$vol_line\" \"$med_line\""
+            + "rec_line=$(cat \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" 2>/dev/null | grep -o '\"recording\": *true' || echo ''); "
+            + "printf 'WIFI:%s|%s\\nBT:%s|%s\\nVOL:%s\\nMED:%s\\nREC:%s\\n' "
+            + "\"$wifi_radio\" \"$wifi_line\" \"$bt_power\" \"$bt_conn\" \"$vol_line\" \"$med_line\" \"$rec_line\""
         ]
         running: true
         stdout: StdioCollector {
@@ -281,6 +301,13 @@ PanelWindow {
                     root.mediaPlaying = (st === "Playing")
                     root.mediaPaused = (st === "Paused")
                     root.mediaTitle = title
+                }
+            } else if (line.startsWith("REC:")) {
+                const rPayload = line.slice(4).trim()
+                if (rPayload !== "") {
+                    root.isRecording = true
+                } else if (!railRecordStateFile.exists) {
+                    root.isRecording = false
                 }
             }
         }
@@ -534,7 +561,44 @@ PanelWindow {
                         glyph: "󰄀"
                         accentColor: Theme.accentTertiary
                         tooltip: "Area Screenshot"
-                        onClicked: Quickshell.execDetached(["sh", "-c", "grim -g \"$(slurp)\" - | swappy -f -"])
+                        onClicked: Quickshell.execDetached([(Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/gps-shot", "region"])
+                    }
+
+                    // Screen Recording Active Indicator
+                    Rectangle {
+                        id: recPill
+                        visible: root.isRecording
+                        width: 24
+                        height: 24
+                        radius: 12
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: Qt.rgba(Theme.statusDangerBorder.r, Theme.statusDangerBorder.g, Theme.statusDangerBorder.b, 0.20)
+                        border.width: 1.5
+                        border.color: Theme.statusDangerBorder
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 10
+                            height: 10
+                            radius: 5
+                            color: Theme.statusDangerBorder
+
+                            SequentialAnimation on opacity {
+                                running: root.isRecording && Theme.animationsEnabled && !Theme.reducedMotion
+                                loops: Animation.Infinite
+                                NumberAnimation { from: 1.0; to: 0.2; duration: 600; easing.type: Easing.InOutSine }
+                                NumberAnimation { from: 0.2; to: 1.0; duration: 600; easing.type: Easing.InOutSine }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Quickshell.execDetached([(Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/gps-record", "stop"])
+                            onEntered: if (root.hub) root.hub.setTooltip("Recording active · Click to stop")
+                            onExited: if (root.hub) root.hub.clearTooltip()
+                        }
                     }
                 }
         }

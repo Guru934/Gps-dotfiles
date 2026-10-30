@@ -98,6 +98,25 @@ Item {
 
     property bool keepAwakeOn: false
     property bool gameModeOn: false
+    property bool isRecording: false
+    property string recordFile: ""
+    readonly property string recordStatePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/gps/record-state.json"
+
+    FileView {
+        id: recordStateFile
+        path: st.recordStatePath
+        watchChanges: true
+        onLoaded: {
+            try {
+                const data = JSON.parse(recordStateFile.text())
+                st.isRecording = Boolean(data && data.recording === true)
+                st.recordFile = (data && data.file) ? String(data.file) : ""
+            } catch (e) {
+                st.isRecording = false
+            }
+        }
+        onFileChanged: recordStateFile.reload()
+    }
 
     property bool hasPpd: false
     property string powerProfile: ""
@@ -301,6 +320,7 @@ Item {
             "echo \"kernel=$(uname -r 2>/dev/null)\"; " +
             "command -v wlogout >/dev/null 2>&1 && echo 'has_wlogout=1' || echo 'has_wlogout=0'; " +
             "command -v systemctl >/dev/null 2>&1 && echo 'has_systemctl=1' || echo 'has_systemctl=0'; " +
+            "if [ -f \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" ]; then grep -q '\"recording\": *true' \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" && echo 'is_recording=1' || echo 'is_recording=0'; else echo 'is_recording=0'; fi; " +
             "if command -v gps-lock >/dev/null 2>&1 || [ -x \"$HOME/Projects/my-rice/scripts/gps-lock\" ] || command -v hyprlock >/dev/null 2>&1 || command -v loginctl >/dev/null 2>&1; then echo 'has_locker=1'; else echo 'has_locker=0'; fi"
         ]
         stdout: StdioCollector {
@@ -332,6 +352,8 @@ Item {
 
                 st.keepAwakeOn = map.keepawake_run === "1"
                 st.gameModeOn = (map.active === "1" || map.gamemode_run === "1")
+                if (map.is_recording === "1") st.isRecording = true
+                else if (map.is_recording === "0" && !recordStateFile.exists) st.isRecording = false
 
                 st.hasPpd = map.has_ppd === "1"
                 st.powerProfile = map.profile || ""
@@ -1169,11 +1191,17 @@ Item {
             iconName: "screenshot_monitor"
             iconAlt: "S"
             titleText: "Screenshot"
-            subText: "Reserved"
+            subText: "Snip region"
             tileOn: false
-            tileAvailable: false
-            tileInteractable: false
-            tooltipText: "Screenshot capture (reserved slot)"
+            tileAvailable: true
+            tileInteractable: true
+            tooltipText: "Take region screenshot (Print)"
+            onToggled: {
+                const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+                Quickshell.execDetached([rootPath + "/scripts/gps-shot", "region"])
+                localExpanded = false
+                if (typeof core.setControl === "function") core.setControl("close")
+            }
         }
     }
 
@@ -1183,11 +1211,16 @@ Item {
             iconName: "screen_record"
             iconAlt: "R"
             titleText: "Record"
-            subText: "Reserved"
-            tileOn: false
-            tileAvailable: false
-            tileInteractable: false
-            tooltipText: "Screen recording (reserved slot)"
+            subText: st.isRecording ? "Recording..." : "Start capture"
+            tileOn: st.isRecording
+            tileAvailable: true
+            tileInteractable: true
+            tooltipText: st.isRecording ? "Stop screen recording" : "Start screen recording"
+            onToggled: {
+                const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+                Quickshell.execDetached([rootPath + "/scripts/gps-record", "toggle"])
+                st.scheduleProbe(350)
+            }
         }
     }
 
