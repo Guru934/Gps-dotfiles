@@ -318,10 +318,11 @@ hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = tr
 hl.bind("XF86AudioPlay",  hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
 hl.bind("XF86AudioPrev",  hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
 
--- Print Screen: select a region with slurp, capture it with grim and open it in
--- swappy for editing/saving. Cancelling the selection (Escape) exits quietly
--- without launching the editor on an invalid capture.
-hl.bind("Print", hl.dsp.exec_cmd('r=$(slurp) || exit 0; [ -n "$r" ] || exit 0; grim -g "$r" - | swappy -f -'))
+-- Screen capture toolkit (GPS F4)
+-- Print: snip region | Shift+Print: full monitor | Alt+Print: active window
+hl.bind("Print",         hl.dsp.exec_cmd(repo .. "/scripts/gps-shot region"))
+hl.bind("SHIFT + Print", hl.dsp.exec_cmd(repo .. "/scripts/gps-shot monitor"))
+hl.bind("ALT + Print",   hl.dsp.exec_cmd(repo .. "/scripts/gps-shot window"))
 
 
 --------------------------------

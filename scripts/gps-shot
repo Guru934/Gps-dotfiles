@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-shot — GPS Native Screenshot Utility
+# Modes: region | window | monitor
+# ============================================================================
+set -euo pipefail
+
+MODE="${1:-region}"
+
+GRIM_BIN="${GPS_GRIM_BIN:-grim}"
+SLURP_BIN="${GPS_SLURP_BIN:-slurp}"
+HYPRCTL_BIN="${GPS_HYPRCTL_BIN:-hyprctl}"
+WL_COPY_BIN="${GPS_WL_COPY_BIN:-wl-copy}"
+NOTIFY_BIN="${GPS_NOTIFY_SEND_BIN:-notify-send}"
+
+# 1. Dependency checks
+if ! command -v "$GRIM_BIN" >/dev/null 2>&1; then
+    echo "Error: grim is required for screenshots but not installed." >&2
+    if command -v "$NOTIFY_BIN" >/dev/null 2>&1; then
+        "$NOTIFY_BIN" -u critical -a "GPS Shot" "Screenshot Error" "grim executable was not found." 2>/dev/null || true
+    fi
+    exit 1
+fi
+
+GRIM_ARGS=()
+
+case "$MODE" in
+    region)
+        if ! command -v "$SLURP_BIN" >/dev/null 2>&1; then
+            echo "Error: slurp is required for region screenshots but not installed." >&2
+            if command -v "$NOTIFY_BIN" >/dev/null 2>&1; then
+                "$NOTIFY_BIN" -u critical -a "GPS Shot" "Screenshot Error" "slurp executable was not found." 2>/dev/null || true
+            fi
+            exit 1
+        fi
+        # Select region. Cancelling with Escape exits cleanly with code 0.
+        if ! GEOM=$("$SLURP_BIN" 2>/dev/null); then
+            exit 0
+        fi
+        if [[ -z "${GEOM// }" ]]; then
+            exit 0
+        fi
+        GRIM_ARGS=(-g "$GEOM")
+        ;;
+
+    window)
+        if ! command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
+            echo "Error: hyprctl is required for window screenshot." >&2
+            exit 1
+        fi
+        WIN_JSON=$("$HYPRCTL_BIN" activewindow -j 2>/dev/null || true)
+        if [[ -z "$WIN_JSON" ]] || [[ "$WIN_JSON" == "{}" ]]; then
+            echo "Error: No active window detected." >&2
+            exit 1
+        fi
+        GEOM=""
+        if command -v jq >/dev/null 2>&1; then
+            GEOM=$(printf '%s' "$WIN_JSON" | jq -r 'select(.at and .size) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null || true)
+        fi
+        if [[ -z "$GEOM" ]] && command -v python3 >/dev/null 2>&1; then
+            GEOM=$(printf '%s' "$WIN_JSON" | python3 -c "import sys, json; d=json.load(sys.stdin); print(f\"{d['at'][0]},{d['at'][1]} {d['size'][0]}x{d['size'][1]}\")" 2>/dev/null || true)
+        fi
+        if [[ -z "$GEOM" ]] || ! [[ "$GEOM" =~ ^[0-9]+,[0-9]+[[:space:]]+[0-9]+x[0-9]+$ ]]; then
+            echo "Error: Failed to obtain valid window geometry." >&2
+            exit 1
+        fi
+        GRIM_ARGS=(-g "$GEOM")
+        ;;
+
+    monitor)
+        MON=""
+        if command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
+            if command -v jq >/dev/null 2>&1; then
+                MON=$("$HYPRCTL_BIN" monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | .name' 2>/dev/null || true)
+            fi
+            if [[ -z "$MON" ]] && command -v python3 >/dev/null 2>&1; then
+                MON=$("$HYPRCTL_BIN" monitors -j 2>/dev/null | python3 -c "import sys, json; mons = json.load(sys.stdin); f = [m['name'] for m in mons if m.get('focused')]; print(f[0] if f else (mons[0]['name'] if mons else ''))" 2>/dev/null || true)
+            fi
+        fi
+        if [[ -n "$MON" ]]; then
+            GRIM_ARGS=(-o "$MON")
+        fi
+        ;;
+
+    *)
+        echo "Usage: $(basename "$0") [region|window|monitor]" >&2
+        exit 1
+        ;;
+esac
+
+# Destination directory
+PICTURES_DIR="${XDG_PICTURES_DIR:-$HOME/Pictures}"
+SCREENSHOTS_DIR="${PICTURES_DIR}/Screenshots"
+mkdir -p "$SCREENSHOTS_DIR"
+
+BASE_NAME="screenshot_$(date +'%Y-%m-%d_%H-%M-%S')"
+DEST_FILE="${SCREENSHOTS_DIR}/${BASE_NAME}.png"
+COUNTER=1
+while [[ -e "$DEST_FILE" ]]; do
+    DEST_FILE="${SCREENSHOTS_DIR}/${BASE_NAME}_${COUNTER}.png"
+    COUNTER=$((COUNTER + 1))
+done
+
+# Temporary staging file
+TMP_FILE="$(mktemp "${SCREENSHOTS_DIR}/.tmp_shot_XXXXXX.png")"
+cleanup() {
+    rm -f "$TMP_FILE"
+}
+trap cleanup EXIT
+
+if ! "$GRIM_BIN" "${GRIM_ARGS[@]}" "$TMP_FILE" 2>/dev/null; then
+    echo "Error: grim failed to capture screenshot." >&2
+    exit 1
+fi
+
+if [[ ! -s "$TMP_FILE" ]]; then
+    echo "Error: captured file is empty." >&2
+    exit 1
+fi
+
+mv "$TMP_FILE" "$DEST_FILE"
+trap - EXIT
+
+# Clipboard copy
+if command -v "$WL_COPY_BIN" >/dev/null 2>&1; then
+    "$WL_COPY_BIN" -t image/png < "$DEST_FILE" 2>/dev/null || true
+fi
+
+# Shutter sound
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "${SCRIPT_DIR}/gps-sound" ]]; then
+    "${SCRIPT_DIR}/gps-sound" play shutter >/dev/null 2>&1 || true
+fi
+
+# Notification with interactive actions
+if command -v "$NOTIFY_BIN" >/dev/null 2>&1; then
+    (
+        FILENAME="$(basename "$DEST_FILE")"
+        ACTION=$("$NOTIFY_BIN" \
+            -a "GPS Shot" \
+            -i "$DEST_FILE" \
+            "Screenshot Captured" \
+            "$FILENAME" \
+            --action="open=Open" \
+            --action="swappy=Edit in Swappy" \
+            --action="folder=Show in Folder" 2>/dev/null || true)
+        case "$ACTION" in
+            open)
+                xdg-open "$DEST_FILE" >/dev/null 2>&1 &
+                ;;
+            swappy)
+                if command -v swappy >/dev/null 2>&1; then
+                    swappy -f "$DEST_FILE" >/dev/null 2>&1 &
+                fi
+                ;;
+            folder)
+                xdg-open "$SCREENSHOTS_DIR" >/dev/null 2>&1 &
+                ;;
+        esac
+    ) >/dev/null 2>&1 &
+fi
+
+echo "$DEST_FILE"
+exit 0

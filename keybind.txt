@@ -95,12 +95,17 @@ screen is locked.)
 ------------------------------------------------------------------------
 5. SCREENSHOTS
 ------------------------------------------------------------------------
-Print ............ Region screenshot: pick an area with slurp, capture with
-                   grim, annotate/save with swappy.
-                   r=$(slurp) || exit 0; [ -n "$r" ] || exit 0; \
-                   grim -g "$r" - | swappy -f -
+Print ............ Region screenshot: snip an area with slurp, capture with
+                   grim, copy to clipboard, and notify with open/edit/folder actions.
                    Pressing Esc while selecting cancels cleanly - nothing is
-                   written and swappy never opens.
+                   written and no false notifications are sent.
+                   gps-shot region
+Shift + Print .... Monitor screenshot: capture the active monitor to
+                   ~/Pictures/Screenshots, copy to clipboard, and notify.
+                   gps-shot monitor
+Alt + Print ...... Window screenshot: capture the focused window to
+                   ~/Pictures/Screenshots, copy to clipboard, and notify.
+                   gps-shot window
 
 
 ------------------------------------------------------------------------
