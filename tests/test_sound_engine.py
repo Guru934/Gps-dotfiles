@@ -265,9 +265,7 @@ class SoundEngineTests(unittest.TestCase):
 
     def test_sound_file_allowlist(self):
         # A file in repo assets/sounds is allowed
-        repo_sound = Path(sound_engine.get_repo_root()) / "assets" / "sounds" / "test.wav"
-        repo_sound.parent.mkdir(parents=True, exist_ok=True)
-        repo_sound.write_bytes(b"dummy")
+        repo_sound = Path(sound_engine.get_repo_root()) / "assets" / "sounds" / "default" / "chime.ogg"
         self.assertTrue(is_allowed_sound_file(repo_sound))
 
         # A file in /tmp or random directory is NOT allowed

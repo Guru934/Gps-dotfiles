@@ -30,6 +30,7 @@ import Quickshell.Services.Notifications
 import qs.config
 import "IslandVisibility.js" as IslandVisibility
 import "NotificationStore.js" as NotificationStore
+import "NotificationSoundLogic.js" as NotificationSoundLogic
 
 Scope {
     id: root
@@ -448,6 +449,13 @@ Scope {
         return true
     }
     readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string soundBin: root.repoRoot + "/scripts/gps-sound"
+    function playSound(event, dedupeKey, soundFile) {
+        const args = [root.soundBin, "play", event]
+        if (dedupeKey) args.push("--dedupe", dedupeKey)
+        if (soundFile) args.push("--file", soundFile)
+        Quickshell.execDetached(args)
+    }
     function openMediaHub() {
         Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "mediahub", "toggle"])
     }
@@ -950,6 +958,14 @@ Scope {
         notifQueue = [item].concat(notifQueue.filter(q => q.n !== n)).slice(0, maxToasts)
         const dur = crit ? 3600000 : (item.timeout > 0 ? item.timeout * 1000 : root.durations.notification)
         root.postEvent("notify", IslandVisibility.PRIORITY.TRANSIENT, dur)
+
+        const soundDecision = NotificationSoundLogic.resolveNotificationSound(n, {
+            homeDir: Quickshell.env("HOME"),
+            repoRoot: root.repoRoot
+        })
+        if (soundDecision) {
+            root.playSound(soundDecision.event, soundDecision.dedupeKey, soundDecision.soundFile)
+        }
     }
     function updateNotif(n) {
         const nowMs = Date.now()
