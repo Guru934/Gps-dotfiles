@@ -112,6 +112,8 @@ set -l island_backend "$GPS_ISLAND_BACKEND"
 if test -z "$island_backend"; and test -f "$backend_file"
     set island_backend (string lower -- (string trim (cat "$backend_file")))
 end
+set -l island_pid ""
+set -l island_label ""
 if test "$island_backend" = gps
     set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
     if not pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" >/dev/null 2>&1
@@ -119,16 +121,16 @@ if test "$island_backend" = gps
         disown
     end
     sleep 0.5
-    set -l island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
-    set -l island_label "GPS island"
+    set island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
+    set island_label "GPS island"
 else
     if not pgrep -u (id -u) -f "share/tide-[i]sland" >/dev/null 2>&1
         nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
         disown
     end
     sleep 0.5
-    set -l island_pid (pgrep -u (id -u) -f 'share/tide-[i]sland' | head -1)
-    set -l island_label "Tide Island"
+    set island_pid (pgrep -u (id -u) -f 'share/tide-[i]sland' | head -1)
+    set island_label "Tide Island"
 end
 if test -n "$island_pid"
     log "$island_label up (pid $island_pid)"
