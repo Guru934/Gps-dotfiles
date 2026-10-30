@@ -19,6 +19,7 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Services.SystemTray
 import QtQuick
+import QtQuick.Controls
 import qs.config
 
 PanelWindow {
@@ -76,11 +77,6 @@ PanelWindow {
     color: "transparent"
 
     // -----------------------------------------------------------------------
-    // Keyboard shortcut — Escape closes
-    // -----------------------------------------------------------------------
-    Keys.onEscapePressed: if (root.hub) root.hub.closePopup()
-
-    // -----------------------------------------------------------------------
     // Cursor-leave auto-close timer (350 ms grace, same as WifiPopup)
     // -----------------------------------------------------------------------
     property bool hasEnteredPopup: false
@@ -112,9 +108,10 @@ PanelWindow {
     // Active + NeedsAttention items (shown by default)
     readonly property var visibleItems: {
         const out = []
-        for (let i = 0; i < SystemTray.items.count; ++i) {
-            const it = SystemTray.items.values[i]
-            if (it.status !== SystemTrayItem.Passive) out.push(it)
+        const list = (SystemTray.items && SystemTray.items.values) ? SystemTray.items.values : []
+        for (let i = 0; i < list.length; ++i) {
+            const it = list[i]
+            if (it && it.status !== SystemTrayItem.Passive) out.push(it)
         }
         // NeedsAttention first, then Active, stable secondary by id
         out.sort((a, b) => {
@@ -129,9 +126,10 @@ PanelWindow {
     // Passive items
     readonly property var passiveItems: {
         const out = []
-        for (let i = 0; i < SystemTray.items.count; ++i) {
-            const it = SystemTray.items.values[i]
-            if (it.status === SystemTrayItem.Passive) out.push(it)
+        const list = (SystemTray.items && SystemTray.items.values) ? SystemTray.items.values : []
+        for (let i = 0; i < list.length; ++i) {
+            const it = list[i]
+            if (it && it.status === SystemTrayItem.Passive) out.push(it)
         }
         out.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
         return out
@@ -156,6 +154,8 @@ PanelWindow {
         border.width: Theme.borderWidth
         border.color: Theme.glassBorder
         implicitHeight: innerCol.implicitHeight + 24
+        focus: true
+        Keys.onEscapePressed: if (root.hub) root.hub.closePopup()
 
         HoverHandler {
             id: popupHover
@@ -218,7 +218,7 @@ PanelWindow {
             // Empty state
             // ----------------------------------------------------------------
             Text {
-                visible: SystemTray.items.count === 0
+                visible: !(SystemTray.items && SystemTray.items.values && SystemTray.items.values.length > 0)
                 width: parent.width
                 text: "No tray items"
                 color: Theme.textMuted
@@ -361,13 +361,12 @@ PanelWindow {
                 if (!itemBtn.trayItem) return ""
                 const ic = itemBtn.trayItem.icon
                 if (!ic || ic === "") return ""
-                // Quickshell resolves themed icon names as "image://icon/<name>"
-                // and absolute paths directly. We let the Image handle it.
-                if (ic.startsWith("/") || ic.startsWith("qrc:") || ic.startsWith("file:"))
-                    return ic
-                return "image://icon/" + ic
+                if (ic.startsWith("/")) return "file://" + ic
+                if (ic.startsWith("file:") || ic.startsWith("qrc:")) return ic
+                const resolved = Quickshell.iconPath(ic, true)
+                return (resolved && resolved !== "") ? ("file://" + resolved) : ""
             }
-            visible: status === Image.Ready
+            visible: status === Image.Ready && source !== ""
         }
 
         // Fallback glyph when icon is missing or failed to load

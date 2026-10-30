@@ -616,8 +616,8 @@ PanelWindow {
                     // System Tray Button (visible only when at least one item is registered)
                     RailButton {
                         id: trayBtn
-                        visible: SystemTray.items.count > 0
-                        readonly property int trayCount: SystemTray.items.count
+                        visible: trayBtn.trayCount > 0
+                        readonly property int trayCount: (SystemTray.items && SystemTray.items.values) ? SystemTray.items.values.length : 0
                         glyph: "󰠦"
                         sublabel: trayBtn.trayCount > 9 ? "9+" : (trayBtn.trayCount > 1 ? "" + trayBtn.trayCount : "")
                         accentColor: Theme.brandAccent
