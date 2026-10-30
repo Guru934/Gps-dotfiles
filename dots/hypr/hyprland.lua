@@ -397,7 +397,7 @@ hl.window_rule({
 
 hl.window_rule({
     name  = "gps-floating-dialogs",
-    match = { class = "^(xdg-desktop-portal.*|org.kde.polkit-kde-authentication-agent-1|pavucontrol|nm-connection-editor|blueman-manager)$" },
+    match = { class = "^(xdg-desktop-portal.*|org.kde.polkit-kde-authentication-agent-1|hyprpolkitagent|polkit-gnome-authentication-agent-1|pavucontrol|nm-connection-editor|blueman-manager)$" },
 
     float  = true,
     center = true,

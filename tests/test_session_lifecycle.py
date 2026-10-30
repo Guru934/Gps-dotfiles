@@ -60,6 +60,13 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertIn("kill -9 $pid", SWITCH_ISLAND)
         self.assertIn("--no-duplicate", SWITCH_ISLAND)
 
+    def test_run_gps_polkit_autostart_and_deduplication(self):
+        """run-gps.fish starts polkit agent once with deduplication guard."""
+        self.assertIn("polkit_pat", RUN_GPS)
+        self.assertIn("hyprpolkitagent", RUN_GPS)
+        self.assertIn("polkit-kde-authentication-agent-1", RUN_GPS)
+        self.assertIn("not duplicating", RUN_GPS)
+
 
 if __name__ == "__main__":
     unittest.main()

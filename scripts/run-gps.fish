@@ -75,6 +75,56 @@ rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
 # to it; when the island is (re)started its redirect truncates the file.
 sleep 0.2
 
+# 1b. Start Polkit authentication agent once across the session.
+# Does not terminate on shell restart so elevation sessions are preserved.
+set -l polkit_pat "hyprpolkitagent|polkit-kde-authentication-agent-1|polkit-gnome-authentication-agent-1|polkit-mate-authentication-agent-1|pantheon-polkit-agent|lxpolkit"
+if test -n "$POLKIT_AGENT_PATTERN"
+    set polkit_pat "$POLKIT_AGENT_PATTERN|$polkit_pat"
+end
+if test -n "$POLKIT_AGENT_BIN"
+    set -l custom_name (basename "$POLKIT_AGENT_BIN")
+    set polkit_pat "$custom_name|$polkit_pat"
+end
+
+set -l existing_polkit ""
+for pid in (pgrep -u (id -u) -f "$polkit_pat" 2>/dev/null)
+    if test "$pid" = $fish_pid
+        continue
+    end
+    set -l comm (cat /proc/$pid/comm 2>/dev/null)
+    if test "$comm" = fish -o "$comm" = bash -o "$comm" = sh
+        continue
+    end
+    set existing_polkit $pid
+    break
+end
+if test -z "$existing_polkit"
+    set -l candidate_agents \
+        "$POLKIT_AGENT_BIN" \
+        /usr/lib/hyprpolkitagent \
+        (command -v hyprpolkitagent 2>/dev/null) \
+        /usr/lib/polkit-kde-authentication-agent-1 \
+        /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
+        /usr/libexec/polkit-gnome-authentication-agent-1 \
+        /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+        /usr/lib/pantheon-polkit-agent
+    set -l polkit_started 0
+    for agent in $candidate_agents
+        if test -n "$agent" -a -x "$agent"
+            nohup "$agent" >/tmp/polkit-agent.log 2>&1 &
+            disown
+            set polkit_started 1
+            log "started polkit agent: $agent"
+            break
+        end
+    end
+    if test $polkit_started -eq 0
+        log "WARN: no polkit authentication agent binary found on system"
+    end
+else
+    log "polkit agent already active (pid $existing_polkit) - not duplicating"
+end
+
 # 2. Start the wallpaper daemon before extracting the initial palette.
 if not pgrep -x awww-daemon >/dev/null 2>&1
     nohup awww-daemon >/tmp/awww-daemon.log 2>&1 &
