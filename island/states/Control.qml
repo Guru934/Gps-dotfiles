@@ -736,6 +736,7 @@ Item {
 
         Layout.fillWidth: true
         Layout.preferredHeight: 54
+        implicitHeight: 54
         radius: Theme.radiusCard
         opacity: tileAvailable ? 1.0 : 0.45
         activeFocusOnTab: tileAvailable && tileInteractable
@@ -1278,6 +1279,7 @@ Item {
             contentHeight: controlContent.implicitHeight
             interactive: contentHeight > height
             boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
             ColumnLayout {
                 id: controlContent
@@ -1564,7 +1566,11 @@ Item {
                         model: st.visibleTiles
                         delegate: Loader {
                             required property var modelData
+                            required property int index
                             Layout.fillWidth: true
+                            Layout.preferredHeight: 54
+                            Layout.row: Math.floor(index / 2)
+                            Layout.column: index % 2
                             sourceComponent: {
                                 switch (modelData.id) {
                                     case "wifi": return compWifi;

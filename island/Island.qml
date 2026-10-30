@@ -1593,7 +1593,7 @@ Scope {
         exclusiveZone: 0
         color: "transparent"
         implicitWidth: 560
-        implicitHeight: 420
+        implicitHeight: 580
         mask: Region { item: pill }
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "island"
