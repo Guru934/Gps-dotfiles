@@ -1273,7 +1273,7 @@ Item {
         property bool dim: false
         property bool faint: false
         // font.family takes one name; Qt falls back to a similar installed font if it is missing.
-        font.family: mono ? Theme.fontMono : Theme.fontUi
+        font.family: mono ? Theme.fontMono : Theme.fontSans
         font.pixelSize: 13
         color: faint ? Theme.textMuted : (dim ? Theme.textDim : Theme.textMain)
     }
@@ -1532,7 +1532,7 @@ Item {
             selectionColor: Qt.alpha(sf.accent, 0.45)
             selectedTextColor: Theme.onAccent
             font.pixelSize: 13
-            font.family: Theme.fontUi
+            font.family: Theme.fontSans
             clip: true
             selectByMouse: true
             onTextEdited: sf.edited()
@@ -4408,7 +4408,7 @@ Item {
                                 width: parent.width
                                 text: root.mprisLyricsResult ? root.mprisLyricsResult.plain : ""
                                 color: pal.dim
-                                font.family: Theme.fontUi
+                                font.family: Theme.fontSans
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                             }

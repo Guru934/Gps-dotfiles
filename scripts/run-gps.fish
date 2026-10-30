@@ -10,6 +10,11 @@ set -g __done_enabled 0
 
 mkdir -p "$HOME/.config/quickshell"
 
+# Ensure repository-managed user fontconfig is installed
+if not test -e "$HOME/.config/fontconfig/fonts.conf"
+    "$REPO_DIR/scripts/setup-fonts.sh" --no-cache >/dev/null 2>&1; or true
+end
+
 # Visible startup log: every run appends here so a startup failure leaves a
 # trace even after /tmp/qs-gps.log is rotated by the next run.
 function log --argument-names msg

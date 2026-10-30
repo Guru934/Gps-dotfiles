@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GPS Unified Font System Test</title>
+  <style>
+    :root {
+      --bg: #0F131C;
+      --card: #181B25;
+      --text: #DFE2EF;
+      --muted: #BACAC5;
+      --accent: #2DD4BF;
+      --secondary: #DDB8FF;
+      --border: #3C4A46;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: "Plus Jakarta Sans", "Noto Sans", sans-serif;
+      margin: 2rem;
+      line-height: 1.6;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      max-width: 700px;
+    }
+    .mono {
+      font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+    }
+    .icon {
+      font-family: "Material Symbols Rounded", sans-serif;
+      font-size: 24px;
+      vertical-align: middle;
+      color: var(--accent);
+    }
+    .section {
+      margin-bottom: 1.2rem;
+    }
+    h2 {
+      color: var(--accent);
+      margin-top: 0;
+    }
+    .tag {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .sample {
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>GPS Unified Font System Live Test</h2>
+    <div class="section">
+      <div class="tag mono">English (UI Sans / fontSans)</div>
+      <div class="sample">GPS Desktop — Aetheric Shell v2 typography test</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">English (Developer Monospace / fontMono)</div>
+      <div class="sample mono">const fontSystem = { sans: "Plus Jakarta Sans", mono: "JetBrains Mono" };</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Hindi / Devanagari Conjuncts (Noto Sans Devanagari)</div>
+      <div class="sample">नमस्ते दुनिया, क्षत्रिय, प्रौद्योगिकी (राष्ट्र, धर्म, कृष्ण, विद्या)</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Japanese (Noto Sans CJK JP)</div>
+      <div class="sample">こんにちは、アニメーション (進撃の巨人、君の名は。)</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Korean (Noto Sans CJK KR)</div>
+      <div class="sample">안녕하세요, 애니메이션 (나 혼자만 레벨업, 귀멸의 칼날)</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Emoji (Noto Color Emoji)</div>
+      <div class="sample">🚀 🎨 🎧 🔒 ⚡ ☕ 🌐 💡</div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Material Symbols Rounded</div>
+      <div>
+        <span class="icon">search</span> search &nbsp;
+        <span class="icon">settings</span> settings &nbsp;
+        <span class="icon">check</span> check &nbsp;
+        <span class="icon">play_arrow</span> play &nbsp;
+        <span class="icon">volume_up</span> volume
+      </div>
+    </div>
+    <div class="section">
+      <div class="tag mono">Nerd Font Glyphs (JetBrainsMono Nerd Font)</div>
+      <div class="sample mono" style="color: var(--secondary);">
+        󰕾 volume &nbsp; 󰂚 bell &nbsp; 󰁹 battery &nbsp; 󰖨 brightness &nbsp; 󰆴 delete &nbsp; 󰥔 clock
+      </div>
+    </div>
+  </div>
+</body>
+</html>

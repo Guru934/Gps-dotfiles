@@ -1,0 +1,28 @@
+=== GPS Desktop Font Verification Samples ===
+
+[English - UI Sans]
+GPS Desktop — Aetheric Shell v2
+
+[English - Monospace]
+const fontSystem = { sans: "Plus Jakarta Sans", mono: "JetBrains Mono" };
+
+[Hindi / Devanagari Conjuncts]
+नमस्ते दुनिया, क्षत्रिय, प्रौद्योगिकी
+संयुक्त वर्ण: धर्म, कर्म, कृष्ण, विद्या, राष्ट्र, स्वतंत्रता
+
+[Japanese / CJK JP]
+こんにちは、アニメーション
+進撃の巨人、新世紀エヴァンゲリオン、君の名は。
+
+[Korean / CJK KR]
+안녕하세요, 애니메이션
+나 혼자만 레벨업, 귀멸의 칼날, 센과 치히로의 행방불명
+
+[Emoji]
+🚀 🎨 🎧 🔒 ⚡ ☕ 🌐 💡
+
+[Material Symbols Ligatures]
+search settings close check play_arrow volume_up download favorite
+
+[Nerd Font Glyphs]
+󰕾 (volume)  󰂚 (bell)  󰁹 (battery)  󰖨 (brightness)  󰆴 (delete)  󰥔 (clock)  󰐥 (power)
