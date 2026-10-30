@@ -110,6 +110,9 @@ Super + Shift + R  Toggle screen recording (hardware accelerated via
                    gpu-screen-recorder). Saves to ~/Videos/Recordings.
                    Ctrl + Print also toggles recording.
                    gps-record toggle
+Super + Shift + P  Colour picker: pick screen pixel with hyprpicker, copy HEX
+                   to clipboard, and notify with visual colour swatch.
+                   gps-picker
 
 
 ------------------------------------------------------------------------

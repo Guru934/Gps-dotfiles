@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# ============================================================================
+# gps-picker — GPS Screen Colour Picker
+# Uses hyprpicker to select a pixel color, copy to clipboard, and notify
+# ============================================================================
+set -euo pipefail
+
+HYPRPICKER_BIN="${GPS_HYPRPICKER_BIN:-hyprpicker}"
+WL_COPY_BIN="${GPS_WL_COPY_BIN:-wl-copy}"
+NOTIFY_BIN="${GPS_NOTIFY_SEND_BIN:-notify-send}"
+
+# 1. Graceful tool availability check
+if ! command -v "$HYPRPICKER_BIN" >/dev/null 2>&1; then
+    MSG="hyprpicker is required for colour picking but not installed. Install with: sudo pacman -S hyprpicker"
+    echo "Error: $MSG" >&2
+    if command -v "$NOTIFY_BIN" >/dev/null 2>&1; then
+        "$NOTIFY_BIN" -u critical -a "GPS Picker" "hyprpicker Not Found" "Install with: sudo pacman -S hyprpicker" 2>/dev/null || true
+    fi
+    exit 1
+fi
+
+# 2. Interactive colour selection
+# hyprpicker outputs the hex code or exits with non-zero if cancelled (Esc)
+RAW_COLOR=""
+if ! RAW_COLOR=$("$HYPRPICKER_BIN" -f hex 2>/dev/null); then
+    # User cancelled (e.g. Esc)
+    exit 0
+fi
+
+# Trim whitespace
+RAW_COLOR="$(printf '%s' "$RAW_COLOR" | tr -d '[:space:]')"
+
+if [[ -z "$RAW_COLOR" ]]; then
+    exit 0
+fi
+
+# Ensure leading '#' and uppercase HEX
+HEX="${RAW_COLOR}"
+if [[ "${HEX:0:1}" != "#" ]]; then
+    HEX="#${HEX}"
+fi
+HEX="$(printf '%s' "$HEX" | tr '[:lower:]' '[:upper:]')"
+
+# Validate format: #RRGGBB or #RRGGBBAA
+if ! [[ "$HEX" =~ ^#[0-9A-F]{6}([0-9A-F]{2})?$ ]]; then
+    echo "Error: Invalid hex color received: $RAW_COLOR" >&2
+    exit 1
+fi
+
+# 3. Copy to clipboard
+if command -v "$WL_COPY_BIN" >/dev/null 2>&1; then
+    printf '%s' "$HEX" | "$WL_COPY_BIN" 2>/dev/null || true
+fi
+
+# 4. Generate colour swatch SVG for notification
+SWATCH_DIR="${XDG_RUNTIME_DIR:-/tmp}/gps"
+mkdir -m 0700 -p "$SWATCH_DIR" 2>/dev/null || true
+SWATCH_FILE="${SWATCH_DIR}/swatch_${HEX:1}.svg"
+
+cat <<EOF > "$SWATCH_FILE"
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="${HEX}"/>
+  <rect width="62" height="62" x="1" y="1" rx="13" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"/>
+</svg>
+EOF
+
+# 5. Send notification with swatch and HEX value
+if command -v "$NOTIFY_BIN" >/dev/null 2>&1; then
+    "$NOTIFY_BIN" \
+        -a "GPS Picker" \
+        -i "$SWATCH_FILE" \
+        "Color Picked" \
+        "$HEX copied to clipboard" 2>/dev/null || true
+fi
+
+echo "$HEX"
+exit 0

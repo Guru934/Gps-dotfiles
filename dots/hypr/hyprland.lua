@@ -328,6 +328,9 @@ hl.bind("ALT + Print",   hl.dsp.exec_cmd(repo .. "/scripts/gps-shot window"))
 hl.bind("CONTROL + Print",         hl.dsp.exec_cmd(repo .. "/scripts/gps-record toggle"))
 hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd(repo .. "/scripts/gps-record toggle"))
 
+-- Screen colour picker (Super+Shift+P)
+hl.bind(mainMod .. " + SHIFT + P", hl.dsp.exec_cmd(repo .. "/scripts/gps-picker"))
+
 
 --------------------------------
 ---- WINDOWS AND WORKSPACES ----
