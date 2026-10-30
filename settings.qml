@@ -282,7 +282,7 @@ ShellRoot {
             try {
                 const parsed = JSON.parse(text())
                 if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                    root.store = Object.assign({ hypr: {}, monitors: {}, ai: {} }, parsed)
+                    root.store = Object.assign({ hypr: {}, monitors: {}, ai: {}, sound: {}, events: {} }, parsed)
                 }
             } catch (e) {}
         }
@@ -550,6 +550,36 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
         queueSave(); after(900, hyprRefresh)
     }
     function aiSet(k, v) { const s = Object.assign({}, store); s.ai = Object.assign({}, store.ai); s.ai[k] = v; store = s; queueSave() }
+    readonly property var soundCfg: store.sound || ({})
+    readonly property var eventsCfg: store.events || ({})
+    function soundSet(k, v) {
+        const s = Object.assign({}, store)
+        s.sound = Object.assign({}, store.sound || {})
+        s.sound[k] = v
+        store = s
+        queueSave()
+    }
+    function soundEventSet(ev, enabled) {
+        const s = Object.assign({}, store)
+        s.sound = Object.assign({}, store.sound || {})
+        s.sound.events = Object.assign({}, s.sound.events || {})
+        s.sound.events[ev] = Object.assign({}, s.sound.events[ev] || {}, { enabled: enabled })
+        store = s
+        queueSave()
+    }
+    function eventSet(k, v) {
+        const s = Object.assign({}, store)
+        s.events = Object.assign({}, store.events || {})
+        s.events[k] = v
+        store = s
+        queueSave()
+    }
+    function isSoundEventEnabled(ev) {
+        if (store.sound && store.sound.events && store.sound.events[ev]) {
+            return store.sound.events[ev].enabled !== false
+        }
+        return true
+    }
 
     // ═══════════════════════════ widgets ═══════════════════════════
     component T: Text { color: pal.text; font.family: root.uiFont; font.pixelSize: 13; elide: Text.ElideRight }
@@ -773,7 +803,8 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
         { icon: "psychology", title: "AI & Models", sub: "Local inference engines and models" },
         { icon: "keyboard_command_key", title: "Keybinds", sub: "Every bind Hyprland has loaded" },
         { icon: "memory", title: "System", sub: "Services, tools, config integration" },
-        { icon: "health_and_safety", title: "System Health", sub: "Session essentials and doctor diagnostics" }
+        { icon: "health_and_safety", title: "System Health", sub: "Session essentials and doctor diagnostics" },
+        { icon: "notifications_active", title: "Sound & Events", sub: "Desktop sound engine, event triggers, power thresholds" }
     ]
 
     IpcHandler {
@@ -1235,6 +1266,65 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // ════════ 11 · SOUND & EVENTS ════════
+                    PageBase {
+                        Card { title: "Sound Engine"; icon: "volume_up"; badge: root.soundCfg.muted ? "Muted" : "Active"
+                            SRow { label: "Master mute"; desc: "Silence all notification and event sounds"
+                                Tgl { on: !!root.soundCfg.muted; onFlipped: v => root.soundSet("muted", v) } }
+                            SRow { label: "Sound system enabled"; desc: "Global sound effects master switch"
+                                Tgl { on: root.soundCfg.enabled !== false; onFlipped: v => root.soundSet("enabled", v) } }
+                            SRow { label: "Master volume"; desc: "Playback volume for system sounds"
+                                Dim { text: Math.round((root.soundCfg.volume !== undefined ? root.soundCfg.volume : 0.8) * 100) + "%"; Layout.preferredWidth: 44; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 240; from: 0; to: 1.0; step: 0.05; value: root.soundCfg.volume !== undefined ? root.soundCfg.volume : 0.8
+                                    onCommitted: v => root.soundSet("volume", Math.round(v * 100) / 100) } }
+                            SRow { label: "Volume cap"; desc: "Maximum allowed volume limit across all sound events"
+                                Dim { text: Math.round((root.soundCfg.volumeCap !== undefined ? root.soundCfg.volumeCap : 1.0) * 100) + "%"; Layout.preferredWidth: 44; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 240; from: 0; to: 1.0; step: 0.05; value: root.soundCfg.volumeCap !== undefined ? root.soundCfg.volumeCap : 1.0
+                                    onCommitted: v => root.soundSet("volumeCap", Math.round(v * 100) / 100) } }
+                        }
+
+                        Card { title: "Power Events"; icon: "bolt"; badge: (root.eventsCfg.batteryLowThreshold || 20) + "% / " + (root.eventsCfg.batteryCriticalThreshold || 8) + "%"
+                            SRow { label: "Battery low threshold"; desc: "Crossing percentage for low battery warning"
+                                Dim { text: (root.eventsCfg.batteryLowThreshold || 20) + "%"; Layout.preferredWidth: 44; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 240; from: 10; to: 40; step: 1; value: root.eventsCfg.batteryLowThreshold || 20
+                                    onCommitted: v => root.eventSet("batteryLowThreshold", Math.round(v)) } }
+                            SRow { label: "Battery critical threshold"; desc: "Crossing percentage for urgent critical alert (bypasses DND)"
+                                Dim { text: (root.eventsCfg.batteryCriticalThreshold || 8) + "%"; Layout.preferredWidth: 44; horizontalAlignment: Text.AlignRight }
+                                Sld { Layout.preferredWidth: 240; from: 3; to: 15; step: 1; value: root.eventsCfg.batteryCriticalThreshold || 8
+                                    onCommitted: v => root.eventSet("batteryCriticalThreshold", Math.round(v)) } }
+                            SRow { label: "Critical action"; desc: "Action taken when battery hits critical threshold"
+                                Chips { model: [{v: "none", l: "None"}, {v: "suspend", l: "Suspend"}]; current: root.eventsCfg.criticalAction || "none"
+                                    onPicked: v => root.eventSet("criticalAction", v) } }
+                            SRow { label: "Fully charged notification"; desc: "Notify when battery reaches 100% on AC"
+                                Tgl { on: root.eventsCfg.notifyFullyCharged !== false; onFlipped: v => root.eventSet("notifyFullyCharged", v) } }
+                            SRow { label: "Power plug / unplug alerts"; desc: "Notify and play sound when charger is connected or disconnected"
+                                Tgl { on: root.eventsCfg.notifyPowerPlug !== false; onFlipped: v => { root.eventSet("notifyPowerPlug", v); root.eventSet("notifyPowerUnplug", v) } } }
+                        }
+
+                        Card { title: "Event Sounds & Triggers"; icon: "tune"
+                            Repeater {
+                                model: [
+                                    { id: "battery-low", label: "Battery Low", desc: "Played when battery crosses low threshold" },
+                                    { id: "critical", label: "Battery Critical", desc: "Urgent alarm for critical battery (bypasses DND)" },
+                                    { id: "plug", label: "Charger Connected", desc: "Played when AC power is plugged in" },
+                                    { id: "unplug", label: "Charger Disconnected", desc: "Played when running on battery" },
+                                    { id: "device-connect", label: "Device Connected", desc: "USB drive or Bluetooth device connected" },
+                                    { id: "device-disconnect", label: "Device Removed", desc: "USB drive or Bluetooth device disconnected" },
+                                    { id: "notification", label: "Notification Chime", desc: "Default notification sound" },
+                                    { id: "dnd-on", label: "Do Not Disturb On", desc: "Played when entering Focus / DND mode" },
+                                    { id: "dnd-off", label: "Do Not Disturb Off", desc: "Played when exiting Focus / DND mode" }
+                                ]
+                                delegate: SRow {
+                                    required property var modelData
+                                    label: modelData.label
+                                    desc: modelData.desc
+                                    Btn { icon: "play_arrow"; text: "Test"; onClicked: root.sh("gps-sound play " + modelData.id + " --force") }
+                                    Tgl { on: root.isSoundEventEnabled(modelData.id); onFlipped: v => root.soundEventSet(modelData.id, v) }
                                 }
                             }
                         }
