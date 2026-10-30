@@ -413,6 +413,221 @@ class BootSplashInstallerTests(unittest.TestCase):
         dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
         self.assertFalse(dest_theme.exists())
 
+    def test_rollback_never_invokes_limine_mkinitcpio(self):
+        """Fix 1: Rollback is purely restorative and must NEVER invoke limine-mkinitcpio."""
+        witness_file = self.fake_root / "limine_mkinitcpio_invoked"
+        limine_spy = self.fake_bin / "limine-mkinitcpio"
+        limine_spy.write_text(
+            f"#!/bin/sh\ntouch \"{witness_file}\"\nexit 0\n",
+            encoding="utf-8"
+        )
+        limine_spy.chmod(0o755)
+
+        self.run_installer("--apply")
+        self.assertFalse(witness_file.exists())
+
+        cmd = [
+            str(INSTALL_SCRIPT),
+            "--root-dir", str(self.fake_root),
+            "--rollback",
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res.returncode, 0, f"Rollback failed: {res.stderr}")
+        self.assertFalse(witness_file.exists(), "limine-mkinitcpio was invoked during rollback!")
+        self.assertNotIn("Resynchronizing boot artifacts", res.stdout)
+        self.assertNotIn("limine-mkinitcpio", res.stdout)
+
+    def test_successful_restoration_preserves_exact_original_initramfs_bytes(self):
+        """Fix 1 & 2: Rollback restores the exact original binary bytes of initramfs images."""
+        target_img = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        binary_data = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03\xed\x9d\x07\x58\x14\x55\x19\xc7\xbf\x3b\xaa\xbb\xcc\xdd"
+        target_img.write_bytes(binary_data)
+
+        self.run_installer("--apply")
+
+        # Mutate the initramfs in /boot
+        target_img.write_bytes(b"\x00\x00\x00_MUTATED_CORRUPTED_INITRAMFS_DATA_123456")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0)
+        self.assertEqual(target_img.read_bytes(), binary_data)
+
+    def test_successful_restoration_preserves_exact_original_limine_conf_bytes(self):
+        """Fix 1 & 2: Rollback preserves exact original limine.conf bytes including comments and custom entries."""
+        complex_limine = (
+            "# Custom Limine Configuration with arbitrary formatting\n"
+            "timeout: 10\n"
+            "default_entry: 2\n\n"
+            "/CachyOS Linux (Zen Kernel)\n"
+            "  protocol: linux\n"
+            "  kernel_path: boot():/vmlinuz-zen\n"
+            "  kernel_cmdline: root=UUID=123 rw quiet splash\n\n"
+            "//Custom Utilities\n"
+            "/Memtest86+\n"
+            "  protocol: efi_chainload\n"
+            "  image_path: boot():/memtest.efi\n"
+        )
+        limine_file = self.fake_boot / "limine.conf"
+        limine_file.write_text(complex_limine, encoding="utf-8")
+
+        self.run_installer("--apply")
+
+        # Mutate limine.conf
+        limine_file.write_text("timeout: 0\n/Corrupted\n  protocol: none\n", encoding="utf-8")
+
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0)
+        self.assertEqual(limine_file.read_text(encoding="utf-8"), complex_limine)
+
+    def test_incomplete_boot_backup_aborts_before_any_system_modification(self):
+        """Fix 2: Incomplete boot backup aborts in Phase B before modifying any system files."""
+        res = self.run_installer("--apply", env={"GPS_TEST_FAIL_VERIFY_BACKUP": "1"})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("Backup verification failed", res.stderr)
+        self.assertIn("System configuration untouched", res.stderr)
+
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        self.assertNotIn("Theme=gps", conf_text)
+
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+        self.assertFalse((self.fake_backups / "latest").exists())
+
+    def test_backup_failure_does_not_leave_plymouthd_conf_modified(self):
+        """Fix 2: Phase A backup failure aborts before modifying plymouthd.conf or installing theme."""
+        res = self.run_installer("--apply", env={"GPS_TEST_FAIL_BACKUP": "1"})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("Phase A backup", res.stderr)
+
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        self.assertNotIn("Theme=gps", conf_text)
+
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+    def test_existing_gps_theme_is_restored_exactly(self):
+        """Fix 3: Existing GPS theme is backed up and restored exactly on rollback."""
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        dest_theme.mkdir(parents=True, exist_ok=True)
+        marker_file = dest_theme / "custom_theme_file.txt"
+        marker_file.write_text("PRE_EXISTING_THEME_CUSTOM_PAYLOAD_V1", encoding="utf-8")
+
+        res_apply = self.run_installer("--apply")
+        self.assertEqual(res_apply.returncode, 0)
+        self.assertFalse(marker_file.exists())
+        self.assertTrue((dest_theme / "gps.plymouth").exists())
+
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0)
+        self.assertTrue(marker_file.exists())
+        self.assertEqual(marker_file.read_text(encoding="utf-8"), "PRE_EXISTING_THEME_CUSTOM_PAYLOAD_V1")
+
+    def test_newly_created_gps_theme_is_removed_on_rollback(self):
+        """Fix 3: When no GPS theme existed before apply, rollback removes the installed theme directory."""
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+        self.run_installer("--apply")
+        self.assertTrue(dest_theme.exists())
+
+        self.run_installer("--rollback")
+        self.assertFalse(dest_theme.exists())
+
+    def test_newly_generated_initramfs_files_are_cleaned_up_safely(self):
+        """Fix 4: Newly generated initramfs artifacts created during apply are cleaned up on rollback."""
+        self.run_installer("--apply")
+
+        # Simulate newly generated boot artifacts created after/during apply
+        new_img = self.fake_boot / "initramfs-linux-fallback.img"
+        new_img.write_text("NEW_FALLBACK_INITRAMFS", encoding="utf-8")
+        new_entry = self.fake_boot / "loader" / "entries" / "new-entry.conf"
+        new_entry.parent.mkdir(parents=True, exist_ok=True)
+        new_entry.write_text("title New Entry\n", encoding="utf-8")
+
+        self.assertTrue(new_img.exists())
+        self.assertTrue(new_entry.exists())
+
+        res_rb = self.run_installer("--rollback")
+        self.assertEqual(res_rb.returncode, 0)
+
+        self.assertFalse(new_img.exists(), "Newly generated initramfs was not pruned on rollback")
+        self.assertFalse(new_entry.exists(), "Newly generated bootloader entry was not pruned on rollback")
+
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        self.assertTrue(target_initramfs.exists())
+        self.assertEqual(target_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
+
+    def test_unrelated_boot_files_are_preserved(self):
+        """Fix 4: Unrelated boot files are preserved through apply and rollback."""
+        win_efi = self.fake_boot / "EFI" / "Microsoft" / "Boot" / "bootmgfw.efi"
+        win_efi.parent.mkdir(parents=True, exist_ok=True)
+        win_efi.write_bytes(b"MOCK_WINDOWS_BOOT_MANAGER_BINARY")
+
+        memtest = self.fake_boot / "memtest86+" / "memtest.bin"
+        memtest.parent.mkdir(parents=True, exist_ok=True)
+        memtest.write_bytes(b"MOCK_MEMTEST_BINARY")
+
+        self.run_installer("--apply")
+        self.run_installer("--rollback")
+
+        self.assertTrue(win_efi.exists())
+        self.assertEqual(win_efi.read_bytes(), b"MOCK_WINDOWS_BOOT_MANAGER_BINARY")
+        self.assertTrue(memtest.exists())
+        self.assertEqual(memtest.read_bytes(), b"MOCK_MEMTEST_BINARY")
+
+    def test_failed_rollback_never_prints_success_message(self):
+        """Fix 5: Failed rollback reports failure clearly and never prints a success message."""
+        nonexistent = self.fake_root / "var" / "backups" / "gps-boot" / "nonexistent_dir"
+        res = self.run_installer("--rollback", str(nonexistent))
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("[SUCCESS]", res.stdout)
+        self.assertNotIn("[SUCCESS]", res.stderr)
+        self.assertIn("Error:", res.stderr)
+
+        corrupt_backup = self.fake_backups / "20261030_999999"
+        corrupt_backup.mkdir(parents=True, exist_ok=True)
+        res_corrupt = self.run_installer("--rollback", str(corrupt_backup))
+        self.assertNotEqual(res_corrupt.returncode, 0)
+        self.assertNotIn("[SUCCESS]", res_corrupt.stdout)
+        self.assertNotIn("[SUCCESS]", res_corrupt.stderr)
+        self.assertIn("Backup manifest not found", res_corrupt.stderr)
+
+    def test_repeated_rollback_remains_safe(self):
+        """Fix 5: Repeated rollback remains safe and idempotent without error."""
+        self.run_installer("--apply")
+        res1 = self.run_installer("--rollback")
+        self.assertEqual(res1.returncode, 0)
+        res2 = self.run_installer("--rollback")
+        self.assertEqual(res2.returncode, 0)
+
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+    def test_failed_apply_restores_all_original_files_when_backup_is_valid(self):
+        """Fix 5: Failed apply in Phase C restores all original files when backup is valid."""
+        res = self.run_installer("--apply", env={"GPS_TEST_FAIL_AFTER_COPY": "1"})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("FAILURE DETECTED", res.stderr)
+        self.assertIn("Initiating automatic emergency rollback", res.stderr)
+
+        dest_theme = self.fake_share / "plymouth" / "themes" / "gps"
+        self.assertFalse(dest_theme.exists())
+
+        conf_text = (self.fake_etc / "plymouth" / "plymouthd.conf").read_text(encoding="utf-8")
+        self.assertIn("Theme=cachyos-bootanimation", conf_text)
+        self.assertNotIn("Theme=gps", conf_text)
+
+        limine_text = (self.fake_boot / "limine.conf").read_text(encoding="utf-8")
+        self.assertEqual(limine_text, self.initial_limine_conf)
+
+        target_initramfs = self.fake_boot / "d539a1316b0543e0b082edcf8cffe442" / "linux-cachyos" / "initramfs"
+        self.assertEqual(target_initramfs.read_text(encoding="utf-8"), self.initial_initramfs_data)
+
 
 if __name__ == "__main__":
     unittest.main()

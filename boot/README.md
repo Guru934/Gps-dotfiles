@@ -163,17 +163,25 @@ sudo ./boot/install-splash.sh --apply
 ```
 
 What `--apply` executes:
-1. Verifies Plymouth installation, `two-step.so` module, source theme files, and verified Limine integration (`limine-mkinitcpio`).
-2. Performs encryption safety checks (verifies `plymouth` precedes `sd-encrypt`/`encrypt`).
-3. Creates a timestamped backup directory under `/var/backups/gps-boot/<timestamp>/` including `/etc` configuration, `/boot/limine.conf`, and existing initramfs images from `/boot`.
-4. Copies theme assets to `/usr/share/plymouth/themes/gps/`.
-5. Updates `/etc/plymouth/plymouthd.conf` with `[Daemon] Theme=gps`.
-6. Verifies mkinitcpio hook configuration (already present in the correct position).
-7. Writes a restoration `manifest.json`.
-8. Regenerates initramfs and synchronizes Limine boot entries via the verified command:
-   ```bash
-   sudo limine-mkinitcpio
-   ```
+1. **System Invariant Validation**: Verifies Plymouth installation, `two-step.so` module, source theme files, verified Limine integration (`limine-mkinitcpio`), and encryption hook ordering.
+2. **Phase A (Backup & Pre-apply Inventory)**:
+   - Takes a complete inventory of all files present on the separate `/boot` partition.
+   - Archives any pre-existing GPS theme in `/usr/share/plymouth/themes/gps/`.
+   - Archives system configurations (`/etc/plymouth/plymouthd.conf`, `/etc/mkinitcpio.conf`, `/etc/default/limine`, `/etc/default/grub`).
+   - Archives all supported Limine configs (`/boot/limine.conf`, etc.) and all existing binary initramfs images from `/boot/`.
+3. **Phase B (Verify)**:
+   - Validates that every backed up file exists, is readable, and non-empty.
+   - Writes and validates the restoration `manifest.json`.
+   - Updates the `/var/backups/gps-boot/latest` pointer only after verification succeeds.
+   - If any verification check fails, apply aborts before changing a single system file.
+4. **Phase C (Apply Modifications)**:
+   - Arms an automatic emergency rollback trap (`trap cleanup_on_apply_failure ERR`).
+   - Updates `/etc/plymouth/plymouthd.conf` with `[Daemon] Theme=gps`.
+   - Cleans and installs the theme package to `/usr/share/plymouth/themes/gps/`.
+   - Injects the `plymouth` hook into `/etc/mkinitcpio.conf` if not present.
+   - Adds `splash` kernel parameter if missing.
+   - Regenerates initramfs and synchronizes Limine boot entries via `sudo limine-mkinitcpio`.
+   - Disarms the emergency rollback trap upon successful completion.
 
 ### Step 3: Verify Installation
 ```bash
@@ -200,10 +208,11 @@ sudo ./boot/install-splash.sh --rollback /var/backups/gps-boot/20261030_XXXXXX
 What rollback executes:
 1. Restores the original `/etc/plymouth/plymouthd.conf` (re-activating `cachyos-bootanimation`).
 2. Restores `/etc/mkinitcpio.conf` if it was modified.
-3. Restores bootloader configuration in `/etc/default/limine` if modified.
-4. Restores `/boot/limine.conf` and the exact original initramfs images on the separate `/boot` partition.
-5. Removes `/usr/share/plymouth/themes/gps`.
-6. Resynchronizes Limine boot artifacts via `limine-mkinitcpio`.
+3. Restores bootloader configuration in `/etc/default/limine` and `/etc/default/grub` if modified.
+4. Restores `/boot/limine.conf` and the exact original binary initramfs images directly on the separate `/boot` partition.
+5. Prunes any new boot artifacts created during apply that were not in the pre-apply inventory.
+6. Restores the pre-existing GPS theme if one existed before apply, or removes `/usr/share/plymouth/themes/gps/`.
+7. **Purely Restorative Guarantee**: The verified bit-for-bit binary images and bootloader configurations are restored directly from backup. `limine-mkinitcpio` is **never executed during rollback**, eliminating any compiler, packaging, or hook failure risk during recovery.
 
 ---
 

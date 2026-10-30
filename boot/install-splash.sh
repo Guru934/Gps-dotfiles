@@ -70,7 +70,10 @@ Safety Invariants:
     and hook ordering or graphical unlock flow cannot be positively verified.
   - Backups: every modified file is saved to /var/backups/gps-boot/<timestamp>/
     with an exact restoration manifest before any modification takes place.
-  - Idempotency: repeated --apply calls produce identical state without duplicates.
+  - Phase-separated Apply: Phase A (Backup & Inventory) -> Phase B (Verify) -> Phase C (Apply).
+  - Purely Restorative Rollback: restores bit-for-bit initramfs and bootloader
+    configuration from backup without regeneration.
+  - Idempotency: repeated --apply or --rollback calls produce valid state without duplicates.
 EOF
 }
 
@@ -514,28 +517,29 @@ do_dry_run() {
 
     printf "%bProposed Actions on --apply:%b\n" "$C_BOLD" "$C_RESET"
     printf "  1. Verify Plymouth installation, two-step plugin, and Limine integration command.\n"
-    printf "  2. Create timestamped backup of /etc and separate /boot files (limine.conf, existing initramfs) under:\n     -> %s/<timestamp>/\n" "${BACKUP_BASE_DIR}"
-    printf "  3. Install GPS Plymouth theme files to:\n     -> %s\n" "${DEST_THEME_DIR}"
-    printf "  4. Update Plymouth daemon configuration:\n     -> %s (Set [Daemon] Theme=%s)\n" "${PLYMOUTHD_CONF}" "${THEME_NAME}"
+    printf "  2. Phase A (Backup): Create timestamped backup of /etc and separate /boot files (limine.conf, existing initramfs) under:\n     -> %s/<timestamp>/\n" "${BACKUP_BASE_DIR}"
+    printf "  3. Phase B (Verify): Validate backup completeness, readable initramfs, and write manifest before any system changes.\n"
+    printf "  4. Phase C (Apply): Install GPS Plymouth theme files to:\n     -> %s\n" "${DEST_THEME_DIR}"
+    printf "  5. Phase C (Apply): Update Plymouth daemon configuration:\n     -> %s (Set [Daemon] Theme=%s)\n" "${PLYMOUTHD_CONF}" "${THEME_NAME}"
 
     if [[ "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" && -f "${MKINITCPIO_CONF}" ]]; then
         local hooks_line
         hooks_line="$(grep -E '^\s*HOOKS=\(' "${MKINITCPIO_CONF}" 2>/dev/null || true)"
         if echo "${hooks_line}" | grep -q '\bplymouth\b'; then
-            printf "  5. mkinitcpio hook status: 'plymouth' hook is ALREADY PRESENT in %s (no edit required).\n" "${MKINITCPIO_CONF}"
+            printf "  6. mkinitcpio hook status: 'plymouth' hook is ALREADY PRESENT in %s (no edit required).\n" "${MKINITCPIO_CONF}"
         else
-            printf "  5. mkinitcpio hook status: will inject 'plymouth' into HOOKS=() in %s\n" "${MKINITCPIO_CONF}"
+            printf "  6. mkinitcpio hook status: will inject 'plymouth' into HOOKS=() in %s\n" "${MKINITCPIO_CONF}"
         fi
     fi
 
     if [[ "${CMDLINE_HAS_SPLASH}" == "true" && "${CMDLINE_HAS_QUIET}" == "true" ]]; then
-        printf "  6. Kernel command-line parameters: 'quiet' and 'splash' are ALREADY CONFIGURED (no edit required).\n"
+        printf "  7. Kernel command-line parameters: 'quiet' and 'splash' are ALREADY CONFIGURED (no edit required).\n"
     else
-        printf "  6. Kernel command-line parameters: will add missing 'quiet' / 'splash' parameters to %s config.\n" "${DETECTED_BOOTLOADER}"
+        printf "  7. Kernel command-line parameters: will add missing 'quiet' / 'splash' parameters to %s config.\n" "${DETECTED_BOOTLOADER}"
     fi
 
     if [[ "${NO_INITRD_REBUILD}" == "false" ]]; then
-        printf "  7. Regenerate initramfs and update bootloader entries:\n"
+        printf "  8. Regenerate initramfs and update bootloader entries:\n"
         if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
             printf "     -> Verified Command: %bsudo limine-mkinitcpio%b\n" "$C_BOLD" "$C_RESET"
         elif [[ "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
@@ -544,6 +548,11 @@ do_dry_run() {
             printf "     -> Command: %bsudo update-initramfs%b\n" "$C_BOLD" "$C_RESET"
         fi
     fi
+
+    printf "\n%bRecovery Invariants:%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
+    printf "  - Rollback is purely restorative: bit-for-bit initramfs and bootloader files are\n"
+    printf "    restored directly from backup. 'limine-mkinitcpio' is NEVER run during rollback.\n"
+    printf "  - The backup archive is the single source of recovery truth.\n"
 
     printf "\n%bExact Manual Execution Commands for THIS Machine:%b\n" "$C_BOLD$C_GREEN" "$C_RESET"
     printf "  1. Take dedicated non-expiring Snapper snapshot (omits timeline cleanup):\n"
@@ -597,49 +606,82 @@ do_apply() {
         fi
     fi
 
+    printf "%b=== Applying GPS Plymouth Boot Splash Theme ===%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
+
+    # =========================================================================
+    # PHASE A: Backup & Pre-apply Inventory
+    # Back up every existing file or directory that might be modified.
+    # Record inventory of all files before any modification begins.
+    # =========================================================================
+    printf "%b--- Phase A: Creating Full System & Bootloader Backup ---%b\n" "$C_CYAN" "$C_RESET"
+
     local timestamp
     timestamp="$(date +%Y%m%d_%H%M%S)"
     local backup_dir="${BACKUP_BASE_DIR}/${timestamp}"
     mkdir -p "${backup_dir}"
-
-    local modified_plymouthd=false
-    local modified_mkinitcpio=false
-    local modified_bootloader=false
-    local had_preexisting_theme=false
-    local backed_up_files=()
-
-    printf "%b=== Applying GPS Plymouth Boot Splash Theme ===%b\n" "$C_BOLD$C_CYAN" "$C_RESET"
     printf "Backup directory created at: %s\n" "${backup_dir}"
 
-    # Error recovery trap: automatically roll back on any failure during apply
-    local apply_in_progress=true
-    cleanup_on_apply_failure() {
-        if [[ "${apply_in_progress}" == "true" ]]; then
-            printf "\n%b[FAILURE DETECTED] Error encountered during apply! Initiating automatic emergency rollback...%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
-            apply_in_progress=false
-            ROLLBACK_TARGET="${backup_dir}"
-            do_rollback || true
-            printf "%b[RESTORED] System safely rolled back to pre-apply state.%b\n" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
-        fi
-    }
-    trap cleanup_on_apply_failure ERR
+    if [[ "${GPS_TEST_FAIL_BACKUP:-0}" == "1" ]]; then
+        printf "%bError: Simulated failure during Phase A backup.%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+        rm -rf "${backup_dir}"
+        exit 1
+    fi
+
+    local had_preexisting_theme=false
+    local had_plymouthd=false
+    local had_mkinitcpio=false
+    local had_limine_default=false
+    local had_grub_default=false
+    local backed_up_files=()
+    local backed_up_boot_configs=()
+    local backed_up_initramfs=()
+    local backup_list_file="${backup_dir}/.backed_up_list"
+    : > "${backup_list_file}"
 
     # 1. Back up existing theme directory if present
     if [[ -d "${DEST_THEME_DIR}" ]]; then
         had_preexisting_theme=true
         cp -a "${DEST_THEME_DIR}" "${backup_dir}/theme_gps_preexisting"
         backed_up_files+=("${DEST_THEME_DIR}")
+        echo "${DEST_THEME_DIR}" >> "${backup_list_file}"
+        printf "Backed up pre-existing GPS theme: %s\n" "${DEST_THEME_DIR}"
     fi
 
-    # 2. Back up and update plymouthd.conf
+    # 2. Back up plymouthd.conf
     if [[ -f "${PLYMOUTHD_CONF}" ]]; then
+        had_plymouthd=true
         cp -a "${PLYMOUTHD_CONF}" "${backup_dir}/plymouthd.conf.orig"
         backed_up_files+=("${PLYMOUTHD_CONF}")
+        echo "${PLYMOUTHD_CONF}" >> "${backup_list_file}"
+        printf "Backed up Plymouth daemon config: %s\n" "${PLYMOUTHD_CONF}"
     fi
-    set_plymouthd_theme "${PLYMOUTHD_CONF}" "${THEME_NAME}"
-    modified_plymouthd=true
 
-    # 3. Back up /boot partition files (limine configs and initramfs images)
+    # 3. Back up mkinitcpio.conf
+    if [[ -f "${MKINITCPIO_CONF}" ]]; then
+        had_mkinitcpio=true
+        cp -a "${MKINITCPIO_CONF}" "${backup_dir}/mkinitcpio.conf.orig"
+        backed_up_files+=("${MKINITCPIO_CONF}")
+        echo "${MKINITCPIO_CONF}" >> "${backup_list_file}"
+        printf "Backed up mkinitcpio config: %s\n" "${MKINITCPIO_CONF}"
+    fi
+
+    # 4. Back up bootloader defaults
+    if [[ -f "${LIMINE_DEFAULT_CONF}" ]]; then
+        had_limine_default=true
+        cp -a "${LIMINE_DEFAULT_CONF}" "${backup_dir}/limine.default.orig"
+        backed_up_files+=("${LIMINE_DEFAULT_CONF}")
+        echo "${LIMINE_DEFAULT_CONF}" >> "${backup_list_file}"
+        printf "Backed up Limine default config: %s\n" "${LIMINE_DEFAULT_CONF}"
+    fi
+    if [[ -f "${GRUB_DEFAULT_CONF}" ]]; then
+        had_grub_default=true
+        cp -a "${GRUB_DEFAULT_CONF}" "${backup_dir}/grub.default.orig"
+        backed_up_files+=("${GRUB_DEFAULT_CONF}")
+        echo "${GRUB_DEFAULT_CONF}" >> "${backup_list_file}"
+        printf "Backed up GRUB default config: %s\n" "${GRUB_DEFAULT_CONF}"
+    fi
+
+    # 5. Back up /boot partition configs (Limine config files)
     local boot_backup_dir="${backup_dir}/boot"
     mkdir -p "${boot_backup_dir}"
     for lconf in "${BOOT_DIR}/limine.conf" "${BOOT_DIR}/limine.cfg" "${BOOT_DIR}/EFI/limine/limine.conf" "${BOOT_DIR}/limine/limine.conf"; do
@@ -648,10 +690,13 @@ do_apply() {
             mkdir -p "${boot_backup_dir}/$(dirname "${rel_lconf}")"
             cp -a "$lconf" "${boot_backup_dir}/${rel_lconf}"
             backed_up_files+=("$lconf")
+            backed_up_boot_configs+=("$lconf")
+            echo "$lconf" >> "${backup_list_file}"
             printf "Backed up bootloader config: %s\n" "$lconf"
         fi
     done
 
+    # 6. Back up /boot partition initramfs images
     local initramfs_backup_dir="${boot_backup_dir}/initramfs"
     mkdir -p "${initramfs_backup_dir}"
     if [[ -d "${BOOT_DIR}" ]]; then
@@ -661,15 +706,214 @@ do_apply() {
             mkdir -p "$(dirname "${dest_copy}")"
             cp -a "$img" "${dest_copy}"
             backed_up_files+=("$img")
+            backed_up_initramfs+=("$img")
+            echo "$img" >> "${backup_list_file}"
             printf "Backed up boot initramfs image: %s\n" "$img"
         done < <(find "${BOOT_DIR}" -type f \( -name "initramfs*" -o -name "*initrd*" -o -name "*.img" \) -print0 2>/dev/null || true)
     fi
 
-    # 4. Copy theme package to destination
+    # =========================================================================
+    # PHASE B: Verify Backup Completeness & Integrity
+    # Before modifying ANY target system file, verify all expected backup files
+    # exist, are readable, non-empty, and write & validate manifest.json.
+    # =========================================================================
+    printf "%b--- Phase B: Verifying Backup Completeness & Writing Manifest ---%b\n" "$C_CYAN" "$C_RESET"
+
+    local verify_ok=true
+    local verify_err=""
+
+    if [[ "${GPS_TEST_FAIL_VERIFY_BACKUP:-0}" == "1" ]]; then
+        verify_ok=false
+        verify_err="Simulated verification failure (GPS_TEST_FAIL_VERIFY_BACKUP=1)"
+    fi
+
+    if [[ "${verify_ok}" == "true" && "${had_preexisting_theme}" == "true" ]]; then
+        if [[ ! -d "${backup_dir}/theme_gps_preexisting" ]]; then
+            verify_ok=false
+            verify_err="Pre-existing theme backup directory missing in ${backup_dir}"
+        fi
+    fi
+
+    if [[ "${verify_ok}" == "true" && "${had_plymouthd}" == "true" ]]; then
+        if [[ ! -f "${backup_dir}/plymouthd.conf.orig" || ! -r "${backup_dir}/plymouthd.conf.orig" ]]; then
+            verify_ok=false
+            verify_err="plymouthd.conf backup file missing or unreadable in ${backup_dir}"
+        fi
+    fi
+
+    if [[ "${verify_ok}" == "true" && "${had_mkinitcpio}" == "true" ]]; then
+        if [[ ! -f "${backup_dir}/mkinitcpio.conf.orig" || ! -r "${backup_dir}/mkinitcpio.conf.orig" ]]; then
+            verify_ok=false
+            verify_err="mkinitcpio.conf backup file missing or unreadable in ${backup_dir}"
+        fi
+    fi
+
+    if [[ "${verify_ok}" == "true" && "${had_limine_default}" == "true" ]]; then
+        if [[ ! -f "${backup_dir}/limine.default.orig" || ! -r "${backup_dir}/limine.default.orig" ]]; then
+            verify_ok=false
+            verify_err="limine default backup file missing or unreadable in ${backup_dir}"
+        fi
+    fi
+
+    if [[ "${verify_ok}" == "true" && "${had_grub_default}" == "true" ]]; then
+        if [[ ! -f "${backup_dir}/grub.default.orig" || ! -r "${backup_dir}/grub.default.orig" ]]; then
+            verify_ok=false
+            verify_err="grub default backup file missing or unreadable in ${backup_dir}"
+        fi
+    fi
+
+    # Verify bootloader config backups
+    if [[ "${verify_ok}" == "true" ]]; then
+        for b_src in "${backed_up_boot_configs[@]+"${backed_up_boot_configs[@]}"}"; do
+            local rel_src="${b_src#"${BOOT_DIR}/"}"
+            local b_dest="${boot_backup_dir}/${rel_src}"
+            if [[ ! -f "$b_dest" || ! -r "$b_dest" ]]; then
+                verify_ok=false
+                verify_err="Bootloader config backup missing or unreadable: ${b_dest}"
+                break
+            fi
+        done
+    fi
+
+    # Verify initramfs image backups
+    if [[ "${verify_ok}" == "true" ]]; then
+        for b_img in "${backed_up_initramfs[@]+"${backed_up_initramfs[@]}"}"; do
+            local rel_img="${b_img#"${BOOT_DIR}/"}"
+            local dest_copy="${initramfs_backup_dir}/${rel_img}"
+            if [[ ! -f "$dest_copy" || ! -r "$dest_copy" ]]; then
+                verify_ok=false
+                verify_err="Initramfs backup image missing or unreadable: ${dest_copy}"
+                break
+            fi
+        done
+    fi
+
+    # Write backup manifest using Python
+    local manifest_file="${backup_dir}/manifest.json"
+    if [[ "${verify_ok}" == "true" ]]; then
+        python3 -c "
+import sys, json, os
+
+manifest_path = sys.argv[1]
+timestamp = sys.argv[2]
+prev_theme = sys.argv[3]
+inst_theme = sys.argv[4]
+bootloader = sys.argv[5]
+initramfs_gen = sys.argv[6]
+had_theme = (sys.argv[7] == 'true')
+had_plymouthd = (sys.argv[8] == 'true')
+had_mkinitcpio = (sys.argv[9] == 'true')
+had_limine = (sys.argv[10] == 'true')
+had_grub = (sys.argv[11] == 'true')
+backup_list_path = sys.argv[12]
+boot_dir_path = sys.argv[13]
+
+backed_up_files = []
+if os.path.isfile(backup_list_path):
+    with open(backup_list_path, 'r', encoding='utf-8') as f:
+        backed_up_files = [line.strip() for line in f if line.strip()]
+    try:
+        os.remove(backup_list_path)
+    except OSError:
+        pass
+
+pre_apply_boot_files = []
+if os.path.isdir(boot_dir_path):
+    for root, dirs, files in os.walk(boot_dir_path):
+        for name in files:
+            full_p = os.path.join(root, name)
+            rel_p = os.path.relpath(full_p, boot_dir_path)
+            pre_apply_boot_files.append(rel_p)
+pre_apply_boot_files.sort()
+
+manifest = {
+    'timestamp': timestamp,
+    'previous_theme': prev_theme,
+    'installed_theme': inst_theme,
+    'bootloader': bootloader,
+    'initramfs_generator': initramfs_gen,
+    'had_preexisting_theme': had_theme,
+    'had_plymouthd': had_plymouthd,
+    'had_mkinitcpio': had_mkinitcpio,
+    'had_limine_default': had_limine,
+    'had_grub_default': had_grub,
+    'backed_up_files': backed_up_files,
+    'pre_apply_boot_files': pre_apply_boot_files
+}
+
+with open(manifest_path, 'w', encoding='utf-8') as f:
+    json.dump(manifest, f, indent=2)
+" "${manifest_file}" \
+  "${timestamp}" \
+  "${CURRENT_PLYMOUTH_THEME}" \
+  "${THEME_NAME}" \
+  "${DETECTED_BOOTLOADER}" \
+  "${DETECTED_INITRAMFS_GEN}" \
+  "${had_preexisting_theme}" \
+  "${had_plymouthd}" \
+  "${had_mkinitcpio}" \
+  "${had_limine_default}" \
+  "${had_grub_default}" \
+  "${backup_list_file}" \
+  "${BOOT_DIR}"
+
+        if [[ ! -f "${manifest_file}" || ! -s "${manifest_file}" ]]; then
+            verify_ok=false
+            verify_err="Manifest file creation failed or produced empty file: ${manifest_file}"
+        fi
+    fi
+
+    if [[ "${verify_ok}" == "false" ]]; then
+        printf "%bError: Backup verification failed. System configuration untouched.%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+        printf "%bDetails: %s%b\n" "$C_RED" "${verify_err}" "$C_RESET" >&2
+        rm -rf "${backup_dir}"
+        exit 1
+    fi
+
+    # Only after Phase B verification succeeds is the latest pointer updated
+    ln -sfn "${timestamp}" "${BACKUP_BASE_DIR}/latest"
+    printf "Backup verified and manifest created successfully.\n"
+
+    # =========================================================================
+    # PHASE C: Apply Modifications
+    # Only executed after Phase B verification succeeds.
+    # Protected by automatic emergency rollback trap.
+    # =========================================================================
+    printf "%b--- Phase C: Applying Theme and System Modifications ---%b\n" "$C_CYAN" "$C_RESET"
+
+    local modified_plymouthd=false
+    local modified_mkinitcpio=false
+    local modified_bootloader=false
+
+    # Error recovery trap: automatically roll back on any failure during apply
+    local apply_in_progress=true
+    cleanup_on_apply_failure() {
+        if [[ "${apply_in_progress}" == "true" ]]; then
+            printf "\n%b[FAILURE DETECTED] Error encountered during apply! Initiating automatic emergency rollback...%b\n" "$C_RED$C_BOLD" "$C_RESET" >&2
+            apply_in_progress=false
+            ROLLBACK_TARGET="${backup_dir}"
+            if do_rollback; then
+                printf "%b[RESTORED] System safely rolled back to pre-apply state.%b\n" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
+            else
+                printf "%b[CRITICAL] Rollback also encountered errors. Backup preserved at %s%b\n" "$C_RED$C_BOLD" "${backup_dir}" "$C_RESET" >&2
+            fi
+            exit 1
+        fi
+    }
+    trap cleanup_on_apply_failure ERR
+
+    # 1. Update plymouthd.conf
+    set_plymouthd_theme "${PLYMOUTHD_CONF}" "${THEME_NAME}"
+    modified_plymouthd=true
+    printf "Configured Plymouth daemon theme: %s\n" "${THEME_NAME}"
+
+    # 2. Copy theme package to destination
+    rm -rf "${DEST_THEME_DIR}"
     mkdir -p "${DEST_THEME_DIR}"
     cp -a "${SOURCE_THEME_DIR}/." "${DEST_THEME_DIR}/"
     chmod 755 "${DEST_THEME_DIR}"
     find "${DEST_THEME_DIR}" -type f -exec chmod 644 {} +
+    printf "Installed GPS Plymouth theme package in %s\n" "${DEST_THEME_DIR}"
 
     # Test failure injection hook if requested
     if [[ "${GPS_TEST_FAIL_AFTER_COPY:-0}" == "1" ]]; then
@@ -677,13 +921,11 @@ do_apply() {
         false
     fi
 
-    # 5. Check & configure initramfs generator
+    # 3. Check & configure initramfs generator
     if [[ "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" && -f "${MKINITCPIO_CONF}" ]]; then
         local hooks_line
         hooks_line="$(grep -E '^\s*HOOKS=\(' "${MKINITCPIO_CONF}" 2>/dev/null || true)"
         if ! echo "${hooks_line}" | grep -q '\bplymouth\b'; then
-            cp -a "${MKINITCPIO_CONF}" "${backup_dir}/mkinitcpio.conf.orig"
-            backed_up_files+=("${MKINITCPIO_CONF}")
             local inject_res
             inject_res="$(inject_plymouth_hook "${MKINITCPIO_CONF}")"
             if [[ "${inject_res}" == "INJECTED" ]]; then
@@ -695,11 +937,9 @@ do_apply() {
         fi
     fi
 
-    # 6. Check & configure bootloader kernel command-line
+    # 4. Check & configure bootloader kernel command-line
     if [[ "${DETECTED_BOOTLOADER}" == "Limine" && -f "${LIMINE_DEFAULT_CONF}" ]]; then
         if ! grep -q '\bsplash\b' "${LIMINE_DEFAULT_CONF}" 2>/dev/null; then
-            cp -a "${LIMINE_DEFAULT_CONF}" "${backup_dir}/limine.default.orig"
-            backed_up_files+=("${LIMINE_DEFAULT_CONF}")
             python3 -c "
 import sys
 conf = sys.argv[1]
@@ -718,37 +958,13 @@ with open(conf, 'w', encoding='utf-8') as f:
         fi
     elif [[ "${DETECTED_BOOTLOADER}" == "GRUB" && -f "${GRUB_DEFAULT_CONF}" ]]; then
         if ! grep -q '\bsplash\b' "${GRUB_DEFAULT_CONF}" 2>/dev/null; then
-            cp -a "${GRUB_DEFAULT_CONF}" "${backup_dir}/grub.default.orig"
-            backed_up_files+=("${GRUB_DEFAULT_CONF}")
             sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="splash /' "${GRUB_DEFAULT_CONF}"
             modified_bootloader=true
             printf "Added 'splash' to GRUB configuration in %s\n" "${GRUB_DEFAULT_CONF}"
         fi
     fi
 
-    # 7. Write backup manifest
-    local manifest_file="${backup_dir}/manifest.json"
-    cat << EOF > "${manifest_file}"
-{
-  "timestamp": "${timestamp}",
-  "previous_theme": "${CURRENT_PLYMOUTH_THEME}",
-  "installed_theme": "${THEME_NAME}",
-  "bootloader": "${DETECTED_BOOTLOADER}",
-  "initramfs_generator": "${DETECTED_INITRAMFS_GEN}",
-  "modified_plymouthd": ${modified_plymouthd},
-  "modified_mkinitcpio": ${modified_mkinitcpio},
-  "modified_bootloader": ${modified_bootloader},
-  "had_preexisting_theme": ${had_preexisting_theme},
-  "backed_up_files": [
-$(printf '    "%s"\n' "${backed_up_files[@]}" | paste -sd, -)
-  ]
-}
-EOF
-
-    # Update latest symlink
-    ln -sfn "${timestamp}" "${BACKUP_BASE_DIR}/latest"
-
-    # 8. Initramfs regeneration if requested
+    # 5. Initramfs regeneration if requested
     if [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
         printf "\n%bRegenerating initramfs and updating bootloader entries...%b\n" "$C_CYAN" "$C_RESET"
         if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
@@ -770,116 +986,186 @@ EOF
     printf "  - Rollback Command: sudo %s --rollback %s\n\n" "$0" "${backup_dir}"
 }
 
-# Rollback execution
+# Rollback execution (Purely restorative)
 do_rollback() {
     # Check permissions if targeting real system paths
     if [[ -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ]]; then
         if [[ "${EUID}" -ne 0 ]]; then
             echo "Error: Rollback on system paths requires root privileges." >&2
             echo "Please run: sudo $0 --rollback" >&2
-            exit 1
+            return 1
         fi
     fi
 
     local backup_dir=""
     if [[ -n "${ROLLBACK_TARGET}" ]]; then
         backup_dir="${ROLLBACK_TARGET}"
+    elif [[ -n "${1:-}" ]]; then
+        backup_dir="$1"
     elif [[ -L "${BACKUP_BASE_DIR}/latest" ]]; then
-        backup_dir="${BACKUP_BASE_DIR}/$(readlink "${BACKUP_BASE_DIR}/latest")"
+        local link_target
+        link_target="$(readlink "${BACKUP_BASE_DIR}/latest")"
+        if [[ "${link_target}" = /* ]]; then
+            backup_dir="${link_target}"
+        else
+            backup_dir="${BACKUP_BASE_DIR}/${link_target}"
+        fi
     elif [[ -d "${BACKUP_BASE_DIR}" ]]; then
         backup_dir="$(find "${BACKUP_BASE_DIR}" -maxdepth 1 -mindepth 1 -type d | sort -r | head -n 1)"
     fi
 
     printf "%b=== Rolling Back GPS Plymouth Boot Splash Theme ===%b\n" "$C_BOLD$C_YELLOW" "$C_RESET"
 
-    if [[ -n "${backup_dir}" && -d "${backup_dir}" ]]; then
-        printf "Restoring from backup archive: %s\n" "${backup_dir}"
-
-        local prev_theme="cachyos-bootanimation"
-        if [[ -f "${backup_dir}/manifest.json" ]]; then
-            local pt
-            pt="$(grep '"previous_theme":' "${backup_dir}/manifest.json" | cut -d: -f2 | tr -d ' ",' || true)"
-            if [[ -n "$pt" ]]; then
-                prev_theme="$pt"
-            fi
-        fi
-
-        # 1. Restore plymouthd.conf
-        if [[ -f "${backup_dir}/plymouthd.conf.orig" ]]; then
-            printf "Restoring %s from backup...\n" "${PLYMOUTHD_CONF}"
-            cp -a "${backup_dir}/plymouthd.conf.orig" "${PLYMOUTHD_CONF}"
-        elif [[ -n "${prev_theme}" && "${prev_theme}" != "none" && "${prev_theme}" != "${THEME_NAME}" ]]; then
-            printf "Resetting theme in %s to '%s'...\n" "${PLYMOUTHD_CONF}" "${prev_theme}"
-            set_plymouthd_theme "${PLYMOUTHD_CONF}" "${prev_theme}"
-        fi
-
-        # 2. Restore mkinitcpio.conf
-        if [[ -f "${backup_dir}/mkinitcpio.conf.orig" ]]; then
-            printf "Restoring %s from backup...\n" "${MKINITCPIO_CONF}"
-            cp -a "${backup_dir}/mkinitcpio.conf.orig" "${MKINITCPIO_CONF}"
-        fi
-
-        # 3. Restore bootloader configs
-        if [[ -f "${backup_dir}/limine.default.orig" && -f "${LIMINE_DEFAULT_CONF}" ]]; then
-            printf "Restoring %s from backup...\n" "${LIMINE_DEFAULT_CONF}"
-            cp -a "${backup_dir}/limine.default.orig" "${LIMINE_DEFAULT_CONF}"
-        fi
-        if [[ -f "${backup_dir}/grub.default.orig" && -f "${GRUB_DEFAULT_CONF}" ]]; then
-            printf "Restoring %s from backup...\n" "${GRUB_DEFAULT_CONF}"
-            cp -a "${backup_dir}/grub.default.orig" "${GRUB_DEFAULT_CONF}"
-        fi
-
-        # 4. Restore separate /boot partition files (limine.conf and initramfs)
-        local boot_backup_dir="${backup_dir}/boot"
-        if [[ -d "${boot_backup_dir}" ]]; then
-            for lconf_sub in limine.conf limine.cfg EFI/limine/limine.conf limine/limine.conf; do
-                if [[ -f "${boot_backup_dir}/${lconf_sub}" ]]; then
-                    printf "Restoring %s from backup...\n" "${BOOT_DIR}/${lconf_sub}"
-                    mkdir -p "$(dirname "${BOOT_DIR}/${lconf_sub}")"
-                    cp -a "${boot_backup_dir}/${lconf_sub}" "${BOOT_DIR}/${lconf_sub}"
-                fi
-            done
-
-            local initramfs_backup_dir="${boot_backup_dir}/initramfs"
-            if [[ -d "${initramfs_backup_dir}" ]]; then
-                while IFS= read -r -d '' b_img; do
-                    local rel_b_img="${b_img#"${initramfs_backup_dir}/"}"
-                    local target_img="${BOOT_DIR}/${rel_b_img}"
-                    printf "Restoring initramfs image: %s\n" "${target_img}"
-                    mkdir -p "$(dirname "${target_img}")"
-                    cp -a "$b_img" "${target_img}"
-                done < <(find "${initramfs_backup_dir}" -type f -print0 2>/dev/null || true)
-            fi
-        fi
-
-        # 5. Restore or remove GPS theme directory
-        local had_theme
-        had_theme="$(grep '"had_preexisting_theme":' "${backup_dir}/manifest.json" | grep -o 'true\|false' || echo 'false')"
-        if [[ "${had_theme}" == "true" && -d "${backup_dir}/theme_gps_preexisting" ]]; then
-            printf "Restoring pre-existing theme in %s...\n" "${DEST_THEME_DIR}"
-            rm -rf "${DEST_THEME_DIR}"
-            cp -a "${backup_dir}/theme_gps_preexisting" "${DEST_THEME_DIR}"
-        else
-            printf "Removing installed GPS theme directory: %s...\n" "${DEST_THEME_DIR}"
-            rm -rf "${DEST_THEME_DIR}"
-        fi
-
-        # 6. Resynchronize boot artifacts if not skipped
-        if [[ "${NO_INITRD_REBUILD}" == "false" && ( -z "${ROOT_DIR}" || "${ROOT_DIR}" == "/" ) ]]; then
-            printf "\n%bResynchronizing boot artifacts after rollback...%b\n" "$C_CYAN" "$C_RESET"
-            if [[ "${DETECTED_BOOTLOADER}" == "Limine" && "${DETECTED_INITRAMFS_GEN}" == "mkinitcpio" ]]; then
-                limine-mkinitcpio
-            elif command -v mkinitcpio >/dev/null 2>&1; then
-                mkinitcpio -P
-            fi
-        fi
-
-        printf "\n%b[SUCCESS] Rollback completed successfully using archive %s%b\n\n" "$C_GREEN$C_BOLD" "${backup_dir}" "$C_RESET"
-    else
-        printf "No backup manifest found. Removing GPS theme files safely...\n"
-        rm -rf "${DEST_THEME_DIR}"
-        printf "%bDirect cleanup completed.%b\n\n" "$C_GREEN" "$C_RESET"
+    if [[ -z "${backup_dir}" || ! -d "${backup_dir}" ]]; then
+        printf "%bError: No valid backup archive found for rollback (%s).%b\n" "$C_RED$C_BOLD" "${backup_dir:-empty}" "$C_RESET" >&2
+        return 1
     fi
+
+    local manifest_file="${backup_dir}/manifest.json"
+    if [[ ! -f "${manifest_file}" ]]; then
+        printf "%bError: Backup manifest not found in %s.%b\n" "$C_RED$C_BOLD" "${backup_dir}" "$C_RESET" >&2
+        return 1
+    fi
+
+    printf "Restoring from backup archive: %s\n" "${backup_dir}"
+
+    local parse_err=false
+    local M_PREV_THEME=""
+    local M_HAD_THEME=false
+    local M_HAD_PLYMOUTHD=false
+    local M_HAD_MKINITCPIO=false
+    local M_HAD_LIMINE_DEFAULT=false
+    local M_HAD_GRUB_DEFAULT=false
+
+    eval "$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    def bstr(v): return 'true' if v else 'false'
+    print(f'M_PREV_THEME={json.dumps(data.get(\"previous_theme\", \"\"))}')
+    print(f'M_HAD_THEME={bstr(data.get(\"had_preexisting_theme\", False))}')
+    print(f'M_HAD_PLYMOUTHD={bstr(data.get(\"had_plymouthd\", False))}')
+    print(f'M_HAD_MKINITCPIO={bstr(data.get(\"had_mkinitcpio\", False))}')
+    print(f'M_HAD_LIMINE_DEFAULT={bstr(data.get(\"had_limine_default\", False))}')
+    print(f'M_HAD_GRUB_DEFAULT={bstr(data.get(\"had_grub_default\", False))}')
+except Exception as e:
+    print('parse_err=true')
+    print(f'echo \"Manifest parsing error: {e}\" >&2')
+" "${manifest_file}")"
+
+    if [[ "${parse_err}" == "true" ]]; then
+        printf "%bError: Failed to parse manifest %s.%b\n" "$C_RED$C_BOLD" "${manifest_file}" "$C_RESET" >&2
+        return 1
+    fi
+
+    # 1. Restore plymouthd.conf
+    if [[ -f "${backup_dir}/plymouthd.conf.orig" ]]; then
+        printf "Restoring %s from backup...\n" "${PLYMOUTHD_CONF}"
+        mkdir -p "$(dirname "${PLYMOUTHD_CONF}")"
+        cp -a "${backup_dir}/plymouthd.conf.orig" "${PLYMOUTHD_CONF}"
+    elif [[ "${M_HAD_PLYMOUTHD}" == "false" ]]; then
+        printf "Removing created %s...\n" "${PLYMOUTHD_CONF}"
+        rm -f "${PLYMOUTHD_CONF}"
+    elif [[ -n "${M_PREV_THEME}" && "${M_PREV_THEME}" != "none" && "${M_PREV_THEME}" != "${THEME_NAME}" ]]; then
+        printf "Resetting theme in %s to '%s'...\n" "${PLYMOUTHD_CONF}" "${M_PREV_THEME}"
+        set_plymouthd_theme "${PLYMOUTHD_CONF}" "${M_PREV_THEME}"
+    fi
+
+    # 2. Restore mkinitcpio.conf
+    if [[ -f "${backup_dir}/mkinitcpio.conf.orig" ]]; then
+        printf "Restoring %s from backup...\n" "${MKINITCPIO_CONF}"
+        cp -a "${backup_dir}/mkinitcpio.conf.orig" "${MKINITCPIO_CONF}"
+    elif [[ "${M_HAD_MKINITCPIO}" == "false" ]]; then
+        rm -f "${MKINITCPIO_CONF}"
+    fi
+
+    # 3. Restore bootloader configs
+    if [[ -f "${backup_dir}/limine.default.orig" ]]; then
+        printf "Restoring %s from backup...\n" "${LIMINE_DEFAULT_CONF}"
+        cp -a "${backup_dir}/limine.default.orig" "${LIMINE_DEFAULT_CONF}"
+    elif [[ "${M_HAD_LIMINE_DEFAULT}" == "false" && -f "${LIMINE_DEFAULT_CONF}" ]]; then
+        rm -f "${LIMINE_DEFAULT_CONF}"
+    fi
+
+    if [[ -f "${backup_dir}/grub.default.orig" ]]; then
+        printf "Restoring %s from backup...\n" "${GRUB_DEFAULT_CONF}"
+        cp -a "${backup_dir}/grub.default.orig" "${GRUB_DEFAULT_CONF}"
+    elif [[ "${M_HAD_GRUB_DEFAULT}" == "false" && -f "${GRUB_DEFAULT_CONF}" ]]; then
+        rm -f "${GRUB_DEFAULT_CONF}"
+    fi
+
+    # 4. Restore separate /boot partition files (Limine configs and original initramfs images)
+    local boot_backup_dir="${backup_dir}/boot"
+    if [[ -d "${boot_backup_dir}" ]]; then
+        for lconf_sub in limine.conf limine.cfg EFI/limine/limine.conf limine/limine.conf; do
+            if [[ -f "${boot_backup_dir}/${lconf_sub}" ]]; then
+                printf "Restoring %s from backup...\n" "${BOOT_DIR}/${lconf_sub}"
+                mkdir -p "$(dirname "${BOOT_DIR}/${lconf_sub}")"
+                cp -a "${boot_backup_dir}/${lconf_sub}" "${BOOT_DIR}/${lconf_sub}"
+            fi
+        done
+
+        local initramfs_backup_dir="${boot_backup_dir}/initramfs"
+        if [[ -d "${initramfs_backup_dir}" ]]; then
+            while IFS= read -r -d '' b_img; do
+                local rel_b_img="${b_img#"${initramfs_backup_dir}/"}"
+                local target_img="${BOOT_DIR}/${rel_b_img}"
+                printf "Restoring initramfs image: %s\n" "${target_img}"
+                mkdir -p "$(dirname "${target_img}")"
+                cp -a "$b_img" "${target_img}"
+            done < <(find "${initramfs_backup_dir}" -type f -print0 2>/dev/null || true)
+        fi
+    fi
+
+    # 5. Prune any new files generated in /boot during apply that were not in pre-apply inventory
+    if [[ -d "${BOOT_DIR}" ]]; then
+        python3 -c "
+import json, os, sys
+manifest_path = sys.argv[1]
+boot_dir = sys.argv[2]
+if not os.path.isdir(boot_dir):
+    sys.exit(0)
+with open(manifest_path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+pre_apply = set(data.get('pre_apply_boot_files', []))
+# Walk boot_dir bottom-up
+for root, dirs, files in os.walk(boot_dir, topdown=False):
+    for name in files:
+        full_path = os.path.join(root, name)
+        rel_path = os.path.relpath(full_path, boot_dir)
+        if rel_path not in pre_apply:
+            print(f'Pruning file created during apply: {rel_path}')
+            try:
+                os.remove(full_path)
+            except OSError as e:
+                print(f'Warning: could not remove {full_path}: {e}', file=sys.stderr)
+    for name in dirs:
+        full_dir = os.path.join(root, name)
+        try:
+            if not os.listdir(full_dir):
+                os.rmdir(full_dir)
+        except OSError:
+            pass
+" "${manifest_file}" "${BOOT_DIR}"
+    fi
+
+    # 6. Restore or remove GPS theme directory
+    if [[ "${M_HAD_THEME}" == "true" && -d "${backup_dir}/theme_gps_preexisting" ]]; then
+        printf "Restoring pre-existing theme in %s...\n" "${DEST_THEME_DIR}"
+        rm -rf "${DEST_THEME_DIR}"
+        mkdir -p "$(dirname "${DEST_THEME_DIR}")"
+        cp -a "${backup_dir}/theme_gps_preexisting" "${DEST_THEME_DIR}"
+    else
+        printf "Removing installed GPS theme directory: %s...\n" "${DEST_THEME_DIR}"
+        rm -rf "${DEST_THEME_DIR}"
+    fi
+
+    # 7. Purely restorative: NO initramfs regeneration or limine-mkinitcpio execution!
+    # The verified original binary initramfs images and Limine configuration were restored directly.
+
+    printf "\n%b[SUCCESS] Rollback completed successfully using archive %s%b\n\n" "$C_GREEN$C_BOLD" "${backup_dir}" "$C_RESET"
+    return 0
 }
 
 # Status report
@@ -915,7 +1201,7 @@ case "${MODE}" in
         do_apply
         ;;
     rollback)
-        do_rollback
+        do_rollback || exit 1
         ;;
     status)
         do_status
