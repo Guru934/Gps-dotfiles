@@ -59,6 +59,50 @@ class ThemeContractTests(unittest.TestCase):
         self.assertIn("NumberAnimation { duration: root.animDuration }", THEME_QML)
         self.assertIn("leftLuminance: pickNum(\"leftLuminance\"", THEME_QML)
 
+    def test_island_theme_tokens_contract(self):
+        """Verifies that every Theme token used by island/ exists in config/Theme.qml
+        and that island files import the canonical qs.config module.
+        """
+        import os
+        import re
+
+        island_dir = ROOT / "island"
+        self.assertTrue((island_dir / "config").exists(), "island/config must exist")
+        if (island_dir / "config").is_symlink():
+            self.assertEqual(
+                os.readlink(island_dir / "config"),
+                "../config",
+                "island/config symlink must resolve to ../config",
+            )
+
+        control_qml = (island_dir / "states/Control.qml").read_text(encoding="utf-8")
+        self.assertIn("import qs.config", control_qml, "Control.qml must import qs.config")
+        self.assertNotIn('import "../../config"', control_qml, "Control.qml must not use relative config import")
+
+        theme_props = set(
+            re.findall(
+                r"(?:property\s+[a-zA-Z0-9_<>]+\s+|readonly\s+property\s+[a-zA-Z0-9_<>]+\s+)([a-zA-Z0-9_]+)",
+                THEME_QML,
+            )
+        )
+        self.assertTrue(len(theme_props) > 0, "Failed to parse properties from Theme.qml")
+
+        island_files = list(island_dir.rglob("*.qml"))
+        for path in island_files:
+            content = path.read_text(encoding="utf-8")
+            used_tokens = set(re.findall(r"Theme\.([a-zA-Z0-9_]+)", content))
+            if used_tokens:
+                self.assertIn(
+                    "import qs.config",
+                    content,
+                    f"{path.relative_to(ROOT)} uses Theme tokens but does not import qs.config",
+                )
+                missing = used_tokens - theme_props
+                self.assertFalse(
+                    missing,
+                    f"{path.relative_to(ROOT)} uses Theme tokens not found in Theme.qml: {missing}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
