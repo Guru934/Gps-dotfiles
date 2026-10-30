@@ -61,6 +61,14 @@ class ClipboardPickerContractTests(unittest.TestCase):
         self.assertIn("items", list_data)
         self.assertIn("count", list_data)
 
+    def test_picker_row_selection_and_contrast_contract(self):
+        """Selected row uses an accent-tinted surface (0.2 alpha), visible accent border, and no undefined tokens."""
+        self.assertNotIn("Theme.cardActive", PICKER_QML, "Undefined Theme.cardActive must not be used")
+        self.assertIn("0.20", PICKER_QML, "Selected row must use accent tint at approx 0.2 alpha")
+        self.assertIn("border.color: isSelected", PICKER_QML)
+        self.assertIn("Theme.brandAccent", PICKER_QML)
+        self.assertIn("Theme.textMain", PICKER_QML)
+
 
 if __name__ == "__main__":
     unittest.main()

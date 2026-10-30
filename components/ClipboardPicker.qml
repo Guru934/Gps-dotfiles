@@ -427,15 +427,30 @@ PanelWindow {
 
                     readonly property bool isSelected: root.selectedIndex === index
                     readonly property bool isPinned: Boolean(modelData.pinned)
+                    readonly property bool isHovered: rowMouse.containsMouse
 
                     width: listView.width
                     height: 52
                     radius: 8
-                    color: isSelected ? Theme.cardActive : Theme.card
-                    border.width: isSelected || isPinned ? 1 : 0
-                    border.color: isPinned ? Theme.brandAccent : (isSelected ? Theme.border : "transparent")
+                    color: isSelected
+                        ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.20)
+                        : (isHovered ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.12) : Theme.card)
+                    border.width: isSelected || isPinned || isHovered ? 1 : 0
+                    border.color: isSelected
+                        ? Theme.brandAccent
+                        : (isPinned ? Theme.brandAccent : (isHovered ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.60) : "transparent"))
+
+                    Behavior on color {
+                        enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                        ColorAnimation { duration: 100 }
+                    }
+                    Behavior on border.color {
+                        enabled: Theme.animationsEnabled && !Theme.reducedMotion
+                        ColorAnimation { duration: 100 }
+                    }
 
                     MouseArea {
+                        id: rowMouse
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
@@ -533,7 +548,7 @@ PanelWindow {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.preview
-                                color: isSelected ? Theme.textMain : Theme.textMain
+                                color: Theme.textMain
                                 font.family: Theme.fontUi
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
