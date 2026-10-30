@@ -15,6 +15,9 @@ if not test -e "$HOME/.config/fontconfig/fonts.conf"
     "$REPO_DIR/scripts/setup-fonts.sh" --no-cache >/dev/null 2>&1; or true
 end
 
+# Ensure consistent cursor configuration across GTK, Qt, and XWayland
+"$REPO_DIR/scripts/setup-cursor.sh" >/dev/null 2>&1; or true
+
 # Visible startup log: every run appends here so a startup failure leaves a
 # trace even after /tmp/qs-gps.log is rotated by the next run.
 function log --argument-names msg
