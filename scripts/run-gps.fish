@@ -63,6 +63,8 @@ end
 # Tide Island is also a QuickShell process, so never kill all quickshell PIDs.
 stop_pattern "quickshell.*shell\.qml" "GPS master shell"
 stop_pattern "awww-daemon" "awww-daemon"
+stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
+stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
 rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
 # /tmp/tide-island.log is NOT deleted here: a preserved island keeps writing
 # to it; when the island is (re)started its redirect truncates the file.
