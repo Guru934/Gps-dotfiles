@@ -10,7 +10,9 @@
   - Canonical tokens for color, geometry, typography, effects, and motion added to `config/Theme.qml`.
   - Comprehensive design system documentation in `docs/design-system.md`.
   - Automated token verification suite created in `tests/test_design_tokens.py`.
-- [ ] **P4.2 — Reusable Visual Primitives**: In Progress.
-- [ ] **P4.3 — Major Surface Migration**: Pending.
+- [x] **P4.2 — Reusable Visual Primitives**: Completed.
+  - Core primitives created in `components/`: `GlassSurface`, `GlassCard`, `SectionHeader`, `IconButton`, `GpsButton`, `StatusIndicator`, `Separator`.
+  - Comprehensive unit test coverage in `tests/test_reusable_components.py`.
+- [ ] **P4.3 — Major Surface Migration**: In Progress.
 - [ ] **P4.4 — Hyprland Visual Rules**: Pending.
 - [ ] **P4.5 — Final Visual Audit & Session Verification**: Pending.

@@ -26,9 +26,9 @@
     - Establish canonical design tokens in `Theme.qml` (colors, geometry, typography, effects, motion)
     - Add automated token regression tests (`test_design_tokens.py`)
     - Document design system principles and specifications (`docs/design-system.md`)
-  - [ ] **P4.2 — Reusable components**
+  - [x] **P4.2 — Reusable components**
     - Implement shared primitives: `GlassSurface`, `GlassCard`, `SectionHeader`, `IconButton`, `GpsButton`, `StatusIndicator`, `Separator`
-    - Automated tests for visual primitives
+    - Automated tests for visual primitives (`test_reusable_components.py`)
   - [ ] **P4.3 — Major surface migration**
     - LeftRail & Island unified styling
     - Control Center & Dashboard consolidation
