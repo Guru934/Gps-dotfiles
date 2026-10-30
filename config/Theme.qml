@@ -43,6 +43,9 @@ Singleton {
             textMain: pick("textMain", root.live.textMain),
             textMuted: pick("textMuted", root.live.textMuted),
             outlineSoft: pick("outlineSoft", root.live.outlineSoft),
+            accentSecondary: pick("accentSecondary", root.live.accentSecondary),
+            accentSecondaryDim: pick("accentSecondaryDim", root.live.accentSecondaryDim),
+            accentTertiary: pick("accentTertiary", root.live.accentTertiary),
             leftLuminance: pickNum("leftLuminance", root.live.leftLuminance !== undefined ? root.live.leftLuminance : 0.20)
         }
     }
@@ -157,4 +160,84 @@ Singleton {
     readonly property int radiusDrawer: 16
     readonly property int radiusControl: 10
     readonly property int dashboardWidth: 440
+
+    // ──────────────── Canonical Design Tokens ────────────────
+    // Semantic aliases
+    readonly property color textSecondary: root.textDim
+    readonly property color surfaceActive: root.cardHover
+    readonly property color glassBorder: root.outlineSoft
+
+    // Status state surfaces & borders
+    readonly property color statusDangerBg: "#3D1A26"
+    readonly property color statusDangerBorder: "#FF4D6D"
+    readonly property color statusDangerFg: "#FF5C77"
+    readonly property color statusSuccessBg: "#163328"
+    readonly property color statusSuccessFg: "#9CE5C0"
+    readonly property color statusWarnBg: "#3D2E14"
+    readonly property color statusWarnFg: "#FFD47B"
+
+    // Geometry — Spacing Scale
+    readonly property int spacingXs: 4
+    readonly property int spacingSm: 8
+    readonly property int spacingMd: 12
+    readonly property int spacingLg: 16
+    readonly property int spacingXl: 24
+
+    // Geometry — Corner Radius Scale
+    readonly property int radiusXs: 4
+    readonly property int radiusSm: 8
+    readonly property int radiusMd: 10
+    readonly property int radiusLg: 14
+    readonly property int radiusXl: 18
+
+    // Geometry — Border Widths
+    readonly property int borderWidth: 1
+    readonly property int borderWidthThick: 2
+
+    // Geometry — Component Heights
+    readonly property int controlHeightSm: 24
+    readonly property int controlHeightMd: 32
+    readonly property int controlHeightLg: 40
+    readonly property int controlHeightXl: 48
+
+    // Geometry — Padding Scale
+    readonly property int paddingSm: 8
+    readonly property int paddingMd: 12
+    readonly property int paddingLg: 16
+    readonly property int paddingXl: 20
+
+    // Geometry — Icon Sizes
+    readonly property int iconXs: 12
+    readonly property int iconSm: 16
+    readonly property int iconMd: 20
+    readonly property int iconLg: 24
+    readonly property int iconXl: 32
+
+    // Typography Scale
+    readonly property int fontSizeDisplay: 22
+    readonly property int fontSizeHeading: 16
+    readonly property int fontSizeSubheading: 14
+    readonly property int fontSizeBody: 13
+    readonly property int fontSizeSecondary: 12
+    readonly property int fontSizeCaption: 10
+    readonly property int fontSizeSmall: 9
+
+    // Effects — Glass, Blur, Opacity, Shadow
+    readonly property real glassAlpha: 0.72
+    readonly property real glassAlphaElevated: 0.85
+    readonly property real glassAlphaSolid: 0.95
+    readonly property real borderAlpha: 0.25
+    readonly property real highlightAlpha: 0.14
+    readonly property real hoverAlpha: 0.12
+    readonly property color shadowColor: "#80000000"
+    readonly property int shadowRadius: 16
+    readonly property int blurRadius: 16
+    readonly property int blurPasses: 2
+
+    // Motion — Durations and Easing
+    readonly property int animFast: (root.animationsEnabled && !root.reducedMotion) ? 120 : 0
+    readonly property int animNormal: (root.animationsEnabled && !root.reducedMotion) ? 220 : 0
+    readonly property int animSlow: (root.animationsEnabled && !root.reducedMotion) ? 360 : 0
+    readonly property int easingStandard: Easing.OutCubic
+    readonly property int easingEmphasized: Easing.OutQuint
 }
