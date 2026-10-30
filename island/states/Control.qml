@@ -677,13 +677,14 @@ Item {
         property string iconName: ""
         property string iconAlt: ""
         property string tooltipText: ""
+        property bool active: false
         signal triggered()
 
         Layout.preferredWidth: 32
         Layout.preferredHeight: 32
         radius: Theme.radiusCard
         activeFocusOnTab: true
-        color: (hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card
+        color: hb.active ? Theme.brandAccent : ((hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card)
         border.width: Theme.borderWidth
         border.color: hb.activeFocus ? Theme.accentPrimary : Theme.outlineSoft
         scale: hbMa.pressed ? 0.94 : 1.0
@@ -701,7 +702,7 @@ Item {
             name: hb.iconName
             alt: hb.iconAlt
             font.pixelSize: 16
-            color: (hbMa.containsMouse || hb.activeFocus) ? Theme.textMain : Theme.textMuted
+            color: hb.active ? Theme.brandAccentFg : ((hbMa.containsMouse || hb.activeFocus) ? Theme.textMain : Theme.textMuted)
         }
 
         MouseArea {
@@ -1362,8 +1363,8 @@ Item {
                     HeaderButton {
                         iconName: "tune"
                         iconAlt: "*"
+                        active: st.editTilesMode
                         tooltipText: st.editTilesMode ? "Done customizing" : "Customize tiles"
-                        color: st.editTilesMode ? Theme.brandAccent : ((hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card)
                         onTriggered: st.editTilesMode = !st.editTilesMode
                     }
                 }
@@ -2002,28 +2003,33 @@ Item {
                         spacing: 8
 
                         // CPU Item
-                        RowLayout {
+                        Item {
                             Layout.fillWidth: true
-                            spacing: 6
-                            Ico {
-                                name: "memory"
-                                alt: "C"
-                                font.pixelSize: 15
-                                color: Theme.brandAccent
-                            }
-                            Text {
-                                text: "CPU"
-                                font.family: Theme.fontUi
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                                color: Theme.textMuted
-                            }
-                            Text {
-                                text: st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "--%"
-                                font.family: Theme.fontMono
-                                font.pixelSize: 10
-                                font.weight: Font.Medium
-                                color: Theme.textMain
+                            Layout.fillHeight: true
+
+                            RowLayout {
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Ico {
+                                    name: "memory"
+                                    alt: "C"
+                                    font.pixelSize: 15
+                                    color: Theme.brandAccent
+                                }
+                                Text {
+                                    text: "CPU"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    color: Theme.textMuted
+                                }
+                                Text {
+                                    text: st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "--%"
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: 10
+                                    font.weight: Font.Medium
+                                    color: Theme.textMain
+                                }
                             }
                             ToolTip.visible: cpuMa.containsMouse
                             ToolTip.text: "CPU usage: " + (st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "measuring\u2026")
@@ -2034,28 +2040,33 @@ Item {
                         Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
 
                         // RAM Item
-                        RowLayout {
+                        Item {
                             Layout.fillWidth: true
-                            spacing: 6
-                            Ico {
-                                name: "storage"
-                                alt: "R"
-                                font.pixelSize: 15
-                                color: Theme.accentSecondary
-                            }
-                            Text {
-                                text: "RAM"
-                                font.family: Theme.fontUi
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                                color: Theme.textMuted
-                            }
-                            Text {
-                                text: st.memPct >= 0 ? (st.memPct + "%") : "--%"
-                                font.family: Theme.fontMono
-                                font.pixelSize: 10
-                                font.weight: Font.Medium
-                                color: Theme.textMain
+                            Layout.fillHeight: true
+
+                            RowLayout {
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Ico {
+                                    name: "storage"
+                                    alt: "R"
+                                    font.pixelSize: 15
+                                    color: Theme.accentSecondary
+                                }
+                                Text {
+                                    text: "RAM"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    color: Theme.textMuted
+                                }
+                                Text {
+                                    text: st.memPct >= 0 ? (st.memPct + "%") : "--%"
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: 10
+                                    font.weight: Font.Medium
+                                    color: Theme.textMain
+                                }
                             }
                             ToolTip.visible: ramMa.containsMouse
                             ToolTip.text: "RAM: " + st.memUsedGiB.toFixed(1) + " / " + st.memTotalGiB.toFixed(1) + " GiB (" + st.memPct + "%)"
@@ -2066,28 +2077,33 @@ Item {
                         Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
 
                         // TEMP Item
-                        RowLayout {
+                        Item {
                             Layout.fillWidth: true
-                            spacing: 6
-                            Ico {
-                                name: "thermostat"
-                                alt: "T"
-                                font.pixelSize: 15
-                                color: st.tempC >= 80 ? Theme.statusDanger : (st.tempC >= 70 ? Theme.statusWarn : Theme.brandAccent)
-                            }
-                            Text {
-                                text: "TEMP"
-                                font.family: Theme.fontUi
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                                color: Theme.textMuted
-                            }
-                            Text {
-                                text: st.tempC > 0 ? (st.tempC + "°C") : "--°C"
-                                font.family: Theme.fontMono
-                                font.pixelSize: 10
-                                font.weight: Font.Medium
-                                color: Theme.textMain
+                            Layout.fillHeight: true
+
+                            RowLayout {
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Ico {
+                                    name: "thermostat"
+                                    alt: "T"
+                                    font.pixelSize: 15
+                                    color: st.tempC >= 80 ? Theme.statusDanger : (st.tempC >= 70 ? Theme.statusWarn : Theme.brandAccent)
+                                }
+                                Text {
+                                    text: "TEMP"
+                                    font.family: Theme.fontUi
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    color: Theme.textMuted
+                                }
+                                Text {
+                                    text: st.tempC > 0 ? (st.tempC + "°C") : "--°C"
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: 10
+                                    font.weight: Font.Medium
+                                    color: Theme.textMain
+                                }
                             }
                             ToolTip.visible: tempMa.containsMouse
                             ToolTip.text: "CPU package temperature: " + (st.tempC > 0 ? (st.tempC + "°C") : "measuring\u2026")
