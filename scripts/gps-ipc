@@ -268,8 +268,12 @@ case "$cmd" in
         fi
         ;;
 
+    doctor|health)
+        exec "$REPO_DIR/scripts/gps-doctor" "$@"
+        ;;
+
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|check|status> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|check|status|doctor|health> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
         echo "  notify <history|clear|dismiss <id>|markread [id]|dnd [on|off|toggle]|status>" >&2
@@ -281,6 +285,8 @@ case "$cmd" in
         echo "  rail [action]" >&2
         echo "  check [shell|island|settings|all]" >&2
         echo "  status" >&2
+        echo "  doctor [--json]" >&2
+        echo "  health [--json]" >&2
         exit 1
         ;;
 esac

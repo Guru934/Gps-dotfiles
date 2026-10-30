@@ -426,6 +426,18 @@ nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null | sed 's/^/net
         script: "hyprctl configerrors 2>&1"
         onDone: text => root.cfgErrors = text.trim()
     }
+    property var healthReport: null
+    Cmd {
+        id: cmdHealth
+        script: '"' + repo + '/scripts/gps-doctor" --json 2>/dev/null || true'
+        onDone: text => {
+            try {
+                root.healthReport = JSON.parse(text)
+            } catch (e) {
+                root.healthReport = null
+            }
+        }
+    }
 
     // ───────────────────── AI / local inference ─────────────────────
     readonly property string aiEndpoint: store.ai.endpoint || "http://127.0.0.1:11434"
@@ -760,7 +772,8 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
         { icon: "bolt", title: "Power & GPU", sub: "Profiles, battery, NVIDIA telemetry" },
         { icon: "psychology", title: "AI & Models", sub: "Local inference engines and models" },
         { icon: "keyboard_command_key", title: "Keybinds", sub: "Every bind Hyprland has loaded" },
-        { icon: "memory", title: "System", sub: "Services, tools, config integration" }
+        { icon: "memory", title: "System", sub: "Services, tools, config integration" },
+        { icon: "health_and_safety", title: "System Health", sub: "Session essentials and doctor diagnostics" }
     ]
 
     IpcHandler {
@@ -1159,6 +1172,73 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                 delegate: SRow { required property var modelData; label: modelData
                                     Btn { icon: "restart_alt"; text: "Restart"; onClicked: root.sh('systemctl --user restart "$1"', [modelData]) } } } }
                     }
+
+                    // ════════ 10 · SYSTEM HEALTH ════════
+                    PageBase {
+                        Card { title: "System Health"; icon: "health_and_safety"
+                            RowLayout { Layout.fillWidth: true; spacing: 10
+                                Pill {
+                                    text: (root.healthReport && root.healthReport.summary) ? root.healthReport.summary.ok + " OK" : "—"
+                                    tone: pal.primary
+                                }
+                                Pill {
+                                    text: (root.healthReport && root.healthReport.summary) ? root.healthReport.summary.warn + " WARN" : "—"
+                                    tone: pal.secondary
+                                }
+                                Pill {
+                                    text: (root.healthReport && root.healthReport.summary) ? root.healthReport.summary.missing + " MISSING" : "—"
+                                    tone: (root.healthReport && root.healthReport.summary && root.healthReport.summary.missing > 0) ? pal.error : pal.surfaceHi
+                                }
+                                Item { Layout.fillWidth: true }
+                                Btn { icon: "refresh"; text: "Refresh"; onClicked: cmdHealth.go() }
+                            }
+                            Dim {
+                                visible: root.healthReport === null
+                                text: "Loading doctor diagnostics\u2026"
+                            }
+                            Dim {
+                                visible: root.healthReport !== null
+                                text: "GPS doctor audits session daemons, portals, polkit, D-Bus ownership and QuickShell processes."
+                            }
+                        }
+                        Card {
+                            title: "Diagnostic Checks"
+                            icon: "checklist"
+                            visible: root.healthReport !== null && root.healthReport.checks !== undefined
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 6
+                                Repeater {
+                                    model: (root.healthReport && root.healthReport.checks) || []
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        Layout.fillWidth: true; implicitHeight: col.implicitHeight + 14; radius: 10; color: pal.surfaceHi
+                                        ColumnLayout {
+                                            id: col
+                                            anchors.fill: parent; anchors.margins: 8; spacing: 3
+                                            RowLayout {
+                                                Layout.fillWidth: true; spacing: 8
+                                                Pill {
+                                                    text: parent.parent.parent.modelData.status || "UNKNOWN"
+                                                    tone: parent.parent.parent.modelData.status === "OK" ? pal.primary : (parent.parent.parent.modelData.status === "WARN" ? pal.secondary : pal.error)
+                                                }
+                                                T { text: parent.parent.parent.modelData.label || parent.parent.parent.modelData.name; font.weight: Font.DemiBold }
+                                                Item { Layout.fillWidth: true }
+                                            }
+                                            Dim {
+                                                text: parent.parent.modelData.details || ""
+                                                Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone; font.pixelSize: 11
+                                            }
+                                            Mono {
+                                                visible: !!parent.parent.modelData.action
+                                                text: "Action: " + (parent.parent.modelData.action || "")
+                                                color: pal.tertiary; Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone; font.pixelSize: 11
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1185,5 +1265,8 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
         const s = Object.assign({}, sys); s.run_hyprsunset = on ? "1" : "0"; sys = s
         sh(on ? 'pkill -x hyprsunset; setsid hyprsunset -t "$1" >/dev/null 2>&1 &' : 'pkill -x hyprsunset', [String(kelvin)]); after(800, cmdSys.go)
     }
-    onPageChanged: { if (page === 9) cmdSvc.go() }
+    onPageChanged: {
+        if (page === 9) cmdSvc.go()
+        if (page === 10) cmdHealth.go()
+    }
 }

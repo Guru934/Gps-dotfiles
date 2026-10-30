@@ -1,0 +1,713 @@
+#!/usr/bin/env python3
+"""GPS Doctor — Session Essentials and Health Diagnostics.
+
+Audits core desktop session components: PipeWire, WirePlumber, XDG Portals,
+Polkit agent, Qt6 Wayland, secrets service, StatusNotifier tray host,
+notification server, hypridle, awww-daemon, cliphist watchers, awatcher,
+bluetooth, NetworkManager, and QuickShell runtime processes.
+
+Exits with code 0 if all essential session components are healthy.
+Exits with code 1 if any essential component is missing or failed.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+def get_gps_root():
+    """Resolve the repository root directory."""
+    if "GPS_ROOT" in os.environ and os.path.isdir(os.environ["GPS_ROOT"]):
+        return Path(os.environ["GPS_ROOT"]).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def get_hyprland_version(runner=subprocess.run):
+    """Retrieve Hyprland version string."""
+    try:
+        res = runner(["hyprctl", "version"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout:
+            match = re.search(r"Hyprland\s+([0-9a-zA-Z\.\-]+)", res.stdout)
+            if match:
+                return match.group(1)
+            first_line = res.stdout.strip().split("\n")[0]
+            return first_line.replace("Hyprland ", "").split()[0]
+    except Exception:
+        pass
+    return "unknown"
+
+
+def get_quickshell_version(runner=subprocess.run):
+    """Retrieve QuickShell version string."""
+    try:
+        res = runner(["quickshell", "--version"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout:
+            match = re.search(r"Quickshell\s+([0-9a-zA-Z\.\-]+)", res.stdout)
+            if match:
+                return match.group(1)
+            return res.stdout.strip().split("\n")[0]
+    except Exception:
+        pass
+    return "unknown"
+
+
+def get_kernel_version(runner=subprocess.run):
+    """Retrieve Linux kernel release version."""
+    try:
+        res = runner(["uname", "-r"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout:
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def is_process_running(pattern, exact=False, user_only=True, runner=subprocess.run):
+    """Check whether a process matching pattern is alive.
+
+    Returns (is_running: bool, pids: list[int]).
+    """
+    cmd = ["pgrep"]
+    if user_only:
+        cmd.extend(["-u", str(os.getuid())])
+    if exact:
+        cmd.extend(["-x", pattern])
+    else:
+        cmd.extend(["-f", pattern])
+
+    try:
+        res = runner(cmd, capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout.strip():
+            my_pid = os.getpid()
+            my_ppid = os.getppid()
+            raw_pids = [int(p) for p in res.stdout.strip().split() if p.isdigit() and int(p) not in (my_pid, my_ppid)]
+            filtered = []
+            for p in raw_pids:
+                try:
+                    cmd_path = Path(f"/proc/{p}/cmdline")
+                    if cmd_path.exists():
+                        cmd_txt = cmd_path.read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace")
+                        if "gps-doctor" in cmd_txt or "grep " in cmd_txt:
+                            continue
+                    filtered.append(p)
+                except Exception:
+                    filtered.append(p)
+            return (len(filtered) > 0, filtered)
+    except Exception:
+        pass
+    return (False, [])
+
+
+def is_systemd_user_active(unit_name, runner=subprocess.run):
+    """Check if a systemd user unit is active."""
+    try:
+        res = runner(
+            ["systemctl", "--user", "is-active", unit_name],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return res.returncode == 0 and res.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def is_systemd_system_active(unit_name, runner=subprocess.run):
+    """Check if a systemd system unit is active."""
+    try:
+        res = runner(
+            ["systemctl", "is-active", unit_name],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return res.returncode == 0 and res.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def is_dbus_name_active(bus_name, session=True, runner=subprocess.run):
+    """Check if a D-Bus well-known name is currently owned."""
+    cmd = ["busctl"]
+    if session:
+        cmd.append("--user")
+    cmd.extend(["status", bus_name])
+    try:
+        res = runner(cmd, capture_output=True, text=True, timeout=3)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def find_portal_config():
+    """Locate the effective xdg-desktop-portal configuration."""
+    candidates = [
+        Path.home() / ".config/xdg-desktop-portal/hyprland-portals.conf",
+        Path.home() / ".config/xdg-desktop-portal/portals.conf",
+        Path("/etc/xdg/xdg-desktop-portal/hyprland-portals.conf"),
+        Path("/etc/xdg/xdg-desktop-portal/portals.conf"),
+        Path("/usr/share/xdg-desktop-portal/hyprland-portals.conf"),
+        Path("/usr/share/xdg-desktop-portal/portals.conf"),
+    ]
+    for c in candidates:
+        if c.is_file():
+            try:
+                txt = c.read_text(encoding="utf-8", errors="replace")
+                match = re.search(r"^\s*default\s*=\s*(.+)$", txt, re.MULTILINE)
+                default_val = match.group(1).strip() if match else "unspecified"
+                return (str(c), default_val)
+            except Exception:
+                return (str(c), "read_error")
+    return (None, None)
+
+
+def check_polkit_probe(runner=subprocess.run):
+    """Harmless check to verify if a polkit agent is available on session bus.
+
+    Uses `pkcheck -u --process <pid> --action-id ...` with a short timeout.
+    Returns: (handled_or_available: bool, message: str)
+    """
+    try:
+        cmd = [
+            "pkcheck",
+            "-u",
+            "--process",
+            str(os.getpid()),
+            "--action-id",
+            "org.freedesktop.policykit.exec",
+        ]
+        res = runner(cmd, capture_output=True, text=True, timeout=2)
+        out = (res.stdout or "") + (res.stderr or "")
+        if "no agent is available" in out.lower():
+            return (False, "no agent is available")
+        if res.returncode == 0:
+            return (True, "authorized")
+        return (True, "agent registered")
+    except subprocess.TimeoutExpired:
+        # Prompt was dispatched to an active agent and is awaiting interaction
+        return (True, "agent waiting for user interaction")
+    except Exception as exc:
+        return (False, f"probe error: {exc}")
+
+
+def extract_log_errors(log_path, max_entries=3):
+    """Extract recent errors or warnings from a log file."""
+    path = Path(log_path)
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        error_lines = []
+        for line in reversed(lines):
+            l_strip = line.strip()
+            if not l_strip:
+                continue
+            if re.search(r"\b(error|critical|fatal|warn|warning|exception)\b", l_strip, re.IGNORECASE):
+                if l_strip not in error_lines:
+                    error_lines.append(l_strip)
+            if len(error_lines) >= max_entries:
+                break
+        return list(reversed(error_lines))
+    except Exception:
+        return []
+
+
+def audit_session(repo_root=None, runner=subprocess.run):
+    """Run all session health checks and return structured report."""
+    root = Path(repo_root) if repo_root else get_gps_root()
+    checks = []
+
+    # 1. PipeWire
+    pw_run, pw_pids = is_process_running("pipewire", exact=True, runner=runner)
+    pw_unit = is_systemd_user_active("pipewire.service", runner=runner)
+    pw_ok = pw_run or pw_unit
+    checks.append({
+        "name": "pipewire",
+        "label": "PipeWire",
+        "status": "OK" if pw_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {pw_pids[0]} (pipewire.service)" if pw_pids else ("unit active" if pw_unit else "not running"),
+        "action": None if pw_ok else "systemctl --user enable --now pipewire.service",
+    })
+
+    # 2. WirePlumber
+    wp_run, wp_pids = is_process_running("wireplumber", exact=True, runner=runner)
+    wp_unit = is_systemd_user_active("wireplumber.service", runner=runner)
+    wp_ok = wp_run or wp_unit
+    checks.append({
+        "name": "wireplumber",
+        "label": "WirePlumber",
+        "status": "OK" if wp_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {wp_pids[0]} (wireplumber.service)" if wp_pids else ("unit active" if wp_unit else "not running"),
+        "action": None if wp_ok else "systemctl --user enable --now wireplumber.service",
+    })
+
+    # 3. xdg-desktop-portal
+    xdp_run, xdp_pids = is_process_running("xdg-desktop-portal", exact=False, runner=runner)
+    xdp_unit = is_systemd_user_active("xdg-desktop-portal.service", runner=runner)
+    xdp_ok = xdp_run or xdp_unit
+    checks.append({
+        "name": "xdg-desktop-portal",
+        "label": "xdg-desktop-portal",
+        "status": "OK" if xdp_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {xdp_pids[0]} (xdg-desktop-portal.service)" if xdp_pids else ("unit active" if xdp_unit else "not running"),
+        "action": None if xdp_ok else "systemctl --user restart xdg-desktop-portal.service",
+    })
+
+    # 4. xdg-desktop-portal-hyprland
+    xdph_run, xdph_pids = is_process_running("xdg-desktop-portal-hyprland", exact=False, runner=runner)
+    xdph_unit = is_systemd_user_active("xdg-desktop-portal-hyprland.service", runner=runner)
+    xdph_ok = xdph_run or xdph_unit
+    checks.append({
+        "name": "xdg-desktop-portal-hyprland",
+        "label": "xdg-desktop-portal-hyprland",
+        "status": "OK" if xdph_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {xdph_pids[0]} (hyprland portal backend)" if xdph_pids else ("unit active" if xdph_unit else "not running"),
+        "action": None if xdph_ok else "sudo pacman -S --needed xdg-desktop-portal-hyprland && systemctl --user start xdg-desktop-portal-hyprland.service",
+    })
+
+    # 5. xdg-desktop-portal-gtk
+    xdpg_run, xdpg_pids = is_process_running("xdg-desktop-portal-gtk", exact=False, runner=runner)
+    xdpg_unit = is_systemd_user_active("xdg-desktop-portal-gtk.service", runner=runner)
+    xdpg_ok = xdpg_run or xdpg_unit
+    checks.append({
+        "name": "xdg-desktop-portal-gtk",
+        "label": "xdg-desktop-portal-gtk",
+        "status": "OK" if xdpg_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {xdpg_pids[0]} (gtk file picker backend)" if xdpg_pids else ("unit active" if xdpg_unit else "not running"),
+        "action": None if xdpg_ok else "sudo pacman -S --needed xdg-desktop-portal-gtk && systemctl --user start xdg-desktop-portal-gtk.service",
+    })
+
+    # 6. Portal Configuration
+    portal_cfg_path, portal_cfg_def = find_portal_config()
+    cfg_ok = portal_cfg_path is not None
+    checks.append({
+        "name": "portal-config",
+        "label": "Portal Config",
+        "status": "OK" if cfg_ok else "WARN",
+        "essential": False,
+        "details": f"{portal_cfg_path} (default={portal_cfg_def})" if cfg_ok else "no portal configuration found",
+        "action": None if cfg_ok else "mkdir -p ~/.config/xdg-desktop-portal && printf '[preferred]\\ndefault=hyprland;gtk\\n' > ~/.config/xdg-desktop-portal/hyprland-portals.conf",
+    })
+
+    # 7. Polkit Authentication Agent
+    polkit_patterns = [
+        "hyprpolkitagent",
+        "polkit-kde-authentication-agent-1",
+        "polkit-gnome-authentication-agent-1",
+        "polkit-mate-authentication-agent-1",
+        "pantheon-polkit-agent",
+        "lxpolkit",
+    ]
+    pa_running = False
+    pa_pids = []
+    pa_name = "none"
+    for pat in polkit_patterns:
+        alive, pids = is_process_running(pat, exact=False, runner=runner)
+        if alive:
+            pa_running = True
+            pa_pids = pids
+            pa_name = pat
+            break
+
+    probe_ok, probe_msg = check_polkit_probe(runner=runner)
+    agent_installed_path = None
+    for cand in [
+        "/usr/lib/hyprpolkitagent",
+        shutil.which("hyprpolkitagent"),
+        "/usr/lib/polkit-kde-authentication-agent-1",
+        "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1",
+        "/usr/libexec/polkit-gnome-authentication-agent-1",
+        "/usr/lib/mate-polkit/polkit-mate-authentication-agent-1",
+        "/usr/lib/pantheon-polkit-agent",
+    ]:
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            agent_installed_path = cand
+            break
+
+    if pa_running:
+        pa_status = "OK"
+        pa_details = f"PID {pa_pids[0]} ({pa_name}), probe: {probe_msg}"
+        pa_action = None
+    else:
+        pa_status = "MISSING"
+        if agent_installed_path:
+            pa_details = f"installed at {agent_installed_path} but not running (probe: {probe_msg})"
+            pa_action = f"{agent_installed_path} &"
+        else:
+            pa_details = f"no agent running (probe: {probe_msg}); no GUI agent package found"
+            pa_action = "sudo pacman -S --needed hyprpolkitagent && /usr/lib/hyprpolkitagent &"
+
+    checks.append({
+        "name": "polkit-agent",
+        "label": "Polkit Agent",
+        "status": pa_status,
+        "essential": True,
+        "details": pa_details,
+        "action": pa_action,
+    })
+
+    # 8. qt6-wayland
+    qt6w_installed = False
+    try:
+        res = runner(["pacman", "-Q", "qt6-wayland"], capture_output=True, text=True, timeout=3)
+        qt6w_installed = (res.returncode == 0)
+    except Exception:
+        qt6w_installed = Path("/usr/lib/libQt6WaylandClient.so.6").exists()
+
+    checks.append({
+        "name": "qt6-wayland",
+        "label": "qt6-wayland",
+        "status": "OK" if qt6w_installed else "MISSING",
+        "essential": True,
+        "details": "installed (Wayland QPA active)" if qt6w_installed else "package qt6-wayland not installed",
+        "action": None if qt6w_installed else "sudo pacman -S --needed qt6-wayland",
+    })
+
+    # 9. Secrets Service (gnome-keyring or kwallet)
+    secrets_bus = is_dbus_name_active("org.freedesktop.secrets", session=True, runner=runner)
+    gk_run, gk_pids = is_process_running("gnome-keyring-daemon", exact=False, runner=runner)
+    kw_run, kw_pids = is_process_running("kwalletd", exact=False, runner=runner)
+    sec_ok = secrets_bus or gk_run or kw_run
+    if sec_ok:
+        sec_name = "gnome-keyring" if gk_run else ("kwallet" if kw_run else "D-Bus secrets provider")
+        sec_pid = gk_pids[0] if gk_pids else (kw_pids[0] if kw_pids else "unknown")
+        sec_details = f"{sec_name} (PID {sec_pid}, org.freedesktop.secrets)"
+    else:
+        sec_details = "no secrets daemon running or registered on D-Bus"
+
+    checks.append({
+        "name": "secrets-service",
+        "label": "Secrets Service",
+        "status": "OK" if sec_ok else "MISSING",
+        "essential": True,
+        "details": sec_details,
+        "action": None if sec_ok else "sudo pacman -S --needed gnome-keyring && gnome-keyring-daemon --start --components=secrets",
+    })
+
+    # 10. System Tray Host (StatusNotifier)
+    sni_watcher = is_dbus_name_active("org.kde.StatusNotifierWatcher", session=True, runner=runner)
+    sni_host = is_dbus_name_active("org.kde.StatusNotifierHost", session=True, runner=runner)
+    tray_ok = sni_watcher or sni_host
+    checks.append({
+        "name": "system-tray",
+        "label": "System Tray Host",
+        "status": "OK" if tray_ok else "WARN",
+        "essential": False,
+        "details": "active StatusNotifier host found" if tray_ok else "none active (requires Quickshell.Services.SystemTray in shell.qml)",
+        "action": None,
+    })
+
+    # 11. Notification Owner
+    notif_bus = is_dbus_name_active("org.freedesktop.Notifications", session=True, runner=runner)
+    checks.append({
+        "name": "notifications",
+        "label": "Notification Server",
+        "status": "OK" if notif_bus else "MISSING",
+        "essential": True,
+        "details": "org.freedesktop.Notifications owned" if notif_bus else "org.freedesktop.Notifications unowned (Island down)",
+        "action": None if notif_bus else "scripts/run-gps.fish",
+    })
+
+    # 12. hypridle
+    idle_run, idle_pids = is_process_running("hypridle", exact=True, runner=runner)
+    checks.append({
+        "name": "hypridle",
+        "label": "hypridle",
+        "status": "OK" if idle_run else "WARN",
+        "essential": False,
+        "details": f"PID {idle_pids[0]} (active)" if idle_run else "stopped (managed by scripts/gps-idle)",
+        "action": None if idle_run else "scripts/gps-idle start",
+    })
+
+    # 13. awww-daemon
+    awww_run, awww_pids = is_process_running("awww-daemon", exact=True, runner=runner)
+    checks.append({
+        "name": "awww-daemon",
+        "label": "awww-daemon",
+        "status": "OK" if awww_run else "MISSING",
+        "essential": True,
+        "details": f"PID {awww_pids[0]} (wallpaper daemon)" if awww_run else "not running",
+        "action": None if awww_run else "nohup awww-daemon >/tmp/awww-daemon.log 2>&1 &",
+    })
+
+    # 14. Cliphist Watchers
+    cw_run, cw_pids = is_process_running(r"wl-paste.*gps-clip-store", exact=False, runner=runner)
+    if not cw_run:
+        cw_run, cw_pids = is_process_running(r"wl-paste.*cliphist", exact=False, runner=runner)
+    checks.append({
+        "name": "cliphist-watchers",
+        "label": "Cliphist Watchers",
+        "status": "OK" if cw_run else "MISSING",
+        "essential": True,
+        "details": f"{len(cw_pids)} active watcher process(es) (PIDs: {', '.join(map(str, cw_pids))})" if cw_run else "no wl-paste clip watchers active",
+        "action": None if cw_run else "scripts/run-gps.fish",
+    })
+
+    # 15. awatcher
+    awa_run, awa_pids = is_process_running("awatcher", exact=True, runner=runner)
+    checks.append({
+        "name": "awatcher",
+        "label": "awatcher",
+        "status": "OK" if awa_run else "WARN",
+        "essential": False,
+        "details": f"PID {awa_pids[0]} (screen time service)" if awa_run else "not running (ActivityWatch tracking stopped)",
+        "action": None if awa_run else "$HOME/.local/opt/awatcher/awatcher --no-tray &",
+    })
+
+    # 16. Bluetooth
+    bt_unit = is_systemd_system_active("bluetooth.service", runner=runner)
+    bt_run, bt_pids = is_process_running("bluetoothd", exact=True, runner=runner)
+    bt_ok = bt_unit or bt_run
+    checks.append({
+        "name": "bluetooth",
+        "label": "Bluetooth",
+        "status": "OK" if bt_ok else "WARN",
+        "essential": False,
+        "details": f"PID {bt_pids[0]} (bluetooth.service)" if bt_pids else ("active" if bt_unit else "service inactive"),
+        "action": None if bt_ok else "sudo systemctl enable --now bluetooth.service",
+    })
+
+    # 17. NetworkManager
+    nm_unit = is_systemd_system_active("NetworkManager.service", runner=runner)
+    nm_run, nm_pids = is_process_running("NetworkManager", exact=True, runner=runner)
+    nm_ok = nm_unit or nm_run
+    checks.append({
+        "name": "networkmanager",
+        "label": "NetworkManager",
+        "status": "OK" if nm_ok else "MISSING",
+        "essential": True,
+        "details": f"PID {nm_pids[0]} (NetworkManager.service)" if nm_pids else ("active" if nm_unit else "service inactive"),
+        "action": None if nm_ok else "sudo systemctl enable --now NetworkManager.service",
+    })
+
+    # 18. Three Quickshell Processes
+    qs_shell_run, qs_shell_pids = is_process_running(r"quickshell.*shell\.qml", exact=False, runner=runner)
+    checks.append({
+        "name": "quickshell-shell",
+        "label": "QS Master Shell",
+        "status": "OK" if qs_shell_run else "MISSING",
+        "essential": True,
+        "details": f"PID {qs_shell_pids[0]} (shell.qml)" if qs_shell_run else "dead (shell.qml)",
+        "action": None if qs_shell_run else "scripts/run-gps.fish",
+    })
+
+    qs_island_run, qs_island_pids = is_process_running(r"(quickshell.*IslandProduction\.qml|share/tide-[i]sland)", exact=False, runner=runner)
+    checks.append({
+        "name": "quickshell-island",
+        "label": "QS Island Pill",
+        "status": "OK" if qs_island_run else "MISSING",
+        "essential": True,
+        "details": f"PID {qs_island_pids[0]} (Island)" if qs_island_run else "dead (IslandProduction.qml / tide-island)",
+        "action": None if qs_island_run else "scripts/run-gps.fish",
+    })
+
+    qs_set_run, qs_set_pids = is_process_running(r"quickshell.*settings\.qml", exact=False, runner=runner)
+    checks.append({
+        "name": "quickshell-settings",
+        "label": "QS Settings Hub",
+        "status": "OK" if qs_set_run else "OK",  # Settings opens on demand, not a failure when closed
+        "essential": False,
+        "details": f"PID {qs_set_pids[0]} (active)" if qs_set_run else "idle / closed (opens on demand)",
+        "action": None,
+    })
+
+    # Environment versions
+    env_info = {
+        "hyprland_version": get_hyprland_version(runner=runner),
+        "quickshell_version": get_quickshell_version(runner=runner),
+        "kernel_version": get_kernel_version(runner=runner),
+        "gps_root": str(root),
+    }
+
+    # Quickshell processes overview
+    qs_processes = {
+        "shell": {"alive": qs_shell_run, "pid": qs_shell_pids[0] if qs_shell_pids else None, "target": str(root / "shell.qml")},
+        "island": {"alive": qs_island_run, "pid": qs_island_pids[0] if qs_island_pids else None, "target": str(root / "island/IslandProduction.qml")},
+        "settings": {"alive": qs_set_run, "pid": qs_set_pids[0] if qs_set_pids else None, "target": str(root / "settings.qml")},
+    }
+
+    # Logs inspection
+    shell_log_path = Path("/tmp/qs-gps.log")
+    island_log_path = Path.home() / ".config/quickshell/island.log"
+    if not island_log_path.exists() and Path("/tmp/tide-island.log").exists():
+        island_log_path = Path("/tmp/tide-island.log")
+
+    logs_info = {
+        "shell": {
+            "path": str(shell_log_path),
+            "errors": extract_log_errors(shell_log_path),
+        },
+        "island": {
+            "path": str(island_log_path),
+            "errors": extract_log_errors(island_log_path),
+        },
+    }
+
+    # Summary and exit code determination
+    count_ok = sum(1 for c in checks if c["status"] == "OK")
+    count_warn = sum(1 for c in checks if c["status"] == "WARN")
+    count_missing = sum(1 for c in checks if c["status"] == "MISSING")
+
+    # Essential failure check
+    has_essential_missing = any(c["essential"] and c["status"] == "MISSING" for c in checks)
+
+    # Distinct recommended actions
+    rec_actions = []
+    for c in checks:
+        act = c.get("action")
+        if act and act not in rec_actions:
+            rec_actions.append(act)
+
+    report = {
+        "status": "MISSING" if has_essential_missing else ("WARN" if count_warn > 0 else "OK"),
+        "ok": not has_essential_missing,
+        "summary": {
+            "ok": count_ok,
+            "warn": count_warn,
+            "missing": count_missing,
+        },
+        "environment": env_info,
+        "quickshell": qs_processes,
+        "checks": checks,
+        "logs": logs_info,
+        "recommended_actions": rec_actions,
+    }
+    return report
+
+
+def render_table(report, color=True):
+    """Render human-readable formatted table and diagnostic report."""
+    use_color = color and sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    C_RESET = "\033[0m" if use_color else ""
+    C_GREEN = "\033[32m" if use_color else ""
+    C_YELLOW = "\033[33m" if use_color else ""
+    C_RED = "\033[31m" if use_color else ""
+    C_BOLD = "\033[1m" if use_color else ""
+    C_CYAN = "\033[36m" if use_color else ""
+
+    lines = []
+    lines.append(f"{C_BOLD}GPS Session Health Doctor{C_RESET}")
+    lines.append("=" * 105)
+
+    headers = ("STATUS", "COMPONENT", "DETAILS", "ACTION REQUIRED")
+    widths = (9, 27, 40, 23)
+
+    header_fmt = f"| {{:<{widths[0]}}} | {{:<{widths[1]}}} | {{:<{widths[2]}}} | {{:<{widths[3]}}} |"
+    sep_line = f"+{'-' * (widths[0] + 2)}+{'-' * (widths[1] + 2)}+{'-' * (widths[2] + 2)}+{'-' * (widths[3] + 2)}+"
+
+    lines.append(sep_line)
+    lines.append(header_fmt.format(*headers))
+    lines.append(sep_line)
+
+    for c in report["checks"]:
+        st = c["status"]
+        if st == "OK":
+            st_str = f"{C_GREEN}OK{C_RESET}"
+        elif st == "WARN":
+            st_str = f"{C_YELLOW}WARN{C_RESET}"
+        else:
+            st_str = f"{C_RED}MISSING{C_RESET}"
+
+        # Truncate details and action if wider than columns
+        raw_det = c["details"] or ""
+        if len(raw_det) > widths[2]:
+            det = raw_det[: widths[2] - 3] + "..."
+        else:
+            det = raw_det
+
+        raw_act = c["action"] or "-"
+        if len(raw_act) > widths[3]:
+            act = raw_act[: widths[3] - 3] + "..."
+        else:
+            act = raw_act
+
+        name = c["label"]
+        if len(name) > widths[1]:
+            name = name[: widths[1] - 3] + "..."
+
+        row_str = f"| {st:<{widths[0]}} | {name:<{widths[1]}} | {det:<{widths[2]}} | {act:<{widths[3]}} |"
+        # Substitute colored status accurately
+        row_str = row_str.replace(f"| {st:<{widths[0]}} |", f"| {st_str:<{widths[0] + (len(st_str) - len(st))}} |", 1)
+        lines.append(row_str)
+
+    lines.append(sep_line)
+    lines.append("")
+
+    # Environment
+    env = report["environment"]
+    lines.append(f"{C_BOLD}System Environment:{C_RESET}")
+    lines.append(f"  Hyprland:   {env['hyprland_version']}")
+    lines.append(f"  QuickShell: {env['quickshell_version']}")
+    lines.append(f"  Kernel:     {env['kernel_version']}")
+    lines.append(f"  GPS_ROOT:   {env['gps_root']}")
+    lines.append("")
+
+    # Quickshell
+    qs = report["quickshell"]
+    lines.append(f"{C_BOLD}QuickShell Processes:{C_RESET}")
+    for proc_key, label in [("shell", "Master Shell"), ("island", "Island Pill"), ("settings", "Settings Hub")]:
+        info = qs[proc_key]
+        state_str = f"{C_GREEN}alive (PID {info['pid']}){C_RESET}" if info["alive"] else f"{C_RED}dead{C_RESET}"
+        lines.append(f"  {label:<15}: {state_str} ({info['target']})")
+    lines.append("")
+
+    # Recent Log Diagnostics
+    lines.append(f"{C_BOLD}Recent Log Diagnostics:{C_RESET}")
+    for log_key, label in [("shell", "Shell Log"), ("island", "Island Log")]:
+        log_data = report["logs"][log_key]
+        path = log_data["path"]
+        errs = log_data["errors"]
+        lines.append(f"  {label} ({path}):")
+        if errs:
+            for e in errs:
+                lines.append(f"    {C_YELLOW}WARN/ERR{C_RESET}: {e}")
+        else:
+            lines.append(f"    {C_GREEN}clean (no recent errors){C_RESET}")
+    lines.append("")
+
+    # Summary
+    sm = report["summary"]
+    sm_color = C_GREEN if report["ok"] else C_RED
+    lines.append(f"{C_BOLD}Summary:{C_RESET} {sm_color}{sm['ok']} OK, {sm['warn']} WARN, {sm['missing']} MISSING{C_RESET}")
+
+    # Recommended Actions
+    actions = report["recommended_actions"]
+    if actions:
+        lines.append("")
+        lines.append(f"{C_BOLD}{C_CYAN}Recommended Commands to Fix Issues (DO NOT run automatically):{C_RESET}")
+        for i, act in enumerate(actions, 1):
+            lines.append(f"  {i}. {act}")
+
+    return "\n".join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="GPS desktop health check doctor.")
+    parser.add_argument("--json", action="store_true", help="Output machine-readable JSON format")
+    parser.add_argument("--root", type=str, default=None, help="Override GPS repository root")
+    args = parser.parse_args()
+
+    report = audit_session(repo_root=args.root)
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(render_table(report))
+
+    # Exit code: non-zero when something essential is missing
+    sys.exit(0 if report["ok"] else 1)
+
+
+if __name__ == "__main__":
+    main()
