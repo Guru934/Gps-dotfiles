@@ -96,11 +96,11 @@ end
 # 4. Start clipboard watchers using the GPS privacy-preserving clip-store wrapper.
 set -l clip_store "$REPO_DIR/scripts/gps-clip-store"
 if not pgrep -f "wl-paste --type text --watch .*gps-clip-store" >/dev/null 2>&1
-    nohup wl-paste --type text --watch "$clip_store" >/tmp/cliphist-text.log 2>&1 &
+    setsid wl-paste --type text --watch "$clip_store" </dev/null >/tmp/cliphist-text.log 2>&1 &
     disown
 end
 if not pgrep -f "wl-paste --type image --watch .*gps-clip-store" >/dev/null 2>&1
-    nohup wl-paste --type image --watch "$clip_store" >/tmp/cliphist-image.log 2>&1 &
+    setsid wl-paste --type image --watch "$clip_store" </dev/null >/tmp/cliphist-image.log 2>&1 &
     disown
 end
 
