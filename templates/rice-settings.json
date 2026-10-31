@@ -1,0 +1,19 @@
+{
+  "hypr": {},
+  "monitors": {},
+  "ai": {
+    "endpoint": "http://127.0.0.1:11434",
+    "model": "llama3.2:3b",
+    "ctx": 8192,
+    "temp": 0.7,
+    "system": ""
+  },
+  "music": {
+    "jamendoClientId": ""
+  },
+  "island": {
+    "showWorkspaceName": true,
+    "workspaceTransientMs": 1500,
+    "workspaceNames": {}
+  }
+}

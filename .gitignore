@@ -21,6 +21,7 @@ tools-last
 *.log
 pet.json
 rice-settings.json
+!templates/rice-settings.json
 media-hub-*.json
 gps-island-backend
 
