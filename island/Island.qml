@@ -4,7 +4,7 @@
 //   Idle · Music · Charge · Clip · Osd · Alert · Notify · Focus · Dnd · Launcher · Privacy · Control
 // Every value is read live: nothing on screen is hard-coded, and a field with no
 // data simply hides. Drop into components/ and add `Island {}` inside your ShellRoot,
-// or test alone:  qs -p IslandTest.qml
+// or test alone:  qs -p tests/views/IslandTest.qml
 //
 // Data sources
 //   idle      Hyprland workspaces · SystemClock · CPU temperature from /sys
@@ -449,8 +449,8 @@ Scope {
         }
         return true
     }
-    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-    readonly property string soundBin: root.repoRoot + "/scripts/gps-sound"
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || ""
+    readonly property string soundBin: root.repoRoot ? (root.repoRoot + "/scripts/gps-sound") : "gps-sound"
     function playSound(event, dedupeKey, soundFile) {
         const args = [root.soundBin, "play", event]
         if (dedupeKey) args.push("--dedupe", dedupeKey)
@@ -1364,7 +1364,7 @@ Scope {
     }
 
     // PipeWire is event-driven; the helper polls direct V4L2 file descriptors every 1.5s.
-    property string privacyDetectorPath: Quickshell.env("HOME") + "/Projects/my-rice/scripts/privacy_detector.py"
+    property string privacyDetectorPath: root.repoRoot ? (root.repoRoot + "/scripts/privacy_detector.py") : "privacy_detector.py"
     Process {
         id: privacyFeed
         running: true

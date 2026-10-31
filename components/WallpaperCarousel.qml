@@ -11,7 +11,7 @@ PanelWindow {
     property bool isOpen: false
     property int currentIndex: 0
     readonly property int visibleRadius: 2
-    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || ""
     readonly property string wallpaperDirectory: "file://" + Quickshell.env("HOME") + "/Pictures/Wallpapers"
 
     function toggle() { root.isOpen = !root.isOpen }

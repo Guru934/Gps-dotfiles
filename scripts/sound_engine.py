@@ -59,6 +59,8 @@ class PlaybackDecision:
 
 
 def get_repo_root() -> Path:
+    if "GPS_ROOT" in os.environ and os.path.isdir(os.environ["GPS_ROOT"]):
+        return Path(os.environ["GPS_ROOT"]).resolve()
     return Path(__file__).resolve().parent.parent
 
 

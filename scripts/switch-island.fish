@@ -3,6 +3,7 @@
 # Exactly one top-center island is allowed to run at a time.
 
 set -l REPO_DIR (realpath (status dirname)/..)
+set -gx GPS_ROOT "$REPO_DIR"
 set -gx QML2_IMPORT_PATH "$REPO_DIR"
 set -gx QML_IMPORT_PATH "$REPO_DIR"
 set -l mode $argv[1]

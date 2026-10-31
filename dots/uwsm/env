@@ -2,3 +2,15 @@
 # Toolkit and theming configuration for Wayland / Hyprland sessions
 
 export QT_QPA_PLATFORMTHEME=qt6ct
+
+# Derive GPS_ROOT from the canonical target of ~/.config/uwsm/env if not already set
+if [ -z "${GPS_ROOT:-}" ]; then
+    _uwsm_env="${XDG_CONFIG_HOME:-$HOME/.config}/uwsm/env"
+    if [ -L "$_uwsm_env" ]; then
+        _target="$(readlink -f "$_uwsm_env" 2>/dev/null || true)"
+        if [ -n "$_target" ]; then
+            export GPS_ROOT="$(cd "$(dirname "$_target")/../.." && pwd)"
+        fi
+    fi
+    unset _uwsm_env _target
+fi

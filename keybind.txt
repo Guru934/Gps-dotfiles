@@ -11,7 +11,7 @@ the bind runs (Lua-mode dispatchers appear as "__lua" in hyprctl binds -j).
 
 
 ------------------------------------------------------------------------
-1. GPS / DESKTOP CONTROLS (my-rice QuickShell + Tide Island)
+1. GPS / DESKTOP CONTROLS (GPS QuickShell + Tide Island)
 ------------------------------------------------------------------------
 Super + D ........ Toggle the right-edge GPS dashboard HUD.
                    gps-ipc shell dashboard toggle

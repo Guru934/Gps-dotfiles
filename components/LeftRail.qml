@@ -43,6 +43,7 @@ PanelWindow {
         const a = 0.35 + 0.35 * l
         return Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, a)
     }
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (root.hub && root.hub.repoRoot ? root.hub.repoRoot : "")
 
     // Built-in Power Menu State
     property bool powerPopupOpen: false
@@ -561,7 +562,7 @@ PanelWindow {
                         glyph: "󰄀"
                         accentColor: Theme.accentTertiary
                         tooltip: "Area Screenshot"
-                        onClicked: Quickshell.execDetached([(Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/gps-shot", "region"])
+                        onClicked: Quickshell.execDetached([(root.repoRoot ? (root.repoRoot + "/scripts/gps-shot") : "gps-shot"), "region"])
                     }
 
                     // Screen Recording Active Indicator
@@ -595,7 +596,7 @@ PanelWindow {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: Quickshell.execDetached([(Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/gps-record", "stop"])
+                            onClicked: Quickshell.execDetached([(root.repoRoot ? (root.repoRoot + "/scripts/gps-record") : "gps-record"), "stop"])
                             onEntered: if (root.hub) root.hub.setTooltip("Recording active · Click to stop")
                             onExited: if (root.hub) root.hub.clearTooltip()
                         }
@@ -776,7 +777,7 @@ PanelWindow {
                             } else if (root.wallpaperCarousel) {
                                 root.wallpaperCarousel.toggle()
                             } else {
-                                Quickshell.execDetached([Quickshell.env("HOME") + "/Projects/my-rice/scripts/pick-wall.fish"])
+                                Quickshell.execDetached([root.repoRoot ? (root.repoRoot + "/scripts/pick-wall.fish") : "pick-wall.fish"])
                             }
                         }
                     }
@@ -802,7 +803,7 @@ PanelWindow {
                             "quickshell",
                             "--no-duplicate",
                             "-p",
-                            Quickshell.env("HOME") + "/Projects/my-rice/settings.qml"
+                            root.repoRoot ? (root.repoRoot + "/settings.qml") : "settings.qml"
                         ])
                     }
                 }
@@ -1089,7 +1090,7 @@ PanelWindow {
 
                     Repeater {
                         model: [
-                            { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "command -v gps-lock >/dev/null && exec gps-lock || exec $HOME/Projects/my-rice/scripts/gps-lock"] },
+                            { icon: "󰌾", label: "Lock Screen", color: Theme.brandAccent,    confirm: false, cmd: ["sh", "-c", "command -v gps-lock >/dev/null 2>&1 && exec gps-lock || { [ -n \"$GPS_ROOT\" ] && exec \"$GPS_ROOT/scripts/gps-lock\"; }"] },
                             { icon: "󰤄", label: "Suspend",     color: Theme.accentSecondary,confirm: false, cmd: ["systemctl", "suspend"] },
                             { icon: "󰍃", label: "Log Out",     color: Theme.statusWarn,      confirm: true,  cmd: ["hyprctl", "dispatch", "hl.dsp.exit()"] },
                             { icon: "󰜉", label: "Reboot",      color: Theme.statusWarn,      confirm: true,  cmd: ["systemctl", "reboot"] },

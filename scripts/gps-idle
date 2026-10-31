@@ -4,6 +4,10 @@
 # ============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export GPS_ROOT="${GPS_ROOT:-$REPO_DIR}"
+
 PID_FILE="${GPS_IDLE_PID_FILE:-${XDG_RUNTIME_DIR:-/tmp}/gps-hypridle-${UID}.pid}"
 
 resolve_hypridle() {

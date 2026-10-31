@@ -4,9 +4,14 @@
 set -l REPO_DIR (realpath (status dirname)/..)
 
 set -gx LC_CTYPE C.UTF-8
+set -gx GPS_ROOT "$REPO_DIR"
 set -gx QML2_IMPORT_PATH "$REPO_DIR"
 set -gx QML_IMPORT_PATH "$REPO_DIR"
 set -g __done_enabled 0
+
+if command -v hyprctl >/dev/null 2>&1
+    hyprctl setenv GPS_ROOT "$REPO_DIR" >/dev/null 2>&1; or true
+end
 
 mkdir -p "$HOME/.config/quickshell"
 

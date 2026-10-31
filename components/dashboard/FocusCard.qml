@@ -12,7 +12,8 @@ DashSurface {
     id: root
     property bool isOpen: false
 
-    readonly property string islandPath: Quickshell.env("HOME") + "/Projects/my-rice/island/IslandProduction.qml"
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || ""
+    readonly property string islandPath: root.repoRoot ? (root.repoRoot + "/island/IslandProduction.qml") : ""
     readonly property color tone: root.isBreak ? Theme.accentSecondary : Theme.accentPrimary
 
     property bool available: true

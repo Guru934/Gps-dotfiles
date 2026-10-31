@@ -24,7 +24,7 @@ Item {
     readonly property color cardFill: Theme.surfaceBase
     readonly property color tileFill: Qt.rgba(Theme.surfaceDeep.r, Theme.surfaceDeep.g, Theme.surfaceDeep.b, 0.55)
     readonly property color chipFill: Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.7)
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
     readonly property string tidePath: Quickshell.env("HOME") + "/.local/share/tide-island"
 
     // ----------------------------------------------------------------
@@ -294,12 +294,12 @@ Item {
 
     function reloadShell() {
         root.say("reloading shell :: run-gps.fish", "info")
-        Quickshell.execDetached([root.projectPath + "/scripts/run-gps.fish"])
+        Quickshell.execDetached([root.projectPath ? (root.projectPath + "/scripts/run-gps.fish") : "run-gps.fish"])
     }
 
     function lockScreen() {
         root.say("locking session :: gps-lock", "info")
-        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null && exec gps-lock || exec $HOME/Projects/my-rice/scripts/gps-lock"])
+        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null 2>&1 && exec gps-lock || { [ -n \"$GPS_ROOT\" ] && exec \"$GPS_ROOT/scripts/gps-lock\"; }"])
     }
 
     Process {

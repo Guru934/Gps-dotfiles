@@ -11,7 +11,7 @@ configuration {
 @theme "/dev/null"
 
 /* Palette is generated from the current wallpaper by
-   ~/Projects/my-rice/scripts/extract-theme.py (same source as the shell). */
+   scripts/extract-theme.py (same source as the shell). */
 @import "colors.rasi"
 
 * {

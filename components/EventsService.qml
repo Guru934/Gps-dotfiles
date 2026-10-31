@@ -10,10 +10,10 @@ Scope {
 
     property var hub: null
     readonly property string home: Quickshell.env("HOME")
-    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (home + "/Projects/my-rice")
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || ""
     readonly property string storePath: home + "/.config/quickshell/rice-settings.json"
     readonly property string dndPath: home + "/.local/state/gps/dnd.json"
-    readonly property string watcherScript: repoRoot + "/scripts/gps-device-watcher"
+    readonly property string watcherScript: repoRoot ? (repoRoot + "/scripts/gps-device-watcher") : "gps-device-watcher"
 
     property var eventsSettings: EventsLogic.DEFAULT_EVENTS_SETTINGS
     property var powerState: EventsLogic.createInitialPowerState()

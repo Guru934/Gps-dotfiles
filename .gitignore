@@ -23,3 +23,10 @@ pet.json
 rice-settings.json
 media-hub-*.json
 gps-island-backend
+
+# Temporary artifacts & caches
+*.tmp
+*.tmp.*
+.pytest_cache/
+backups/
+npm-debug.log*
