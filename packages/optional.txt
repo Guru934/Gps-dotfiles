@@ -1,0 +1,52 @@
+# ==============================================================================
+# GPS Package Manifest — Optional & Feature Dependencies
+# ==============================================================================
+#
+# Manifest Syntax:
+#   <package-name> [# <explanation>]
+#   <package-name> [<category>] [# <explanation>]
+#
+# Comments & Blank Lines:
+#   - Lines starting with '#' (with optional leading whitespace) are ignored.
+#   - Inline comments start with '#' and extend to the end of the line.
+#   - Blank lines and whitespace-only lines are ignored.
+#
+# Source Classification:
+#   - Official repository packages (Arch Linux core/extra or CachyOS repos).
+#   - Verified via 'pacman -Si <package>'.
+#
+# Dependency Categories:
+#   - Optional / Feature: Enhances desktop experience, powers specific tools
+#     (e.g., media playback, screenshot editing, screen recording).
+#   - Hardware-specific: Needed only when specific hardware is present (e.g.,
+#     laptops with batteries, NVIDIA GPUs).
+#
+# Verification:
+#   - Installed check: 'pacman -Q <package>'
+#   - Availability check: 'pacman -Si <package>'
+# ==============================================================================
+
+kitty [optional] # Default terminal emulator bound to Super+Q in hyprland.lua
+thunar [optional] # Default graphical file manager bound to Super+E in hyprland.lua
+rofi [optional] # Application launcher menu bound to Super+R and Super+Space
+grim [feature] # Screenshot capture utility used by scripts/gps-shot (Print key)
+slurp [feature] # Interactive region selector used by gps-shot and gps-record
+hyprpicker [feature] # Wayland color picker used by scripts/gps-picker (Super+Shift+P)
+playerctl [feature] # Media player CLI queried for now-playing metadata and media keys
+brightnessctl [hardware] # Display backlight brightness controller for laptop hotkeys
+libnotify [feature] # Desktop notification CLI (notify-send) used for capture/picker alerts
+upower [hardware] # UPower daemon for battery status monitoring in laptop LeftRail/Island
+power-profiles-daemon [hardware] # Power profile switching (performance/balanced/power-saver)
+mpv [feature] # Recommended hardware-accelerated video player for Media Hub playback
+ffmpeg [feature] # Video transcoding and ffprobe audio metadata extractor for Media Hub
+yt-dlp [feature] # Command-line video and audio downloader for Media Hub Downloads queue
+7zip [feature] # Archive utility (7z) providing CBR extraction for Media Hub Manga Reader
+gpu-screen-recorder [feature] # High-performance hardware-accelerated recorder for gps-record
+wf-recorder [feature] # Fallback software Wayland screen recorder for gps-record
+swappy [feature] # Interactive screenshot annotation and markup tool for gps-shot
+libpulse [feature] # PulseAudio client libraries providing parec for audio spectrum analysis
+python-numpy [feature] # Numerical computing library for audio spectrum fast Fourier transforms
+cava [feature] # Console audio visualizer backend for reactive Island sound bars
+noto-fonts-cjk [optional] # CJK (Chinese, Japanese, Korean) glyph fallback coverage
+noto-fonts-emoji [optional] # Color emoji glyph fallback coverage for notifications and UI
+nvidia-utils [hardware] # NVIDIA GPU management utilities providing nvidia-smi for SysProbe

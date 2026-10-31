@@ -1,0 +1,54 @@
+# ==============================================================================
+# GPS Package Manifest — Core Required Dependencies
+# ==============================================================================
+#
+# Manifest Syntax:
+#   <package-name> [# <explanation>]
+#   <package-name> [<category>] [# <explanation>]
+#
+# Comments & Blank Lines:
+#   - Lines starting with '#' (with optional leading whitespace) are ignored.
+#   - Inline comments start with '#' and extend to the end of the line.
+#   - Blank lines and whitespace-only lines are ignored.
+#
+# Source Classification:
+#   - Official repository packages (Arch Linux core/extra or CachyOS repos).
+#   - Verified via 'pacman -Si <package>'.
+#
+# Dependency Category:
+#   - Core required: Without these dependencies, the primary GPS desktop
+#     session (Hyprland + Quickshell + core IPC) cannot function correctly.
+#
+# Verification:
+#   - Installed check: 'pacman -Q <package>'
+#   - Availability check: 'pacman -Si <package>'
+# ==============================================================================
+
+hyprland # Core Wayland compositor and window manager orchestrating the desktop session
+quickshell # Primary desktop shell framework executing QML/C++ UI (shell.qml, island, settings)
+python # Execution runtime for wallpaper dynamic theming, audio IPC, sounds, and watchers
+fish # Shell interpreter for run-gps.fish startup orchestrator and wallpaper scripts
+bash # POSIX shell runtime for session scripts (gps-idle, gps-lock, gps-shot, gps-ipc)
+nodejs # JavaScript runtime engine for gps-clipboard and ClipboardService backend
+pipewire # Core multimedia server and pw-play audio output for the sound engine
+wireplumber # Modular PipeWire session manager providing wpctl volume and sink routing
+pipewire-pulse # PulseAudio daemon replacement for PipeWire audio spectrum analysis
+python-pillow # Image processing library used by set_wallpaper.py for palette extraction
+python-gobject # GObject Python bindings (gi.repository.GLib) required by gps-device-watcher
+python-dbus # Python D-Bus bindings required by gps-device-watcher for system event bus
+networkmanager # Network management daemon and nmcli CLI queried by shell.qml and LeftRail
+bluez # Linux Bluetooth protocol stack daemon (bluetoothd)
+bluez-utils # Bluetooth management CLI (bluetoothctl) queried by LeftRail and Control island
+awww # High-performance Wayland wallpaper daemon (awww-daemon) and control client
+wl-clipboard # Wayland clipboard utilities (wl-copy, wl-paste) for clip store and picker
+cliphist # Wayland clipboard history daemon and binary cache manager
+hypridle # Hyprland idle daemon managed by scripts/gps-idle for display sleep policies
+hyprlock # Hyprland screen lock utility invoked by scripts/gps-lock
+qt6-wayland # Qt6 Wayland platform plugin required for Quickshell GUI surfaces
+xdg-desktop-portal # Core desktop portal service for screen sharing, open URI, and file dialogs
+xdg-desktop-portal-hyprland # Hyprland portal backend for screen capture and display management
+xdg-desktop-portal-gtk # GTK portal backend providing file dialogs and desktop picker fallback
+hyprpolkitagent # Polkit graphical authentication agent for privilege escalation dialogs
+gnome-keyring # D-Bus secrets service daemon (org.freedesktop.secrets) for credentials
+ttf-jetbrains-mono-nerd # Primary monospace font and Nerd Font symbol glyphs for all UI icons
+noto-fonts # Standard high-legibility UI sans-serif fallback font

@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+"""GPS Dependency Checker (gps-deps) — Non-destructive dependency inspector.
+
+Inspects GPS desktop session dependencies declared in packages/ manifests,
+queries local pacman installation status and repository availability,
+and outputs clean, grouped installation guidance without modifying the system.
+
+Mandatory guarantees:
+- Read-only: never installs or removes packages.
+- Safe: never invokes sudo.
+- Isolated: never synchronizes package databases (no pacman -Sy).
+- Non-destructive: never modifies any system or user configuration.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+# Regex for Arch Linux package names: lowercase alphanumeric with @._+-
+ARCH_PKG_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
+TAG_RE = re.compile(r"^\[([a-zA-Z0-9_-]+)\]$")
+
+
+def get_gps_root() -> Path:
+    """Resolve repository root directory."""
+    if "GPS_ROOT" in os.environ and os.path.isdir(os.environ["GPS_ROOT"]):
+        return Path(os.environ["GPS_ROOT"]).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def get_default_manifest_dir(repo_root: Optional[Path] = None) -> Path:
+    """Resolve default packages directory."""
+    if "GPS_MANIFEST_DIR" in os.environ and os.path.isdir(os.environ["GPS_MANIFEST_DIR"]):
+        return Path(os.environ["GPS_MANIFEST_DIR"]).resolve()
+    root = repo_root or get_gps_root()
+    return root / "packages"
+
+
+class ManifestEntry:
+    """Represents a single parsed dependency entry."""
+
+    def __init__(
+        self,
+        name: str,
+        manifest: str,
+        source: str,
+        category: str,
+        is_required: bool,
+        description: str,
+        line_no: int,
+        raw_line: str,
+    ):
+        self.name = name
+        self.manifest = manifest          # "required", "optional", "aur"
+        self.source = source              # "official" or "aur"
+        self.category = category          # "core-required", "optional", "feature", "hardware"
+        self.is_required = is_required    # bool
+        self.description = description
+        self.line_no = line_no
+        self.raw_line = raw_line
+
+        # Runtime verification fields
+        self.installed: bool = False
+        self.installed_version: Optional[str] = None
+        self.available: bool = False
+        self.available_version: Optional[str] = None
+        self.repo: Optional[str] = None
+        self.status: str = "UNVERIFIED"   # "OK", "MISSING", "UNVERIFIED"
+        self.details: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "manifest": self.manifest,
+            "source": self.source,
+            "category": self.category,
+            "is_required": self.is_required,
+            "description": self.description,
+            "installed": self.installed,
+            "installed_version": self.installed_version,
+            "available": self.available,
+            "available_version": self.available_version,
+            "repo": self.repo,
+            "status": self.status,
+            "details": self.details,
+        }
+
+
+def parse_manifest_file(
+    file_path: Path,
+    manifest_type: str,
+    seen_packages: Dict[str, Tuple[str, int]],
+    errors: List[str],
+) -> List[ManifestEntry]:
+    """Parse a single manifest file with strict validation and duplicate detection."""
+    entries: List[ManifestEntry] = []
+    if not file_path.is_file():
+        errors.append(f"Manifest file missing: {file_path}")
+        return entries
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        errors.append(f"Failed to read {file_path}: {exc}")
+        return entries
+
+    for line_idx, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        # Extract inline comment if present
+        comment = ""
+        if "#" in line:
+            parts = line.split("#", 1)
+            line_part = parts[0].strip()
+            comment = parts[1].strip()
+        else:
+            line_part = line
+
+        tokens = line_part.split()
+        if not tokens:
+            continue
+
+        if len(tokens) > 2:
+            errors.append(
+                f"Malformed entry at {file_path.name}:{line_idx}: '{raw_line}' "
+                f"(expected '<package>' or '<package> [<category>] # <description>')"
+            )
+            continue
+
+        pkg_name = tokens[0].strip()
+        if not ARCH_PKG_NAME_RE.match(pkg_name):
+            errors.append(
+                f"Malformed package name at {file_path.name}:{line_idx}: '{pkg_name}' "
+                f"(must match lowercase Arch package naming format)"
+            )
+            continue
+
+        # Duplicate detection across all manifests
+        if pkg_name in seen_packages:
+            prev_file, prev_line = seen_packages[pkg_name]
+            errors.append(
+                f"Duplicate package '{pkg_name}' at {file_path.name}:{line_idx} "
+                f"(previously declared at {prev_file}:{prev_line})"
+            )
+            continue
+
+        seen_packages[pkg_name] = (file_path.name, line_idx)
+
+        # Parse category/requirement tag if present
+        tag = ""
+        if len(tokens) == 2:
+            tag_token = tokens[1].strip()
+            tag_match = TAG_RE.match(tag_token)
+            if not tag_match:
+                errors.append(
+                    f"Malformed category tag at {file_path.name}:{line_idx}: '{tag_token}' "
+                    f"(expected bracketed tag e.g. '[optional]', '[feature]')"
+                )
+                continue
+            tag = tag_match.group(1).lower()
+
+        # Categorize according to manifest type and tag
+        if manifest_type == "required":
+            source = "official"
+            category = tag if tag else "core-required"
+            is_required = True
+        elif manifest_type == "optional":
+            source = "official"
+            category = tag if tag else "optional"
+            is_required = False
+        elif manifest_type == "aur":
+            source = "aur"
+            if tag in ("required", "core-required"):
+                category = "core-required"
+                is_required = True
+            else:
+                category = tag if tag else "optional"
+                is_required = False
+        else:
+            source = "official"
+            category = "unknown"
+            is_required = False
+
+        entry = ManifestEntry(
+            name=pkg_name,
+            manifest=manifest_type,
+            source=source,
+            category=category,
+            is_required=is_required,
+            description=comment,
+            line_no=line_idx,
+            raw_line=raw_line,
+        )
+        entries.append(entry)
+
+    return entries
+
+
+def load_all_manifests(
+    manifest_dir: Path,
+) -> Tuple[List[ManifestEntry], List[str]]:
+    """Load required.txt, optional.txt, and aur.txt from manifest directory."""
+    seen: Dict[str, Tuple[str, int]] = {}
+    errors: List[str] = []
+    all_entries: List[ManifestEntry] = []
+
+    req_file = manifest_dir / "required.txt"
+    opt_file = manifest_dir / "optional.txt"
+    aur_file = manifest_dir / "aur.txt"
+
+    all_entries.extend(parse_manifest_file(req_file, "required", seen, errors))
+    all_entries.extend(parse_manifest_file(opt_file, "optional", seen, errors))
+    all_entries.extend(parse_manifest_file(aur_file, "aur", seen, errors))
+
+    return all_entries, errors
+
+
+def query_installed_packages(
+    runner: Callable[..., Any] = subprocess.run,
+) -> Dict[str, str]:
+    """Query currently installed packages via 'pacman -Q'.
+
+    Returns a dict mapping installed package names to their version strings.
+    """
+    installed: Dict[str, str] = {}
+    try:
+        res = runner(["pacman", "-Q"], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout:
+            for line in res.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    installed[parts[0]] = parts[1]
+    except Exception:
+        pass
+    return installed
+
+
+def check_single_installed(
+    pkg_name: str,
+    runner: Callable[..., Any] = subprocess.run,
+) -> Tuple[bool, Optional[str]]:
+    """Check if package or a package providing it is installed via 'pacman -Q <pkg>'."""
+    try:
+        res = runner(["pacman", "-Q", pkg_name], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout:
+            parts = res.stdout.strip().splitlines()[0].split()
+            if len(parts) >= 2:
+                return True, parts[1]
+            return True, "installed"
+    except Exception:
+        pass
+    return False, None
+
+
+def query_official_repo(
+    pkg_name: str,
+    runner: Callable[..., Any] = subprocess.run,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Query official repository database via 'pacman -Si <pkg>' without syncing.
+
+    Returns: (is_available, repo_name, version)
+    """
+    try:
+        res = runner(["pacman", "-Si", pkg_name], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout:
+            repo = None
+            version = None
+            for line in res.stdout.splitlines():
+                if line.startswith("Repository") and ":" in line:
+                    repo = line.split(":", 1)[1].strip()
+                elif line.startswith("Version") and ":" in line:
+                    version = line.split(":", 1)[1].strip()
+            return True, repo, version
+    except Exception:
+        pass
+    return False, None, None
+
+
+def query_aur_repo(
+    pkg_name: str,
+    paru_bin: Optional[str],
+    runner: Callable[..., Any] = subprocess.run,
+) -> Tuple[bool, Optional[str], Optional[str], str]:
+    """Query AUR metadata via 'paru -Si <pkg>' if paru is available.
+
+    Returns: (is_available, repo_name, version, message)
+    """
+    if not paru_bin:
+        return False, None, None, "paru not found for AUR query"
+
+    try:
+        res = runner([paru_bin, "-Si", pkg_name], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout:
+            version = None
+            for line in res.stdout.splitlines():
+                if line.startswith("Version") and ":" in line:
+                    version = line.split(":", 1)[1].strip()
+            return True, "aur", version, ""
+        return False, None, None, "package not found in AUR"
+    except Exception as exc:
+        return False, None, None, f"paru query error: {exc}"
+
+
+def verify_dependencies(
+    entries: List[ManifestEntry],
+    runner: Callable[..., Any] = subprocess.run,
+    which: Callable[[str], Optional[str]] = shutil.which,
+) -> None:
+    """Verify installation and repository availability for all manifest entries."""
+    installed_map = query_installed_packages(runner=runner)
+    paru_bin = which("paru")
+
+    for entry in entries:
+        # 1. Check local installation
+        if entry.name in installed_map:
+            entry.installed = True
+            entry.installed_version = installed_map[entry.name]
+            entry.status = "OK"
+            continue
+
+        # 2. Check virtual provides via pacman -Q
+        is_inst, ver = check_single_installed(entry.name, runner=runner)
+        if is_inst:
+            entry.installed = True
+            entry.installed_version = ver
+            entry.status = "OK"
+            continue
+
+        # 3. Package is missing locally; check repository availability
+        entry.installed = False
+        if entry.source == "official":
+            avail, repo, ver = query_official_repo(entry.name, runner=runner)
+            if avail:
+                entry.available = True
+                entry.available_version = ver
+                entry.repo = repo
+                entry.status = "MISSING"
+            else:
+                entry.available = False
+                entry.status = "UNVERIFIED"
+                entry.details = "not found in official repository"
+        elif entry.source == "aur":
+            if not paru_bin:
+                entry.available = False
+                entry.status = "UNVERIFIED"
+                entry.details = "paru not found for AUR query"
+            else:
+                avail, repo, ver, msg = query_aur_repo(entry.name, paru_bin, runner=runner)
+                if avail:
+                    entry.available = True
+                    entry.available_version = ver
+                    entry.repo = "aur"
+                    entry.status = "MISSING"
+                else:
+                    entry.available = False
+                    entry.status = "UNVERIFIED"
+                    entry.details = msg
+
+
+def build_suggested_commands(
+    entries: List[ManifestEntry],
+    required_only: bool = False,
+    include_all: bool = False,
+) -> Dict[str, Optional[str]]:
+    """Build exact pacman and paru install commands for missing packages."""
+    missing_official_req: List[str] = []
+    missing_official_opt: List[str] = []
+    missing_aur_req: List[str] = []
+    missing_aur_opt: List[str] = []
+
+    for e in entries:
+        if e.status != "MISSING":
+            continue
+        if e.source == "official":
+            if e.is_required:
+                missing_official_req.append(e.name)
+            else:
+                missing_official_opt.append(e.name)
+        elif e.source == "aur":
+            if e.is_required:
+                missing_aur_req.append(e.name)
+            else:
+                missing_aur_opt.append(e.name)
+
+    if required_only:
+        official_pkgs = missing_official_req
+        aur_pkgs = missing_aur_req
+    elif include_all:
+        official_pkgs = missing_official_req + missing_official_opt
+        aur_pkgs = missing_aur_req + missing_aur_opt
+    else:
+        # Default mode: suggest missing required dependencies prominently,
+        # but if no required are missing, suggest available missing optional
+        official_pkgs = missing_official_req if missing_official_req else missing_official_opt
+        aur_pkgs = missing_aur_req + missing_aur_opt
+
+    pacman_cmd = f"sudo pacman -S --needed {' '.join(official_pkgs)}" if official_pkgs else None
+    paru_cmd = f"paru -S --needed {' '.join(aur_pkgs)}" if aur_pkgs else None
+
+    return {
+        "pacman": pacman_cmd,
+        "paru": paru_cmd,
+        "missing_official_required": missing_official_req,
+        "missing_official_optional": missing_official_opt,
+        "missing_aur_required": missing_aur_req,
+        "missing_aur_optional": missing_aur_opt,
+    }
+
+
+def format_text_report(
+    entries: List[ManifestEntry],
+    errors: List[str],
+    required_only: bool = False,
+    include_all: bool = False,
+    color: bool = True,
+    paru_available: bool = True,
+) -> str:
+    """Format human-readable CLI summary and grouped installation guidance."""
+    use_color = color and sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    C_RESET = "\033[0m" if use_color else ""
+    C_BOLD = "\033[1m" if use_color else ""
+    C_GREEN = "\033[32m" if use_color else ""
+    C_RED = "\033[31m" if use_color else ""
+    C_YELLOW = "\033[33m" if use_color else ""
+    C_CYAN = "\033[36m" if use_color else ""
+
+    lines: List[str] = []
+    lines.append(f"{C_BOLD}GPS Dependency Check{C_RESET}")
+
+    if errors:
+        lines.append("")
+        lines.append(f"{C_RED}{C_BOLD}Manifest Errors detected:{C_RESET}")
+        for err in errors:
+            lines.append(f"  {C_RED}! {err}{C_RESET}")
+
+    def render_section(title: str, section_entries: List[ManifestEntry]) -> None:
+        if not section_entries:
+            return
+        lines.append("")
+        lines.append(f"{C_BOLD}{title}:{C_RESET}")
+        for e in section_entries:
+            if e.status == "OK":
+                tag_str = f"  [{C_GREEN}OK{C_RESET}] {e.name}"
+            elif e.status == "MISSING":
+                tag_str = f"  [{C_RED}MISSING{C_RESET}] {e.name}"
+            else:
+                tag_str = f"  [{C_YELLOW}UNVERIFIED{C_RESET}] {e.name}"
+                if e.details:
+                    tag_str += f" ({e.details})"
+            lines.append(tag_str)
+
+    req_entries = [e for e in entries if e.manifest == "required" or (e.is_required and e.manifest != "aur")]
+    opt_entries = [e for e in entries if e.manifest == "optional" and not e.is_required]
+    aur_entries = [e for e in entries if e.manifest == "aur"]
+
+    render_section("Core required", req_entries)
+
+    if not required_only:
+        render_section("Optional", opt_entries)
+        render_section("AUR", aur_entries)
+
+    # Missing paru warning if AUR dependencies present
+    if not paru_available and any(e.manifest == "aur" and not e.installed for e in entries):
+        lines.append("")
+        lines.append(f"{C_YELLOW}Notice: 'paru' is not installed; unable to verify AUR package metadata.{C_RESET}")
+
+    # Suggested commands
+    cmds = build_suggested_commands(entries, required_only=required_only, include_all=include_all)
+    pacman_cmd = cmds.get("pacman")
+    paru_cmd = cmds.get("paru")
+
+    if pacman_cmd or paru_cmd:
+        lines.append("")
+        lines.append(f"{C_BOLD}Suggested commands:{C_RESET}")
+        if pacman_cmd:
+            lines.append(f"  {pacman_cmd}")
+        if paru_cmd:
+            lines.append(f"  {paru_cmd}")
+    else:
+        lines.append("")
+        lines.append(f"{C_GREEN}All checked dependencies are satisfied.{C_RESET}")
+
+    return "\n".join(lines)
+
+
+def format_json_report(
+    entries: List[ManifestEntry],
+    errors: List[str],
+    required_only: bool = False,
+    include_all: bool = False,
+    paru_available: bool = True,
+) -> str:
+    """Format full JSON diagnostic payload."""
+    total = len(entries)
+    installed = sum(1 for e in entries if e.status == "OK")
+    missing = sum(1 for e in entries if e.status == "MISSING")
+    unverified = sum(1 for e in entries if e.status == "UNVERIFIED")
+
+    has_required_missing = any(e.is_required and e.status in ("MISSING", "UNVERIFIED") for e in entries)
+    cmds = build_suggested_commands(entries, required_only=required_only, include_all=include_all)
+
+    payload = {
+        "ok": not has_required_missing and len(errors) == 0,
+        "summary": {
+            "total": total,
+            "installed": installed,
+            "missing": missing,
+            "unverified": unverified,
+            "has_required_missing": has_required_missing,
+            "paru_available": paru_available,
+        },
+        "errors": errors,
+        "suggested_commands": {
+            "pacman": cmds.get("pacman"),
+            "paru": cmds.get("paru"),
+        },
+        "dependencies": [e.to_dict() for e in entries],
+    }
+    return json.dumps(payload, indent=2)
+
+
+def run_dependency_audit(
+    manifest_dir: Optional[Path] = None,
+    required_only: bool = False,
+    include_all: bool = False,
+    runner: Callable[..., Any] = subprocess.run,
+    which: Callable[[str], Optional[str]] = shutil.which,
+) -> Tuple[List[ManifestEntry], List[str], bool]:
+    """Execute manifest parsing and verification without system mutations."""
+    m_dir = manifest_dir or get_default_manifest_dir()
+    entries, errors = load_all_manifests(m_dir)
+
+    paru_avail = which("paru") is not None
+
+    if required_only:
+        entries = [e for e in entries if e.is_required]
+
+    verify_dependencies(entries, runner=runner, which=which)
+
+    return entries, errors, paru_avail
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="gps-deps",
+        description="Inspect GPS desktop dependencies and provide installation guidance.",
+    )
+    parser.add_argument(
+        "--required-only",
+        action="store_true",
+        help="Inspect only core-required dependencies",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Inspect and group commands for all dependencies (required, optional, AUR)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output machine-readable JSON report",
+    )
+    parser.add_argument(
+        "--manifest-dir",
+        type=str,
+        default=None,
+        help="Directory containing manifest files (defaults to packages/)",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable color in terminal output",
+    )
+
+    args = parser.parse_args(argv)
+
+    manifest_path = Path(args.manifest_dir).resolve() if args.manifest_dir else None
+    entries, errors, paru_avail = run_dependency_audit(
+        manifest_dir=manifest_path,
+        required_only=args.required_only,
+        include_all=args.all,
+        runner=subprocess.run,
+        which=shutil.which,
+    )
+
+    if args.json:
+        report = format_json_report(
+            entries=entries,
+            errors=errors,
+            required_only=args.required_only,
+            include_all=args.all,
+            paru_available=paru_avail,
+        )
+        print(report)
+    else:
+        report = format_text_report(
+            entries=entries,
+            errors=errors,
+            required_only=args.required_only,
+            include_all=args.all,
+            color=not args.no_color,
+            paru_available=paru_avail,
+        )
+        print(report)
+
+    # Return exit code:
+    # 1 if manifest syntax errors or required dependencies missing/unverified
+    # 0 if all required dependencies satisfied
+    has_critical_failure = (
+        len(errors) > 0
+        or any(e.is_required and e.status != "OK" for e in entries)
+    )
+    return 1 if has_critical_failure else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
