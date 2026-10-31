@@ -31,16 +31,20 @@ Scope {
     readonly property int devState: batDevice !== null ? batDevice.state : 0
 
     // Settings loader
-    FileWatcher {
+    FileView {
         id: settingsWatcher
         path: root.storePath
-        onFileChanged: root.loadSettings()
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: root.loadSettings()
     }
 
-    FileWatcher {
+    FileView {
         id: dndWatcher
         path: root.dndPath
-        onFileChanged: root.loadDnd()
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: root.loadDnd()
     }
 
     // Lightweight D-Bus device watcher owned by the shell
@@ -114,33 +118,31 @@ Scope {
     }
 
     function loadSettings() {
-        Quickshell.exec(["cat", root.storePath], proc => {
-            if (proc.exitCode !== 0) return
-            try {
-                const data = JSON.parse(proc.stdout)
-                if (data && typeof data === "object") {
-                    const merged = Object.assign({}, EventsLogic.DEFAULT_EVENTS_SETTINGS)
-                    if (data.events && typeof data.events === "object") {
-                        for (const k in data.events) {
-                            if (data.events[k] !== undefined) merged[k] = data.events[k]
-                        }
+        try {
+            const text = settingsWatcher.text()
+            if (!text || !text.trim()) return
+            const data = JSON.parse(text)
+            if (data && typeof data === "object") {
+                const merged = Object.assign({}, EventsLogic.DEFAULT_EVENTS_SETTINGS)
+                if (data.events && typeof data.events === "object") {
+                    for (const k in data.events) {
+                        if (data.events[k] !== undefined) merged[k] = data.events[k]
                     }
-                    root.eventsSettings = merged
                 }
-            } catch (e) {}
-        })
+                root.eventsSettings = merged
+            }
+        } catch (e) {}
     }
 
     function loadDnd() {
-        Quickshell.exec(["cat", root.dndPath], proc => {
-            if (proc.exitCode !== 0) return
-            try {
-                const data = JSON.parse(proc.stdout)
-                if (data && typeof data === "object") {
-                    root.dndActive = data.mode === "dnd" || data.mode === "snooze" || !!(data.schedule && data.schedule.enabled)
-                }
-            } catch (e) {}
-        })
+        try {
+            const text = dndWatcher.text()
+            if (!text || !text.trim()) return
+            const data = JSON.parse(text)
+            if (data && typeof data === "object") {
+                root.dndActive = data.mode === "dnd" || data.mode === "snooze" || !!(data.schedule && data.schedule.enabled)
+            }
+        } catch (e) {}
     }
 
     function updateSetting(key, val) {

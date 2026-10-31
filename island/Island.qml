@@ -1515,7 +1515,8 @@ Scope {
                 const ico = f.find(s => /^Material Symbols (Rounded|Outlined)/.test(s))
                 root.iconOk = !!ico
                 if (ico) root.iconFont = ico
-                if (f.indexOf("Inter") >= 0) root.uiFont = "Inter"
+                if (f.indexOf("Plus Jakarta Sans") >= 0) root.uiFont = "Plus Jakarta Sans"
+                else if (f.indexOf("Noto Sans") >= 0) root.uiFont = "Noto Sans"
                 const mono = f.find(s => /^JetBrains ?Mono( Nerd Font)?$/.test(s)) || f.find(s => /Mono/.test(s) && /Nerd/.test(s))
                 if (mono) root.monoFont = mono
             }

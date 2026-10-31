@@ -376,8 +376,8 @@ for o in ${keys}; do echo "##opt $o"; hyprctl getoption $o -j 2>/dev/null | tr -
             const ico = f.find(s => /^Material Symbols (Rounded|Outlined)/.test(s))
             root.iconOk = !!ico
             if (ico) root.iconFont = ico
-            if (has("Inter")) root.uiFont = "Inter"
-            else if (has("Plus Jakarta Sans")) root.uiFont = "Plus Jakarta Sans"
+            if (has("Plus Jakarta Sans")) root.uiFont = "Plus Jakarta Sans"
+            else if (has("Noto Sans")) root.uiFont = "Noto Sans"
             const mono = f.find(s => /^JetBrains ?Mono( Nerd Font)?$/.test(s)) || f.find(s => /Mono/.test(s) && /Nerd/.test(s))
             if (mono) root.monoFont = mono
         }

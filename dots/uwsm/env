@@ -1,0 +1,4 @@
+# UWSM user session environment
+# Toolkit and theming configuration for Wayland / Hyprland sessions
+
+export QT_QPA_PLATFORMTHEME=qt6ct

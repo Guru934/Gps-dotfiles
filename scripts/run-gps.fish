@@ -15,6 +15,11 @@ if not test -e "$HOME/.config/fontconfig/fonts.conf"
     "$REPO_DIR/scripts/setup-fonts.sh" --no-cache >/dev/null 2>&1; or true
 end
 
+# Ensure repository-managed UWSM environment configuration is installed
+if not test -e "$HOME/.config/uwsm/env"
+    "$REPO_DIR/scripts/setup-uwsm.sh" >/dev/null 2>&1; or true
+end
+
 # Ensure consistent cursor configuration across GTK, Qt, and XWayland
 "$REPO_DIR/scripts/setup-cursor.sh" >/dev/null 2>&1; or true
 
@@ -102,27 +107,36 @@ for pid in (pgrep -u (id -u) -f "$polkit_pat" 2>/dev/null)
     break
 end
 if test -z "$existing_polkit"
-    set -l candidate_agents \
-        "$POLKIT_AGENT_BIN" \
-        /usr/lib/hyprpolkitagent \
-        (command -v hyprpolkitagent 2>/dev/null) \
-        /usr/lib/polkit-kde-authentication-agent-1 \
-        /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
-        /usr/libexec/polkit-gnome-authentication-agent-1 \
-        /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
-        /usr/lib/pantheon-polkit-agent
     set -l polkit_started 0
-    for agent in $candidate_agents
-        if test -n "$agent" -a -x "$agent"
-            nohup "$agent" >/tmp/polkit-agent.log 2>&1 &
-            disown
+    if systemctl --user is-enabled hyprpolkitagent.service >/dev/null 2>&1
+        if systemctl --user start hyprpolkitagent.service >/dev/null 2>&1
+            log "started polkit agent via hyprpolkitagent.service"
             set polkit_started 1
-            log "started polkit agent: $agent"
-            break
         end
     end
     if test $polkit_started -eq 0
-        log "WARN: no polkit authentication agent binary found on system"
+        set -l candidate_agents \
+            "$POLKIT_AGENT_BIN" \
+            /usr/lib/hyprpolkitagent/hyprpolkitagent \
+            /usr/lib/hyprpolkitagent \
+            (command -v hyprpolkitagent 2>/dev/null) \
+            /usr/lib/polkit-kde-authentication-agent-1 \
+            /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
+            /usr/libexec/polkit-gnome-authentication-agent-1 \
+            /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+            /usr/lib/pantheon-polkit-agent
+        for agent in $candidate_agents
+            if test -n "$agent" -a -f "$agent" -a -x "$agent"
+                nohup "$agent" >/tmp/polkit-agent.log 2>&1 &
+                disown
+                set polkit_started 1
+                log "started polkit agent: $agent"
+                break
+            end
+        end
+        if test $polkit_started -eq 0
+            log "WARN: no polkit authentication agent binary found on system"
+        end
     end
 else
     log "polkit agent already active (pid $existing_polkit) - not duplicating"

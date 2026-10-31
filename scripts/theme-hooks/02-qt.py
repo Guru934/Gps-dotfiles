@@ -118,6 +118,13 @@ def update_qt6ct_config(qt6ct_conf_path: Path, scheme_path: Path) -> None:
     if not config.has_option("Appearance", "standard_dialogs"):
         config.set("Appearance", "standard_dialogs", "default")
 
+    if not config.has_section("Fonts"):
+        config.add_section("Fonts")
+    if not config.has_option("Fonts", "general"):
+        config.set("Fonts", "general", '"Plus Jakarta Sans,10,-1,5,50,0,0,0,0,0"')
+    if not config.has_option("Fonts", "fixed"):
+        config.set("Fonts", "fixed", '"JetBrains Mono,10,-1,5,50,0,0,0,0,0"')
+
     from io import StringIO
     sio = StringIO()
     config.write(sio)
