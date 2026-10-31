@@ -29,6 +29,34 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 ARCH_PKG_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9@._+-]*$")
 TAG_RE = re.compile(r"^\[([a-zA-Z0-9_-]+)\]$")
 
+# Mapping of package names to known executable binary names when they differ
+PACKAGE_BINARIES: Dict[str, List[str]] = {
+    "7zip": ["7z"],
+    "wl-clipboard": ["wl-copy", "wl-paste"],
+    "bluez-utils": ["bluetoothctl"],
+    "bluez": ["bluetoothd"],
+    "networkmanager": ["nmcli"],
+    "awatcher-bundle": ["awatcher"],
+    "wireplumber": ["wpctl", "wireplumber"],
+    "libpulse": ["parec", "pacat"],
+}
+
+# Known alternative providers for interchangeable session roles
+ALTERNATIVE_PROVIDERS: Dict[str, List[str]] = {
+    "hyprpolkitagent": [
+        "polkit-kde-agent",
+        "polkit-kde-authentication-agent-1",
+        "polkit-gnome",
+        "polkit-gnome-authentication-agent-1",
+        "mate-polkit",
+        "lxpolkit",
+    ],
+    "gnome-keyring": [
+        "kwallet",
+        "keepassxc",
+    ],
+}
+
 
 def get_gps_root() -> Path:
     """Resolve repository root directory."""
@@ -70,11 +98,14 @@ class ManifestEntry:
 
         # Runtime verification fields
         self.installed: bool = False
+        self.installed_package: Optional[str] = None
         self.installed_version: Optional[str] = None
+        self.installed_by: Optional[str] = None   # "package", "provider", "binary"
+        self.binary_path: Optional[str] = None
         self.available: bool = False
         self.available_version: Optional[str] = None
         self.repo: Optional[str] = None
-        self.status: str = "UNVERIFIED"   # "OK", "MISSING", "UNVERIFIED"
+        self.status: str = "UNVERIFIED"           # "OK", "MISSING", "UNVERIFIED"
         self.details: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,7 +117,10 @@ class ManifestEntry:
             "is_required": self.is_required,
             "description": self.description,
             "installed": self.installed,
+            "installed_package": self.installed_package,
             "installed_version": self.installed_version,
+            "installed_by": self.installed_by,
+            "binary_path": self.binary_path,
             "available": self.available,
             "available_version": self.available_version,
             "repo": self.repo,
@@ -249,18 +283,40 @@ def query_installed_packages(
 def check_single_installed(
     pkg_name: str,
     runner: Callable[..., Any] = subprocess.run,
-) -> Tuple[bool, Optional[str]]:
-    """Check if package or a package providing it is installed via 'pacman -Q <pkg>'."""
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Check if package or a package providing it is installed via 'pacman -Q <pkg>'.
+
+    Returns: (is_installed: bool, installed_pkg_name: Optional[str], version: Optional[str])
+    """
     try:
         res = runner(["pacman", "-Q", pkg_name], capture_output=True, text=True, timeout=5)
         if res.returncode == 0 and res.stdout:
             parts = res.stdout.strip().splitlines()[0].split()
             if len(parts) >= 2:
-                return True, parts[1]
-            return True, "installed"
+                return True, parts[0], parts[1]
+            return True, pkg_name, "installed"
     except Exception:
         pass
-    return False, None
+    return False, None, None
+
+
+def resolve_package_binary(
+    pkg_name: str,
+    which: Callable[[str], Optional[str]] = shutil.which,
+) -> Optional[str]:
+    """Check if an executable binary for the package exists on PATH or standard user directories."""
+    candidates = PACKAGE_BINARIES.get(pkg_name, [pkg_name])
+
+    for cand in candidates:
+        found = which(cand)
+        if found:
+            return found
+        # Check standard user local directory via which resolver
+        user_local = str(Path.home() / ".local" / "bin" / cand)
+        found_local = which(user_local)
+        if found_local:
+            return found_local
+    return None
 
 
 def query_official_repo(
@@ -285,6 +341,45 @@ def query_official_repo(
     except Exception:
         pass
     return False, None, None
+
+
+def query_official_repos(
+    pkg_names: List[str],
+    runner: Callable[..., Any] = subprocess.run,
+) -> Dict[str, Tuple[bool, Optional[str], Optional[str]]]:
+    """Batch query official repository database via 'pacman -Si <pkgs>' without syncing.
+
+    Returns dict mapping pkg_name -> (is_available, repo_name, version).
+    """
+    results: Dict[str, Tuple[bool, Optional[str], Optional[str]]] = {
+        p: (False, None, None) for p in pkg_names
+    }
+    if not pkg_names:
+        return results
+
+    try:
+        res = runner(["pacman", "-Si", *pkg_names], capture_output=True, text=True, timeout=15)
+        if res.stdout:
+            current_repo = None
+            current_name = None
+            for line in res.stdout.splitlines():
+                if line.startswith("Repository") and ":" in line:
+                    current_repo = line.split(":", 1)[1].strip()
+                elif line.startswith("Name") and ":" in line:
+                    current_name = line.split(":", 1)[1].strip()
+                elif line.startswith("Version") and ":" in line:
+                    version = line.split(":", 1)[1].strip()
+                    if current_name and current_name in results:
+                        results[current_name] = (True, current_repo, version)
+    except Exception:
+        pass
+
+    # Fallback to single queries for any still marked unavailable (e.g. runner mock behavior)
+    for pkg in pkg_names:
+        if not results[pkg][0]:
+            results[pkg] = query_official_repo(pkg, runner=runner)
+
+    return results
 
 
 def query_aur_repo(
@@ -317,55 +412,119 @@ def verify_dependencies(
     runner: Callable[..., Any] = subprocess.run,
     which: Callable[[str], Optional[str]] = shutil.which,
 ) -> None:
-    """Verify installation and repository availability for all manifest entries."""
+    """Verify installation, alternative providers, and repository availability for all entries.
+
+    Guarantees:
+    - Never assumes an installed package is available in official repositories without verification.
+    - Accurately distinguishes direct package, virtual provider, binary fallback, and missing.
+    """
     installed_map = query_installed_packages(runner=runner)
     paru_bin = which("paru")
 
+    # A. Batch query official repository availability for all official entries
+    official_names = [e.name for e in entries if e.source == "official"]
+    official_repo_info = query_official_repos(official_names, runner=runner)
+
     for entry in entries:
-        # 1. Check local installation
-        if entry.name in installed_map:
-            entry.installed = True
-            entry.installed_version = installed_map[entry.name]
-            entry.status = "OK"
-            continue
-
-        # 2. Check virtual provides via pacman -Q
-        is_inst, ver = check_single_installed(entry.name, runner=runner)
-        if is_inst:
-            entry.installed = True
-            entry.installed_version = ver
-            entry.status = "OK"
-            continue
-
-        # 3. Package is missing locally; check repository availability
-        entry.installed = False
         if entry.source == "official":
-            avail, repo, ver = query_official_repo(entry.name, runner=runner)
+            avail, repo, ver = official_repo_info.get(entry.name, (False, None, None))
             if avail:
                 entry.available = True
                 entry.available_version = ver
                 entry.repo = repo
-                entry.status = "MISSING"
             else:
                 entry.available = False
-                entry.status = "UNVERIFIED"
-                entry.details = "not found in official repository"
         elif entry.source == "aur":
-            if not paru_bin:
-                entry.available = False
-                entry.status = "UNVERIFIED"
-                entry.details = "paru not found for AUR query"
-            else:
+            # Check installation first; if installed, metadata can be verified via installed package
+            if paru_bin:
                 avail, repo, ver, msg = query_aur_repo(entry.name, paru_bin, runner=runner)
                 if avail:
                     entry.available = True
                     entry.available_version = ver
                     entry.repo = "aur"
-                    entry.status = "MISSING"
                 else:
                     entry.available = False
-                    entry.status = "UNVERIFIED"
                     entry.details = msg
+            else:
+                entry.available = False
+                entry.details = "paru not found for AUR query"
+
+        # B. Check local installation status
+        # 1. Direct package name match
+        if entry.name in installed_map:
+            entry.installed = True
+            entry.installed_package = entry.name
+            entry.installed_version = installed_map[entry.name]
+            entry.installed_by = "package"
+            entry.status = "OK"
+            continue
+
+        # 2. Virtual provides via pacman -Q
+        is_inst, prov_name, prov_ver = check_single_installed(entry.name, runner=runner)
+        if is_inst:
+            entry.installed = True
+            entry.installed_package = prov_name
+            entry.installed_version = prov_ver
+            entry.installed_by = "provider" if prov_name != entry.name else "package"
+            entry.status = "OK"
+            if prov_name and prov_name != entry.name:
+                entry.details = f"provided by {prov_name}"
+            continue
+
+        # 2b. Known VCS / alias package in installed map (e.g. quickshell-git for quickshell)
+        vcs_found = False
+        for suffix in ["-git", "-bin", "-hg", "-svn"]:
+            cand_pkg = f"{entry.name}{suffix}"
+            if cand_pkg in installed_map:
+                entry.installed = True
+                entry.installed_package = cand_pkg
+                entry.installed_version = installed_map[cand_pkg]
+                entry.installed_by = "provider"
+                entry.status = "OK"
+                entry.details = f"provided by {cand_pkg}"
+                vcs_found = True
+                break
+        if vcs_found:
+            continue
+
+        # 3. Known alternative package providers (e.g. polkit-kde-agent for hyprpolkitagent)
+        alt_found = False
+        if entry.name in ALTERNATIVE_PROVIDERS:
+            for alt_pkg in ALTERNATIVE_PROVIDERS[entry.name]:
+                if alt_pkg in installed_map:
+                    entry.installed = True
+                    entry.installed_package = alt_pkg
+                    entry.installed_version = installed_map[alt_pkg]
+                    entry.installed_by = "provider"
+                    entry.status = "OK"
+                    entry.details = f"alternative provider {alt_pkg} active"
+                    alt_found = True
+                    break
+        if alt_found:
+            continue
+
+        # 4. Binary availability on PATH or known user directory (e.g. ~/.local/bin/hyprlock)
+        bin_path = resolve_package_binary(entry.name, which=which)
+        if bin_path:
+            entry.installed = True
+            entry.installed_by = "binary"
+            entry.binary_path = bin_path
+            entry.status = "OK"
+            entry.details = f"binary at {bin_path}"
+            continue
+
+        # 5. Dependency is missing locally
+        entry.installed = False
+        if entry.available:
+            entry.status = "MISSING"
+        else:
+            entry.status = "UNVERIFIED"
+            if not entry.details:
+                entry.details = (
+                    "not found in official repositories"
+                    if entry.source == "official"
+                    else "not found in AUR"
+                )
 
 
 def build_suggested_commands(
@@ -400,8 +559,8 @@ def build_suggested_commands(
         official_pkgs = missing_official_req + missing_official_opt
         aur_pkgs = missing_aur_req + missing_aur_opt
     else:
-        # Default mode: suggest missing required dependencies prominently,
-        # but if no required are missing, suggest available missing optional
+        # Default mode: suggest missing required dependencies if any,
+        # otherwise suggest available missing optional packages
         official_pkgs = missing_official_req if missing_official_req else missing_official_opt
         aur_pkgs = missing_aur_req + missing_aur_opt
 
@@ -452,9 +611,15 @@ def format_text_report(
         lines.append(f"{C_BOLD}{title}:{C_RESET}")
         for e in section_entries:
             if e.status == "OK":
-                tag_str = f"  [{C_GREEN}OK{C_RESET}] {e.name}"
+                info = ""
+                if e.installed_by == "provider" and e.installed_package:
+                    info = f" ({C_CYAN}via {e.installed_package}{C_RESET})"
+                elif e.installed_by == "binary" and e.binary_path:
+                    info = f" ({C_CYAN}binary at {e.binary_path}{C_RESET})"
+                tag_str = f"  [{C_GREEN}OK{C_RESET}] {e.name}{info}"
             elif e.status == "MISSING":
-                tag_str = f"  [{C_RED}MISSING{C_RESET}] {e.name}"
+                repo_info = f" (repo: {e.repo})" if e.repo else ""
+                tag_str = f"  [{C_RED}MISSING{C_RESET}] {e.name}{repo_info}"
             else:
                 tag_str = f"  [{C_YELLOW}UNVERIFIED{C_RESET}] {e.name}"
                 if e.details:

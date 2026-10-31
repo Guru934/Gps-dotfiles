@@ -54,10 +54,12 @@ class MockCommandRunner:
         installed_packages: dict[str, str] | None = None,
         official_available: dict[str, dict[str, str]] | None = None,
         aur_available: dict[str, dict[str, str]] | None = None,
+        provides: dict[str, str] | None = None,
     ):
         self.installed = installed_packages or {}
         self.official = official_available or {}
         self.aur = aur_available or {}
+        self.provides = provides or {}
         self.invocations: list[list[str]] = []
 
     def __call__(self, cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -79,18 +81,26 @@ class MockCommandRunner:
             target = cmd[2]
             if target in self.installed:
                 return subprocess.CompletedProcess(cmd, 0, stdout=f"{target} {self.installed[target]}", stderr="")
+            if target in self.provides and self.provides[target] in self.installed:
+                provider_pkg = self.provides[target]
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{provider_pkg} {self.installed[provider_pkg]}", stderr="")
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=f"error: package '{target}' was not found")
 
-        # 3. pacman -Si <pkg>
-        if len(cmd) == 3 and cmd[0] == "pacman" and cmd[1] == "-Si":
-            target = cmd[2]
-            if target in self.official:
-                info = self.official[target]
-                repo = info.get("repo", "extra")
-                ver = info.get("version", "1.0.0-1")
-                out = f"Repository      : {repo}\nName            : {target}\nVersion         : {ver}\n"
-                return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=f"error: package '{target}' was not found")
+        # 3. pacman -Si (single or batch query)
+        if len(cmd) >= 3 and cmd[0] == "pacman" and cmd[1] == "-Si":
+            targets = cmd[2:]
+            out_lines = []
+            found_any = False
+            for target in targets:
+                if target in self.official:
+                    found_any = True
+                    info = self.official[target]
+                    repo = info.get("repo", "extra")
+                    ver = info.get("version", "1.0.0-1")
+                    out_lines.append(f"Repository      : {repo}\nName            : {target}\nVersion         : {ver}\n")
+            if found_any:
+                return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(out_lines), stderr="")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="error: packages not found")
 
         # 4. paru -Si <pkg>
         if len(cmd) == 3 and cmd[0].endswith("paru") and cmd[1] == "-Si":
@@ -213,7 +223,7 @@ class GpsDepsTests(unittest.TestCase):
         entries, errors, _ = gps_deps.run_dependency_audit(
             manifest_dir=self.dir_path,
             runner=runner,
-            which=lambda x: "/usr/bin/paru",
+            which=lambda x: "/usr/bin/paru" if x == "paru" else None,
         )
         self.assertEqual(len(errors), 0)
         self.assertEqual(entries[0].status, "OK")
@@ -231,6 +241,7 @@ class GpsDepsTests(unittest.TestCase):
         entries, errors, _ = gps_deps.run_dependency_audit(
             manifest_dir=self.dir_path,
             runner=runner,
+            which=lambda x: None,
         )
         self.assertEqual(entries[0].status, "MISSING")
         self.assertEqual(entries[0].repo, "cachyos-extra-v3")
@@ -285,6 +296,7 @@ class GpsDepsTests(unittest.TestCase):
             manifest_dir=self.dir_path,
             required_only=True,
             runner=runner,
+            which=lambda x: None,
         )
         self.assertEqual(len(entries), 2)
         self.assertTrue(all(e.is_required for e in entries))
@@ -312,7 +324,7 @@ class GpsDepsTests(unittest.TestCase):
             manifest_dir=self.dir_path,
             include_all=True,
             runner=runner,
-            which=lambda x: "/usr/bin/paru",
+            which=lambda x: "/usr/bin/paru" if x == "paru" else None,
         )
         report = gps_deps.format_text_report(entries, errors, include_all=True, paru_available=paru_avail)
         self.assertIn("Core required:", report)
@@ -333,6 +345,7 @@ class GpsDepsTests(unittest.TestCase):
         entries, errors, paru_avail = gps_deps.run_dependency_audit(
             manifest_dir=self.dir_path,
             runner=runner,
+            which=lambda x: None,
         )
         raw_json = gps_deps.format_json_report(entries, errors, paru_available=paru_avail)
         data = json.loads(raw_json)
@@ -361,7 +374,7 @@ class GpsDepsTests(unittest.TestCase):
         entries, errors, _ = gps_deps.run_dependency_audit(
             manifest_dir=self.dir_path,
             runner=runner,
-            which=lambda x: "/usr/bin/paru",
+            which=lambda x: "/usr/bin/paru" if x == "paru" else None,
         )
         cmds = gps_deps.build_suggested_commands(entries, include_all=True)
         self.assertEqual(cmds["pacman"], "sudo pacman -S --needed pkg1 pkg2")
@@ -376,9 +389,10 @@ class GpsDepsTests(unittest.TestCase):
         entries, errors, _ = gps_deps.run_dependency_audit(
             manifest_dir=self.dir_path,
             runner=runner,
+            which=lambda x: None,
         )
         self.assertEqual(entries[0].status, "UNVERIFIED")
-        self.assertIn("not found in official repository", entries[0].details)
+        self.assertIn("not found in official repositor", entries[0].details)
 
     def test_15_no_installation_commands_executed(self):
         """15. Dependency checker never executes pacman -S, paru -S or install operations."""
@@ -447,6 +461,115 @@ class GpsDepsTests(unittest.TestCase):
         self.assertEqual(len(req_names & opt_names), 0, "Duplicate package between required and optional")
         self.assertEqual(len(req_names & aur_names), 0, "Duplicate package between required and aur")
         self.assertEqual(len(opt_names & aur_names), 0, "Duplicate package between optional and aur")
+
+    def test_20_qt6ct_present_in_optional_manifest(self):
+        """20. Verify qt6ct is declared in optional manifest as an optional feature dependency."""
+        prod_dir = REPO_ROOT / "packages"
+        entries, errors = gps_deps.load_all_manifests(prod_dir)
+        self.assertEqual(len(errors), 0)
+
+        qt6ct_entries = [e for e in entries if e.name == "qt6ct"]
+        self.assertEqual(len(qt6ct_entries), 1, "qt6ct must be present in manifests")
+        qt6ct = qt6ct_entries[0]
+        self.assertEqual(qt6ct.manifest, "optional")
+        self.assertEqual(qt6ct.category, "feature")
+        self.assertFalse(qt6ct.is_required)
+        self.assertIn("Qt 6", qt6ct.description)
+
+    def test_21_quickshell_installed_versus_available_discrepancy(self):
+        """21. Quickshell installed via quickshell-git still verifies official repo availability."""
+        self.create_manifests(required_content="quickshell # core shell\n")
+        runner = MockCommandRunner(
+            installed_packages={"quickshell-git": "0.3.2.r0"},
+            official_available={"quickshell": {"repo": "extra", "version": "0.3.2-1"}},
+        )
+        entries, errors, _ = gps_deps.run_dependency_audit(
+            manifest_dir=self.dir_path,
+            runner=runner,
+            which=lambda x: None,
+        )
+        self.assertEqual(len(entries), 1)
+        qs = entries[0]
+        self.assertTrue(qs.installed)
+        self.assertEqual(qs.installed_by, "provider")
+        self.assertEqual(qs.installed_package, "quickshell-git")
+        self.assertTrue(qs.available)
+        self.assertEqual(qs.repo, "extra")
+        self.assertEqual(qs.available_version, "0.3.2-1")
+        self.assertEqual(qs.status, "OK")
+
+    def test_22_alternative_package_and_binary_providers(self):
+        """22. Alternative providers and standalone binaries satisfy dependencies."""
+        self.create_manifests(
+            optional_content="hyprlock [feature] # screen lock\nhyprpolkitagent [feature] # polkit\n",
+        )
+        # Simulate hyprlock not installed via pacman, but binary at ~/.local/bin/hyprlock
+        # Simulate hyprpolkitagent not installed, but polkit-kde-agent installed via pacman
+        runner = MockCommandRunner(
+            installed_packages={"polkit-kde-agent": "6.0.0-1"},
+            official_available={
+                "hyprlock": {"repo": "extra", "version": "0.9.6"},
+                "hyprpolkitagent": {"repo": "extra", "version": "0.2.0"},
+            },
+        )
+        fake_which = lambda cmd: "/home/rice/.local/bin/hyprlock" if "hyprlock" in cmd else None
+        entries, errors, _ = gps_deps.run_dependency_audit(
+            manifest_dir=self.dir_path,
+            runner=runner,
+            which=fake_which,
+        )
+        self.assertEqual(len(entries), 2)
+        lock_entry = [e for e in entries if e.name == "hyprlock"][0]
+        self.assertTrue(lock_entry.installed)
+        self.assertEqual(lock_entry.installed_by, "binary")
+        self.assertEqual(lock_entry.binary_path, "/home/rice/.local/bin/hyprlock")
+        self.assertEqual(lock_entry.status, "OK")
+
+        polkit_entry = [e for e in entries if e.name == "hyprpolkitagent"][0]
+        self.assertTrue(polkit_entry.installed)
+        self.assertEqual(polkit_entry.installed_by, "provider")
+        self.assertEqual(polkit_entry.installed_package, "polkit-kde-agent")
+        self.assertEqual(polkit_entry.status, "OK")
+
+    def test_23_missing_required_versus_optional_classification(self):
+        """23. Strict separation of core required session dependencies vs feature optional."""
+        prod_dir = REPO_ROOT / "packages"
+        entries, errors = gps_deps.load_all_manifests(prod_dir)
+        self.assertEqual(len(errors), 0)
+
+        req_names = {e.name for e in entries if e.manifest == "required"}
+        opt_names = {e.name for e in entries if e.manifest == "optional"}
+
+        # Strict core session requirements only
+        self.assertIn("hyprland", req_names)
+        self.assertIn("quickshell", req_names)
+        self.assertIn("qt6-wayland", req_names)
+        self.assertIn("pipewire", req_names)
+        self.assertIn("wireplumber", req_names)
+        self.assertIn("xdg-desktop-portal", req_names)
+
+        # Feature dependencies must be in optional, not required
+        feature_packages = [
+            "networkmanager",
+            "bluez",
+            "bluez-utils",
+            "wl-clipboard",
+            "cliphist",
+            "awww",
+            "gnome-keyring",
+            "python-dbus",
+            "python-gobject",
+            "hyprpolkitagent",
+            "pipewire-pulse",
+            "hyprlock",
+            "hypridle",
+            "python-pillow",
+            "ttf-jetbrains-mono-nerd",
+            "qt6ct",
+        ]
+        for fp in feature_packages:
+            self.assertIn(fp, opt_names, f"{fp} should be in optional.txt")
+            self.assertNotIn(fp, req_names, f"{fp} must not be in required.txt")
 
 
 if __name__ == "__main__":
