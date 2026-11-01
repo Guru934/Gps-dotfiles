@@ -31,6 +31,7 @@ Tests all 25 safety, idempotency, backup, and recovery requirements:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -46,6 +48,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 INSTALL_SH = REPO_ROOT / "install.sh"
 INSTALLER_PY = REPO_ROOT / "scripts" / "installer.py"
+
+from scripts.installer import InstallerLock, LockAcquisitionError
 
 
 class InstallerTestBase(unittest.TestCase):
@@ -608,6 +612,582 @@ class TestGpsInstaller(InstallerTestBase):
                 self.assertFalse(dest.exists(), f"GPS symlink must be removed on uninstall: {dest}")
             elif e["type"] == "template":
                 self.assertTrue(dest.exists(), f"User template must be preserved on uninstall: {dest}")
+
+    def test_27_gtk_settings_isolation_and_no_write_through(self):
+        """27. GTK settings are user-owned templates and cursor/theme updates never write to repository files."""
+        # Check initial git status of repo dots/ directory
+        git_status_before = subprocess.run(
+            ["git", "status", "--porcelain", "dots/"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        # 1. Apply installer in test environment
+        res = self.run_cmd(["--apply"])
+        self.assertEqual(res.returncode, 0)
+
+        gtk3_file = self.fake_config / "gtk-3.0" / "settings.ini"
+        gtk4_file = self.fake_config / "gtk-4.0" / "settings.ini"
+
+        # GTK settings must be regular files, not symlinks
+        self.assertTrue(gtk3_file.is_file())
+        self.assertFalse(gtk3_file.is_symlink())
+        self.assertTrue(gtk4_file.is_file())
+        self.assertFalse(gtk4_file.is_symlink())
+
+        # 2. Run cursor_setup.py
+        cursor_script = REPO_ROOT / "scripts" / "cursor_setup.py"
+        res_cursor = subprocess.run(
+            [sys.executable, str(cursor_script), "--config-dir", str(self.fake_config), "--icons-dir", str(self.fake_home / ".icons"), "--no-live"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertEqual(res_cursor.returncode, 0, f"Cursor setup failed: {res_cursor.stderr}")
+
+        # 3. Run gps_icons.py
+        icons_script = REPO_ROOT / "scripts" / "gps_icons.py"
+        res_icons = subprocess.run(
+            [sys.executable, str(icons_script), "--config-dir", str(self.fake_config), "--icons-dir", str(self.fake_home / ".local" / "share" / "icons")],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        # Note: icons generation returns 0 (even in fallback mode)
+        self.assertEqual(res_icons.returncode, 0, f"Icons generator failed: {res_icons.stderr}")
+
+        # 4. Verify repo git status remains completely clean
+        git_status_after = subprocess.run(
+            ["git", "status", "--porcelain", "dots/"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self.assertEqual(git_status_before, git_status_after, "Repository dots/ was dirtied by user scripts!")
+
+        # 5. Verify pre-existing user GTK settings are preserved on subsequent apply
+        gtk3_file.write_text("[Settings]\ngtk-theme-name=CustomUserTheme\n", encoding="utf-8")
+        res_apply2 = self.run_cmd(["--apply"])
+        self.assertEqual(res_apply2.returncode, 0)
+        self.assertIn("CustomUserTheme", gtk3_file.read_text(encoding="utf-8"))
+
+    def test_28_persistent_transaction_recovery_and_keyboard_interrupt(self):
+        """28. Incomplete transactions are detected and recovered idempotently; KeyboardInterrupt triggers rollback."""
+        from scripts.installer import GpsInstaller, TransactionError
+
+        installer = GpsInstaller(
+            repo_root=REPO_ROOT,
+            home_dir=self.fake_home,
+            config_dir=self.fake_config,
+            state_dir=self.fake_state,
+            bin_dir=self.fake_bin,
+            skip_deps=True,
+            no_color=True,
+        )
+
+        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr.parent.mkdir(parents=True, exist_ok=True)
+        orig_hypr.write_text("-- original user hyprland config\n", encoding="utf-8")
+
+        # 1. Test KeyboardInterrupt triggers rollback and is re-raised
+        with mock.patch("scripts.installer.os.replace", side_effect=KeyboardInterrupt("Simulated Ctrl+C")):
+            with self.assertRaises(KeyboardInterrupt):
+                installer.apply()
+
+        # Original file should be restored by rollback
+        self.assertTrue(orig_hypr.is_file())
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original user hyprland config\n")
+
+        # 2. Simulate crashed transaction left on disk
+        backup_dir = self.fake_state / "gps" / "backups" / "crash_sim"
+        backup_files = backup_dir / "files" / "config"
+        backup_files.mkdir(parents=True, exist_ok=True)
+        backed_up_file = backup_files / "hyprland.lua"
+        backed_up_file.write_text("-- original backed up content\n", encoding="utf-8")
+
+        # Destination file was removed/overwritten before crash
+        if orig_hypr.exists():
+            orig_hypr.unlink()
+
+        journal_file = self.fake_state / "gps" / "install_journal.json"
+        journal_file.parent.mkdir(parents=True, exist_ok=True)
+        journal_payload = {
+            "timestamp": "2026-10-31T12:00:00",
+            "status": "in_progress",
+            "backup_dir": str(backup_dir),
+            "steps": [
+                {
+                    "id": "hypr_config",
+                    "dest": str(orig_hypr),
+                    "src": str(REPO_ROOT / "dots" / "hypr" / "hyprland.lua"),
+                    "type": "symlink",
+                    "original_type": "file",
+                    "backup_rel": "config/hyprland.lua",
+                    "state": "applied",
+                    "applied": True,
+                }
+            ],
+        }
+        journal_file.write_text(json.dumps(journal_payload, indent=2), encoding="utf-8")
+
+        # Running recovery restores original file
+        installer.recover_incomplete_transaction()
+        self.assertTrue(orig_hypr.is_file())
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original backed up content\n")
+
+        # Re-running recovery is idempotent
+        installer.recover_incomplete_transaction()
+        self.assertTrue(orig_hypr.is_file())
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original backed up content\n")
+
+    def test_29_installer_concurrency_lock(self):
+        """29. Advisory per-user file lock prevents concurrent installer operations."""
+        lock_path = self.fake_state / "gps" / "installer.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(lock_path, "a+") as f:
+            # Acquire exclusive lock
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            # Concurrent apply must fail immediately with error
+            res_apply = self.run_cmd(["--apply"])
+            self.assertNotEqual(res_apply.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_apply.stderr)
+
+            # Concurrent uninstall must fail immediately with error
+            res_un = self.run_cmd(["--uninstall"])
+            self.assertNotEqual(res_un.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_un.stderr)
+
+            # Unlock
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        # After releasing the lock, apply succeeds normally
+        res_apply_ok = self.run_cmd(["--apply"])
+        self.assertEqual(res_apply_ok.returncode, 0)
+
+    def test_30_repository_relocation_contract(self):
+        """30. Repository relocation contract: broken symlinks reported with guidance; apply updates symlinks."""
+        repo_a = self.test_root / "repo_a"
+        repo_b = self.test_root / "repo_b"
+        shutil.copytree(REPO_ROOT / "dots", repo_a / "dots", symlinks=True)
+        shutil.copytree(REPO_ROOT / "scripts", repo_a / "scripts", symlinks=True)
+        shutil.copytree(REPO_ROOT / "templates", repo_a / "templates", symlinks=True)
+        shutil.copy2(REPO_ROOT / "install.sh", repo_a / "install.sh")
+
+        # 1. Install from repo_a
+        res1 = self.run_cmd(["--apply"], repo=repo_a)
+        self.assertEqual(res1.returncode, 0)
+        hypr_link = self.fake_config / "hypr" / "hyprland.lua"
+        self.assertTrue(hypr_link.is_symlink())
+        self.assertEqual(hypr_link.resolve(), (repo_a / "dots" / "hypr" / "hyprland.lua").resolve())
+
+        # 2. Relocate repo_a to repo_b
+        shutil.move(str(repo_a), str(repo_b))
+
+        # 3. Check using repo_b detects broken / relocated symlinks and displays guidance
+        res_check = self.run_cmd(["--check"], repo=repo_b)
+        self.assertNotEqual(res_check.returncode, 0)
+        self.assertIn("RELOCATION GUIDANCE", res_check.stdout)
+
+        # 4. Re-run --apply from repo_b updates symlinks cleanly
+        res_apply2 = self.run_cmd(["--apply"], repo=repo_b)
+        self.assertEqual(res_apply2.returncode, 0)
+        self.assertTrue(hypr_link.is_symlink())
+        self.assertEqual(hypr_link.resolve(), (repo_b / "dots" / "hypr" / "hyprland.lua").resolve())
+
+    def test_31_existing_user_templates_survive_failed_apply_rollback(self):
+        """31. Pre-existing user templates survive failed apply rollback; newly created templates removed."""
+        from scripts.installer import GpsInstaller, TransactionError
+
+        # Setup pre-existing user rice-settings.json and gtk-3.0/settings.ini
+        rice_settings = self.fake_config / "quickshell" / "rice-settings.json"
+        rice_settings.parent.mkdir(parents=True, exist_ok=True)
+        rice_settings.write_text('{"custom_user_rice": 123}\n', encoding="utf-8")
+
+        gtk3_settings = self.fake_config / "gtk-3.0" / "settings.ini"
+        gtk3_settings.parent.mkdir(parents=True, exist_ok=True)
+        gtk3_settings.write_text("[Settings]\ngtk-theme-name=MyCustomTheme\n", encoding="utf-8")
+
+        gtk4_settings = self.fake_config / "gtk-4.0" / "settings.ini"
+
+        installer = GpsInstaller(
+            repo_root=REPO_ROOT,
+            home_dir=self.fake_home,
+            config_dir=self.fake_config,
+            state_dir=self.fake_state,
+            bin_dir=self.fake_bin,
+            skip_deps=True,
+            no_color=True,
+        )
+
+        # Mock a failure on a late entry (e.g. symlink creation for binary)
+        call_count = [0]
+        real_symlink = os.symlink
+
+        def fail_late_symlink(src, dst):
+            call_count[0] += 1
+            if call_count[0] >= 13:
+                raise OSError("Simulated late failure in transaction")
+            return real_symlink(src, dst)
+
+        with mock.patch("scripts.installer.os.symlink", side_effect=fail_late_symlink):
+            with self.assertRaises(TransactionError):
+                installer.apply()
+
+        # 1. Pre-existing user templates must survive rollback with exact original content
+        self.assertTrue(rice_settings.is_file())
+        self.assertEqual(rice_settings.read_text(encoding="utf-8"), '{"custom_user_rice": 123}\n')
+
+        self.assertTrue(gtk3_settings.is_file())
+        self.assertEqual(gtk3_settings.read_text(encoding="utf-8"), "[Settings]\ngtk-theme-name=MyCustomTheme\n")
+
+        # 2. Newly created template that was originally absent must be removed on rollback
+        self.assertFalse(gtk4_settings.exists())
+
+        # 3. Repeated rollback preserves the existing templates
+        installer.recover_incomplete_transaction()
+        self.assertTrue(rice_settings.is_file())
+        self.assertEqual(rice_settings.read_text(encoding="utf-8"), '{"custom_user_rice": 123}\n')
+        self.assertTrue(gtk3_settings.is_file())
+        self.assertEqual(gtk3_settings.read_text(encoding="utf-8"), "[Settings]\ngtk-theme-name=MyCustomTheme\n")
+
+    def test_32_crash_between_filesystem_change_and_journal_persistence(self):
+        """32. Crash recovery reconciles filesystem state when journal records planned but filesystem was modified."""
+        from scripts.installer import compute_sha256
+
+        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr.parent.mkdir(parents=True, exist_ok=True)
+        orig_hypr.write_text("-- original user hyprland.lua\n", encoding="utf-8")
+        orig_hash = compute_sha256(orig_hypr)
+
+        # Create backup directory and store original file
+        backup_dir = self.fake_state / "gps" / "backups" / "crash_boundary_sim"
+        backup_files = backup_dir / "files" / "config"
+        backup_files.mkdir(parents=True, exist_ok=True)
+        backed_up_file = backup_files / "hyprland.lua"
+        backed_up_file.write_text("-- original user hyprland.lua\n", encoding="utf-8")
+
+        # Simulate that filesystem operation completed (hyprland.lua was replaced with GPS symlink)
+        gps_hypr = REPO_ROOT / "dots" / "hypr" / "hyprland.lua"
+        orig_hypr.unlink()
+        orig_hypr.symlink_to(gps_hypr)
+
+        # But journal on disk still says "planned" (process was terminated immediately before save_journal)
+        journal_file = self.fake_state / "gps" / "install_journal.json"
+        journal_file.parent.mkdir(parents=True, exist_ok=True)
+        journal_payload = {
+            "version": "1.0",
+            "transaction_id": "crash_boundary_sim",
+            "status": "in_progress",
+            "backup_dir": str(backup_dir),
+            "steps": [
+                {
+                    "id": "hyprland_lua",
+                    "category": "config",
+                    "type": "symlink",
+                    "action": "backup_and_link",
+                    "src": str(gps_hypr),
+                    "dest": str(orig_hypr),
+                    "original_type": "file",
+                    "backup_rel": "config/hyprland.lua",
+                    "backup_sha256": orig_hash,
+                    "expected_symlink_target": str(gps_hypr),
+                    "state": "planned",
+                }
+            ],
+        }
+        journal_file.write_text(json.dumps(journal_payload, indent=2), encoding="utf-8")
+
+        # Run recovery in a new installer process via subprocess
+        cmd = [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; import sys; "
+            f"sys.path.insert(0, '{REPO_ROOT}'); "
+            f"from scripts.installer import GpsInstaller; "
+            f"installer = GpsInstaller(repo_root=Path('{REPO_ROOT}'), home_dir=Path('{self.fake_home}'), "
+            f"config_dir=Path('{self.fake_config}'), state_dir=Path('{self.fake_state}'), bin_dir=Path('{self.fake_bin}')); "
+            f"sys.exit(0 if installer.recover_incomplete_transaction() else 1)",
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, env=self.env)
+        self.assertEqual(res.returncode, 0, f"Recovery process failed: {res.stderr}")
+        self.assertIn("[RECOVERY]", res.stdout)
+
+        # Verify original file was restored byte-for-byte
+        self.assertTrue(orig_hypr.is_file())
+        self.assertFalse(orig_hypr.is_symlink())
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original user hyprland.lua\n")
+        self.assertEqual(compute_sha256(orig_hypr), orig_hash)
+
+    def test_33_crash_injection_boundaries_and_temp_file_cleanup(self):
+        """33. Crash injection at backup verification, corrupted backup, and abandoned temp file cleanup."""
+        from scripts.installer import GpsInstaller, compute_sha256
+
+        # 1. Abandoned temporary files are cleaned up safely
+        hypr_dir = self.fake_config / "hypr"
+        hypr_dir.mkdir(parents=True, exist_ok=True)
+        abandoned_tmp = hypr_dir / ".hyprland.lua.tmp.9999"
+        abandoned_tmp.symlink_to(REPO_ROOT / "dots" / "hypr" / "hyprland.lua")
+
+        # Unrelated file with temp-like name must survive
+        unrelated_tmp = hypr_dir / ".hyprland.lua.tmp.user_backup"
+        unrelated_tmp.write_text("user backup must survive", encoding="utf-8")
+
+        unrelated_file = hypr_dir / "user_custom_note.txt"
+        unrelated_file.write_text("unrelated file must survive", encoding="utf-8")
+
+        installer = GpsInstaller(
+            repo_root=REPO_ROOT,
+            home_dir=self.fake_home,
+            config_dir=self.fake_config,
+            state_dir=self.fake_state,
+            bin_dir=self.fake_bin,
+            skip_deps=True,
+            no_color=True,
+        )
+
+        installer.apply()
+
+        # Genuine abandoned temp file must be cleaned up
+        self.assertFalse(abandoned_tmp.exists())
+        # Unrelated files must survive
+        self.assertTrue(unrelated_tmp.is_file())
+        self.assertEqual(unrelated_tmp.read_text(encoding="utf-8"), "user backup must survive")
+        self.assertTrue(unrelated_file.is_file())
+        self.assertEqual(unrelated_file.read_text(encoding="utf-8"), "unrelated file must survive")
+
+        # 2. Corrupted backup refuses restoration on rollback
+        corrupted_backup_dir = self.fake_state / "gps" / "backups" / "corrupted_sim"
+        corrupted_files = corrupted_backup_dir / "files" / "config"
+        corrupted_files.mkdir(parents=True, exist_ok=True)
+        corrupted_file = corrupted_files / "corrupt_test.txt"
+        corrupted_file.write_text("corrupted content", encoding="utf-8")
+
+        test_dest = self.fake_config / "corrupt_dest.txt"
+        test_dest.write_text("current dest content", encoding="utf-8")
+
+        journal_corrupt = {
+            "status": "in_progress",
+            "backup_dir": str(corrupted_backup_dir),
+            "steps": [
+                {
+                    "id": "corrupt_test",
+                    "action": "backup_and_link",
+                    "type": "symlink",
+                    "src": str(REPO_ROOT / "dots" / "hypr" / "hyprland.lua"),
+                    "dest": str(test_dest),
+                    "original_type": "file",
+                    "backup_rel": "config/corrupt_test.txt",
+                    "backup_sha256": "expected_valid_sha256_which_does_not_match",
+                    "state": "applied",
+                }
+            ],
+        }
+        # Rollback should refuse to overwrite destination with corrupted backup
+        installer.rollback_transaction(journal_corrupt)
+        self.assertTrue(test_dest.is_file())
+        self.assertEqual(test_dest.read_text(encoding="utf-8"), "current dest content")
+
+    def test_34_restartable_and_idempotent_uninstall(self):
+        """34. Interrupted uninstall is safely restartable and detects already-restored files vs modifications."""
+        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr.parent.mkdir(parents=True, exist_ok=True)
+        orig_hypr.write_text("-- original config for restartable uninstall\n", encoding="utf-8")
+
+        # 1. Apply installation
+        res_apply = self.run_cmd(["--apply"])
+        self.assertEqual(res_apply.returncode, 0)
+        self.assertTrue(orig_hypr.is_symlink())
+
+        # 2. Simulate interruption immediately after restoring hyprland.lua (before active manifest cleanup)
+        orig_hypr.unlink()
+        backup_root = self.fake_state / "gps" / "backups"
+        latest_backup = sorted(list(backup_root.iterdir()))[-1]
+        backup_file = latest_backup / "files" / "config" / "hyprland.lua"
+        shutil.copy2(backup_file, orig_hypr)
+
+        # 3. Rerun uninstall: must recognize that hyprland.lua is already restored, exit 0, no conflicts
+        res_un1 = self.run_cmd(["--uninstall"])
+        self.assertEqual(res_un1.returncode, 0)
+        self.assertIn("GPS Desktop uninstalled cleanly", res_un1.stdout)
+        self.assertTrue(orig_hypr.is_file())
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original config for restartable uninstall\n")
+
+        # 4. Rerun uninstall again: already fully completed uninstall repeats safely
+        res_un2 = self.run_cmd(["--uninstall"])
+        self.assertEqual(res_un2.returncode, 0)
+
+        # 5. Re-apply and simulate user modification after partial restore
+        self.run_cmd(["--apply"])
+        orig_hypr.unlink()
+        orig_hypr.write_text("-- user modified this file after partial restore\n", encoding="utf-8")
+
+        res_un3 = self.run_cmd(["--uninstall"])
+        self.assertNotEqual(res_un3.returncode, 0)
+        self.assertIn("was modified after installation", res_un3.stdout)
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- user modified this file after partial restore\n")
+
+    def test_35_lock_sigterm_and_inode_preservation(self):
+        """35. Holding lock in process A, SIGTERM to process A releases lock; inode is preserved and B acquires."""
+        lock_path = self.fake_state / "gps" / "installer.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Pre-seed lockfile or let InstallerLock create it
+        with InstallerLock(lock_path):
+            pass
+        self.assertTrue(lock_path.exists())
+        initial_inode = lock_path.stat().st_ino
+
+        # Start Process A in subprocess holding InstallerLock
+        sub_code = (
+            "import sys, time\n"
+            "from pathlib import Path\n"
+            f"sys.path.insert(0, '{REPO_ROOT}')\n"
+            "from scripts.installer import InstallerLock\n"
+            f"with InstallerLock(Path('{lock_path}')):\n"
+            "    print('LOCKED', flush=True)\n"
+            "    time.sleep(30)\n"
+        )
+        proc_a = subprocess.Popen(
+            [sys.executable, "-c", sub_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            # Wait until process A has acquired the lock
+            line = proc_a.stdout.readline()
+            self.assertEqual(line.strip(), "LOCKED")
+
+            # Verify that process B cannot acquire the lock while A holds it
+            with self.assertRaises(LockAcquisitionError):
+                with InstallerLock(lock_path):
+                    pass
+
+            # Send SIGTERM to process A
+            proc_a.terminate()
+            proc_a.wait(timeout=5)
+
+            # Verify lockfile STILL EXISTS (never unlinked)
+            self.assertTrue(lock_path.exists())
+            # Verify INODE is strictly unchanged
+            self.assertEqual(lock_path.stat().st_ino, initial_inode)
+
+            # Verify process B can acquire the lock immediately after A exits
+            acquired = False
+            with InstallerLock(lock_path):
+                acquired = True
+            self.assertTrue(acquired)
+
+            # Inode is still identical after process B acquires and releases
+            self.assertEqual(lock_path.stat().st_ino, initial_inode)
+        finally:
+            if proc_a.stdout:
+                proc_a.stdout.close()
+            if proc_a.stderr:
+                proc_a.stderr.close()
+            if proc_a.poll() is None:
+                proc_a.kill()
+                proc_a.wait()
+
+    def test_36_overlapping_installer_operations_cannot_acquire_separate_locks(self):
+        """36. Two overlapping installer operations cannot acquire separate locks simultaneously."""
+        lock_path = self.fake_state / "gps" / "installer.lock"
+
+        # Process A holds the lock
+        lock_a = InstallerLock(lock_path)
+        lock_a.acquire()
+        try:
+            initial_inode = lock_path.stat().st_ino
+
+            # Operation B attempting InstallerLock.acquire() fails
+            lock_b = InstallerLock(lock_path)
+            with self.assertRaises(LockAcquisitionError):
+                lock_b.acquire()
+
+            # Subprocess install.sh --apply fails immediately
+            res_apply = self.run_cmd(["--apply"])
+            self.assertNotEqual(res_apply.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_apply.stderr)
+
+            # Subprocess install.sh --uninstall fails immediately
+            res_un = self.run_cmd(["--uninstall"])
+            self.assertNotEqual(res_un.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_un.stderr)
+
+            # Inode remained unchanged
+            self.assertEqual(lock_path.stat().st_ino, initial_inode)
+        finally:
+            lock_a.release()
+
+        # After release, operation B can acquire cleanly
+        lock_b = InstallerLock(lock_path)
+        lock_b.acquire()
+        lock_b.release()
+        self.assertEqual(lock_path.stat().st_ino, initial_inode)
+
+    def test_37_lock_release_on_exceptions_and_keyboardinterrupt(self):
+        """37. Lock is cleanly released on ordinary exceptions and KeyboardInterrupt; inode preserved."""
+        lock_path = self.fake_state / "gps" / "installer.lock"
+
+        # Initial creation
+        with InstallerLock(lock_path):
+            pass
+        initial_inode = lock_path.stat().st_ino
+
+        # Test ordinary exception inside context manager
+        with self.assertRaises(RuntimeError):
+            with InstallerLock(lock_path):
+                raise RuntimeError("Simulated failure inside locked region")
+
+        # Verify lock was released: next acquisition must succeed
+        with InstallerLock(lock_path):
+            pass
+        self.assertEqual(lock_path.stat().st_ino, initial_inode)
+
+        # Test KeyboardInterrupt inside context manager
+        with self.assertRaises(KeyboardInterrupt):
+            with InstallerLock(lock_path):
+                raise KeyboardInterrupt("Simulated user cancellation (Ctrl+C)")
+
+        # Verify lock was released: next acquisition must succeed
+        with InstallerLock(lock_path):
+            pass
+        self.assertEqual(lock_path.stat().st_ino, initial_inode)
+
+    def test_38_apply_and_uninstall_contend_for_same_lock(self):
+        """38. Both apply and uninstall use the exact same persistent lockfile inode."""
+        lock_path = self.fake_state / "gps" / "installer.lock"
+
+        # Apply installation
+        res_apply = self.run_cmd(["--apply"])
+        self.assertEqual(res_apply.returncode, 0)
+        self.assertTrue(lock_path.exists())
+        inode_after_apply = lock_path.stat().st_ino
+
+        # While holding lock, uninstall cannot proceed
+        with InstallerLock(lock_path):
+            res_un_blocked = self.run_cmd(["--uninstall"])
+            self.assertNotEqual(res_un_blocked.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_un_blocked.stderr)
+
+        # Uninstall succeeds after lock release
+        res_un = self.run_cmd(["--uninstall"])
+        self.assertEqual(res_un.returncode, 0)
+
+        # Lockfile still exists and inode is preserved
+        self.assertTrue(lock_path.exists())
+        self.assertEqual(lock_path.stat().st_ino, inode_after_apply)
+
+        # While holding lock, apply cannot proceed
+        with InstallerLock(lock_path):
+            res_apply_blocked = self.run_cmd(["--apply"])
+            self.assertNotEqual(res_apply_blocked.returncode, 0)
+            self.assertIn("Another GPS installer operation is currently in progress", res_apply_blocked.stderr)
 
 
 if __name__ == "__main__":

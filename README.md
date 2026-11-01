@@ -178,6 +178,27 @@ Not bound in the live `hyprland.lua` (verified against `hyprctl binds -j`): `Sup
 - **Rofi**: colors are no longer rewritten inside `config.rasi`; the extractor generates `~/.config/rofi/colors.rasi` and the config just `@import`s it — user config stays untouched, changes apply on next rofi launch.
 - **Hyprland borders**: the extractor also sets `general:col.{active,inactive}_border` to match. On legacy (hyprlang) configs it uses `hyprctl keyword`; on the 0.55+ Lua parser — which silently rejects `keyword` — it falls back to `hyprctl eval 'hl.config(...)'` with the Lua gradient syntax (`{ colors = {...}, angle = 45 }`). Verified live.
 
+### 3.12. GPS User-Space Installer & Relocation Contract
+
+The GPS installer (`./install.sh` or `scripts/installer.py`) manages user-space dotfile symlinks, configuration templates, backups, rollback, and diagnostics:
+
+- **Command Modes**:
+  - `./install.sh` (or `--dry-run`, default): Inspects all planned symlinks, templates, and conflicts without touching the filesystem.
+  - `./install.sh --apply`: Executes the installation plan within an atomic transaction. Backs up pre-existing user files (with SHA-256 integrity hashing), deploys symlinks atomically via temporary file rename, instantiates user templates, and records an active installation manifest in `$XDG_STATE_HOME/gps/install_manifest.json`.
+  - `./install.sh --uninstall`: Safely rolls back GPS-managed symlinks and restores original pre-installation files. Detects and preserves user modifications and state files (`settings.ini`, `rice-settings.json`, `gps-theme.json`).
+  - `./install.sh --check`: Verifies that all managed files point to the active clone, verifies dependency availability, and runs `scripts/gps-doctor`.
+- **Transaction Recovery & Concurrency Safety**:
+  - Mutating operations (`--apply`, `--uninstall`) acquire an exclusive per-user lock (`$XDG_STATE_HOME/gps/installer.lock`) to prevent concurrent installer execution.
+  - Transactions persist a durable, fsynced journal (`install_journal.json`) before making modifications. If interrupted (`SIGINT`, `SIGTERM`, crash), the installer automatically and idempotently recovers or rolls back the transaction.
+- **Repository Relocation Contract**:
+  - Dotfile symlinks are created using **absolute paths** to guarantee deterministic resolution regardless of working directory or shell context.
+  - If the repository clone is moved, renamed, or relocated, existing symlinks will break.
+  - **Relocation recovery**: Simply navigate to the relocated repository and re-run:
+    ```bash
+    ./install.sh --apply
+    ```
+    The installer idempotently updates all symlinks to point to the new repository location without losing user settings or duplicating backups.
+
 ---
 
 ## 4. Directory & File Organization

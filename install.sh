@@ -7,6 +7,11 @@
 #   ./install.sh --apply        # Apply installation with backup & rollback
 #   ./install.sh --uninstall    # Safe uninstallation with conflict detection
 #   ./install.sh --check        # Check installation status & run doctor
+#
+# Repository Relocation Contract:
+#   The installer creates absolute symlinks to configuration files in this repo.
+#   If you move or rename the repository directory, re-run './install.sh --apply'
+#   from the new path to update all symlinks cleanly and idempotently.
 # ==============================================================================
 
 set -euo pipefail
