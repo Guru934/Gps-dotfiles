@@ -1,0 +1,16 @@
+# Cline Rules — GPS Task T1
+
+For canonical project instructions, refer to: [AGENTS.md](/AGENTS.md)
+
+## Summary
+
+This is the GPS desktop environment project developed by the rice user account.
+- AI coding agents must follow AGENTS.md for all instructions
+- Never modify the guru account or system configuration
+- Use GPS_ROOT and XDG paths — never hardcode usernames or home directories
+- Never use sudo or pacman — report commands for the user instead
+- All changes must be tested via `./tests/run_all.sh`
+- Use dedicated Git worktrees for independent tasks
+- Preserve existing architecture unless explicitly authorized
+- Do not modify application QML or runtime behavior during task T1
+- Do not push to GitHub until tests pass and diff is reviewed
