@@ -1,6 +1,10 @@
 # GPS Package & Dependency Manifests
 
-This directory contains declarative dependency manifests for the Aetheric Shell / GPS desktop session on CachyOS / Arch Linux, alongside documentation explaining dependency categorization and verification policies.
+This directory contains declarative dependency manifests for the Aetheric Shell / GPS desktop session on CachyOS / Arch Linux, alongside documentation explaining dependency categorization, inspection commands, and verification policies.
+
+For the full installation, packaging, recovery, and relocation manual, see [docs/installation.md](../docs/installation.md).
+
+---
 
 ## Manifest Files
 
@@ -94,7 +98,19 @@ These packages enhance the desktop experience or provide support for specific su
 
 ---
 
-### 4. Quickshell Package Selection
+### 4. Required, Optional, and Unavailable (Unverified) Dependencies
+
+Understanding dependency status reporting is essential for safe configuration:
+
+- **Core Required**: Dependencies in `packages/required.txt`. If any core-required package is missing, GPS **cannot start or run safely**.
+- **Optional / Feature**: Dependencies in `packages/optional.txt` or `packages/aur.txt`. If missing, the desktop environment still starts and functions cleanly, with specific widgets or actions showing honest UI notices or fallbacks (e.g. absent `hyprsunset` shows circadian as unavailable).
+- **Missing vs Unavailable (Unverified)**:
+  - **`[MISSING]`**: The dependency is not installed locally, but `gps-deps` verified that it **is available** in configured package databases (official repos via `pacman -Si`, or AUR via `paru -Si`). You can install it immediately with the suggested command (`sudo pacman -S --needed <pkg>` or `paru -S --needed <pkg>`).
+  - **`[UNVERIFIED]`**: The dependency is not installed locally and **is not found** in your active pacman repositories. It cannot be installed with standard pacman commands until corresponding repositories or PKGBUILDs are configured.
+
+---
+
+### 5. Quickshell Package Selection
 
 The official Arch Linux and CachyOS repositories contain the `quickshell` package in `extra` / `cachyos-extra-v3`.
 - **Clean Installation Recommendation**: Fresh installations should install the official `quickshell` package (`sudo pacman -S --needed quickshell`).
@@ -102,14 +118,17 @@ The official Arch Linux and CachyOS repositories contain the `quickshell` packag
 
 ---
 
-### 5. Executable vs Package Providers (hyprlock & Polkit)
+### 6. Executable vs Package Providers (hyprlock & Polkit)
 
 - **`hyprlock`**: In addition to package inspection via `pacman -Q`, `gps-deps` checks for standalone or user-built binaries (such as `~/.local/bin/hyprlock` or `~/.local/opt/hyprlock/bin/hyprlock`). If the binary is executable and reachable, the dependency is marked satisfied with its source path identified.
 - **Polkit Agents**: `run-gps.fish` supports a fallback chain for GUI elevation (`hyprpolkitagent`, `polkit-kde-authentication-agent-1`, `polkit-gnome-authentication-agent-1`, `pantheon-polkit-agent`, `lxpolkit`). Any compliant running agent satisfies the polkit requirement without forcing `hyprpolkitagent` as a rigid core requirement.
+- **Secret Services**: `gnome-keyring`, `kwallet`, and `keepassxc` are supported interchangeable providers for `org.freedesktop.secrets`.
 
 ---
 
 ## Inspecting Dependencies with `gps-deps`
+
+The inspection script `scripts/gps-deps` provides comprehensive dependency validation with zero modification to your system:
 
 ```bash
 # Default check: readable summary and grouped commands for missing packages
@@ -121,9 +140,22 @@ scripts/gps-deps --required-only
 # Check all dependencies including optional and AUR
 scripts/gps-deps --all
 
-# Machine-readable JSON output
+# Machine-readable JSON output (includes dependency list, status, and suggested commands)
 scripts/gps-deps --json
+
+# Override manifest directory (defaults to packages/)
+scripts/gps-deps --manifest-dir packages/
+
+# Disable terminal color output
+scripts/gps-deps --no-color
 ```
+
+### Exit Codes of `gps-deps`
+
+The script returns structured exit codes suitable for shell scripting and automation:
+- **`0`**: All inspected dependencies are satisfied.
+- **`1`**: One or more **core-required** dependencies are missing.
+- **`2`**: Core-required dependencies are satisfied, but one or more **optional or feature** dependencies are missing or unverified.
 
 ---
 

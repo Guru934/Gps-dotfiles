@@ -1,8 +1,8 @@
 # GPS Desktop — Project Status
 
-**Current Milestone:** P5 — GPS Daily-Driver Readiness & Reliability
+**Current Milestone:** PK1 — GPS Packaging, Installation & Recovery (K4 Documentation)
 **Status:** Completed
-**Branch:** `wip/media-hub-next-features`
+**Branch:** `feature/pk1-packaging`
 **Hardware Baseline:** NVIDIA RTX 4050 Laptop GPU (6GB VRAM), 16GB RAM, 1920×1200 Display @ 1.5x scale (1280×800 logical)
 
 ## Phase Progress
@@ -39,6 +39,9 @@
   - Live session verification in running Hyprland 0.57 environment: graceful recovery, panel toggling soak test, clean layer surfaces, and zero duplicate instances.
   - Full test suite passing: 340 Python tests, 74 Node assertions, qmllint with 0 errors, luac with 0 errors, shell/fish syntax clean, git diff --check clean.
   - Guru account and session security untouched. Unrelated worktree modifications preserved.
-- [ ] **P5.4 — Settings and Persistence**: Pending.
-- [ ] **P5.5 — Graceful Dependency Handling**: Pending.
-- [ ] **P5.6 — Integrated Reliability Verification**: Pending.
+- [x] **PK1 — GPS Packaging, Installation & Recovery**: Completed.
+  - [x] **K1 — Location-Independent Architecture**: Dynamic repo path resolution, relative configs, zero hardcoded user paths in runtime.
+  - [x] **K2 — Declarative Package Manifests**: `required.txt`, `optional.txt`, `aur.txt`, and read-only `gps-deps` CLI.
+  - [x] **K3 — Safe Idempotent Installer & Recovery**: Advisory per-user lock, durable transaction journal, pre-apply backup with SHA-256 verification, atomic symlinks, template preservation, signal rollback, and restartable uninstaller.
+  - [x] **K4 — Packaging Documentation**: Authoritative installation and recovery manual (`docs/installation.md`), expanded dependency reference (`packages/README.md`), navigable root README (`README.md`), troubleshooting matrix, and clean-account trial procedures.
+  - Full packaging test suite passing: 73 packaging tests (location independence, dependency checker, installer), 664 tests total.
