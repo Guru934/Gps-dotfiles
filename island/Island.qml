@@ -1169,7 +1169,13 @@ Scope {
             root.updateVisibility()
             return JSON.stringify({ ok: true, schedule: root.dndState.schedule })
         }
-        function launcher(state: string) { root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close") }
+        function launcher(state: string): string {
+            if (state === "status") {
+                return JSON.stringify({ ok: true, open: root.launcherOpen })
+            }
+            root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close")
+            return JSON.stringify({ ok: true, open: root.launcherOpen })
+        }
         function control(action: string) { root.setControl(action) }
         function show() {
             root.manualHide = false
@@ -1843,8 +1849,14 @@ Scope {
 
         Shortcut {
             sequence: "Escape"
-            enabled: win.visible && (root.isPinned || root.mode === "control" || root.controlOpen || root.manualShow)
-            onActivated: root.closeControl()
+            enabled: win.visible && (root.isPinned || root.mode === "control" || root.controlOpen || root.manualShow || root.launcherOpen || root.mode === "launcher")
+            onActivated: {
+                if (root.launcherOpen || root.mode === "launcher") {
+                    root.setLauncher(false)
+                } else {
+                    root.closeControl()
+                }
+            }
         }
 
         Rectangle {

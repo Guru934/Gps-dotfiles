@@ -1123,6 +1123,18 @@ check("active pet alert and pinned states beat external interaction", () => {
     assert.strictEqual(pinnedRes.reason, "pinned_open");
 });
 
+check("launcherOpen keeps island visible indefinitely with nextExpiry null", () => {
+    const res = IV.evaluateVisibility({
+        now: 1000,
+        launcherOpen: true
+    });
+    assert.strictEqual(res.visible, true);
+    assert.strictEqual(res.state, "launcher");
+    assert.strictEqual(res.nextExpiry, null);
+    assert.strictEqual(res.wantsKeyboard, true);
+    assert.strictEqual(res.reason, "launcher_open");
+});
+
 console.log("ALL PASS (" + passed + " island visibility checks)");
 
 

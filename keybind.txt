@@ -30,9 +30,11 @@ Super + V ........ Toggle clipboard history panel (routes to active island backe
                    gps-ipc clipboard toggle
 Super + Alt + C ... Toggle the project GPS Control Center.
                    gps-ipc island control toggle
-Super + Space .... App launcher (rofi).
-Super + R ........ App launcher (rofi, same as Super+Space).
-                   rofi -show drun
+Super (alone) .... App launcher (GPS Island launcher).
+                   gps-ipc island launcher toggle
+Super + Space .... App launcher (GPS Island launcher, same as Super).
+Super + R ........ App launcher (GPS Island launcher, same as Super).
+                   gps-ipc island launcher toggle
 
 
 ------------------------------------------------------------------------

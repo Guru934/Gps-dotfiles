@@ -96,8 +96,11 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onEntered: if (root.hub) root.hub.setTooltip("Application Launcher (Super+Space)")
+        onEntered: if (root.hub) root.hub.setTooltip("Application Launcher (Super)")
         onExited: if (root.hub) root.hub.clearTooltip()
-        onClicked: Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "rofi", "-show", "drun"])
+        onClicked: {
+            var script = (root.hub && root.hub.repoRoot) ? (root.hub.repoRoot + "/scripts/gps-ipc") : "gps-ipc"
+            Quickshell.execDetached([script, "island", "launcher", "toggle"])
+        }
     }
 }

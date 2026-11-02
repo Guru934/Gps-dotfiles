@@ -110,6 +110,18 @@ class GpsIpcReliabilityTests(unittest.TestCase):
         logged = self.log_file.read_text()
         self.assertIn("call island clipboard toggle", logged)
 
+    def test_launcher_subcommand_routes_to_island(self):
+        """gps-ipc launcher routes to island launcher function."""
+        mock_qs = self.mock_bin / "quickshell"
+        mock_qs.write_text(f"#!/bin/sh\necho \"$@\" >> '{self.log_file}'\nexit 0\n")
+        mock_qs.chmod(mock_qs.stat().st_mode | stat.S_IEXEC)
+
+        res = self._run_ipc(["launcher", "toggle"])
+        self.assertEqual(res.returncode, 0)
+        logged = self.log_file.read_text()
+        self.assertIn("call island launcher toggle", logged)
+        self.assertIn("IslandProduction.qml", logged)
+
     def test_check_command_detects_stopped_instance(self):
         mock_qs = self.mock_bin / "quickshell"
         mock_qs.write_text("#!/bin/sh\nexit 1\n")
@@ -120,12 +132,13 @@ class GpsIpcReliabilityTests(unittest.TestCase):
         self.assertIn("shell: stopped", res.stderr)
 
     def test_island_qml_implements_ipc_contract(self):
-        """Island.qml must implement clipboard, history, focusToggle, status, and clip."""
+        """Island.qml must implement clipboard, history, focusToggle, status, launcher, and clip."""
         self.assertIn("function clipboard(action: string)", ISLAND_QML)
         self.assertIn("function clip()", ISLAND_QML)
         self.assertIn("function history(): string", ISLAND_QML)
         self.assertIn("function focusToggle()", ISLAND_QML)
         self.assertIn("function status(): string", ISLAND_QML)
+        self.assertIn("function launcher(state: string)", ISLAND_QML)
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ end
 -- Set programs that you use
 local terminal    = "kitty"
 local fileManager = "thunar"
-local menu        = "rofi -show drun"
+local menu        = repo .. "/scripts/gps-ipc island launcher toggle"
 
 
 -------------------
@@ -288,6 +288,9 @@ hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
+-- Application launcher: Super key alone triggers the GPS Island launcher
+hl.bind(mainMod .. " + Super_L", hl.dsp.exec_cmd(menu), { release = true })
+hl.bind(mainMod .. " + Super_R", hl.dsp.exec_cmd(menu), { release = true })
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
