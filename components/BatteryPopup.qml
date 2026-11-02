@@ -196,7 +196,7 @@ PanelWindow {
             return Math.max(8, Math.min(Math.max(8, sh - h - 8), ay - h / 2))
         }
     }
-    implicitWidth: 330
+    implicitWidth: Theme.systemPopupWidth
     implicitHeight: Math.min(430, Math.max(180, mainCol.implicitHeight + 24))
     color: "transparent"
     visible: root.isOpen
@@ -299,7 +299,7 @@ PanelWindow {
                     text: "POWER & BATTERY"
                     color: Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.scaled(14)
                     font.bold: true
                     anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                 }
@@ -320,7 +320,7 @@ PanelWindow {
                         text: root.activeProfile.toUpperCase()
                         color: root.profileAccent(root.activeProfile)
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
                 }
@@ -345,7 +345,7 @@ PanelWindow {
                         text: root.batteryGlyph()
                         color: root.batteryColor()
                         font.family: Theme.fontMono
-                        font.pixelSize: 30
+                        font.pixelSize: Theme.scaled(30)
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
@@ -357,7 +357,7 @@ PanelWindow {
                             text: root.battPct + "%"
                             color: Theme.textMain
                             font.family: Theme.fontMono
-                            font.pixelSize: 20
+                            font.pixelSize: Theme.scaled(20)
                             font.bold: true
                         }
 
@@ -369,7 +369,7 @@ PanelWindow {
                             }
                             color: root.batteryColor()
                             font.family: Theme.fontUi
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.scaled(11)
                         }
 
                         Text {
@@ -377,7 +377,7 @@ PanelWindow {
                             text: root.battHealthText
                             color: Theme.textMuted
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.scaled(10)
                         }
                     }
                 }
@@ -390,7 +390,7 @@ PanelWindow {
                 text: "No battery detected on this device."
                 color: Theme.textMuted
                 font.family: Theme.fontUi
-                font.pixelSize: 11
+                font.pixelSize: Theme.scaled(11)
                 wrapMode: Text.WordWrap
             }
 
@@ -405,7 +405,7 @@ PanelWindow {
                     text: "POWER PROFILE"
                     color: Theme.textMuted
                     font.family: Theme.fontUi
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.scaled(10)
                     font.bold: true
                     font.letterSpacing: 1.2
                     anchors { left: parent.left; verticalCenter: parent.verticalCenter }
@@ -416,7 +416,7 @@ PanelWindow {
                     text: "driver: " + root.profileDriver
                     color: Theme.textMuted
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.scaled(9)
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                 }
             }
@@ -455,7 +455,7 @@ PanelWindow {
                             text: "●"
                             color: root.profileAccent(profRow.modelData.id)
                             font.family: Theme.fontMono
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.scaled(12)
                         }
 
                         Text {
@@ -463,7 +463,7 @@ PanelWindow {
                             text: root.profileLabel(profRow.modelData.id)
                             color: Theme.textMain
                             font.family: Theme.fontUi
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.scaled(12)
                             font.bold: profRow.modelData.active || profMouse.containsMouse
                         }
 
@@ -483,7 +483,7 @@ PanelWindow {
                                 text: "degraded"
                                 color: Theme.statusWarn
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.scaled(8)
                             }
                         }
                     }
@@ -499,7 +499,7 @@ PanelWindow {
                             ? "#F5C17A"
                             : root.profileAccent(profRow.modelData.id)
                         font.family: Theme.fontMono
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.scaled(12)
                         font.bold: true
                     }
 
@@ -520,7 +520,7 @@ PanelWindow {
                 text: "No power profiles available — is power-profiles-daemon running?"
                 color: Theme.textMuted
                 font.family: Theme.fontUi
-                font.pixelSize: 11
+                font.pixelSize: Theme.scaled(11)
                 wrapMode: Text.WordWrap
             }
 
@@ -531,7 +531,7 @@ PanelWindow {
                 text: root.profileError
                 color: "#FF5C77"
                 font.family: Theme.fontUi
-                font.pixelSize: 11
+                font.pixelSize: Theme.scaled(11)
                 wrapMode: Text.WordWrap
             }
 
@@ -540,7 +540,7 @@ PanelWindow {
                 text: "applied via powerprofilesctl · power-profiles-daemon"
                 color: Theme.textMuted
                 font.family: Theme.fontMono
-                font.pixelSize: 9
+                font.pixelSize: Theme.scaled(9)
             }
         }
     }

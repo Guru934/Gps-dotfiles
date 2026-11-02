@@ -37,7 +37,7 @@ PanelWindow {
             return Math.max(8, Math.min(Math.max(8, sh - h - 8), ay - h / 2))
         }
     }
-    implicitWidth: 330
+    implicitWidth: Theme.systemPopupWidth
     implicitHeight: Math.min(350, Math.max(190, mainCol.implicitHeight + 24))
     color: "transparent"
     visible: root.isOpen
@@ -82,7 +82,7 @@ PanelWindow {
             Item {
                 width: parent.width
                 height: 26
-                Text { text: "BLUETOOTH"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
+                Text { text: "BLUETOOTH"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(14); font.bold: true; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
                 Row {
                     spacing: 6
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }
@@ -94,7 +94,7 @@ PanelWindow {
                             anchors.centerIn: parent
                             text: (root.hub && root.hub.btPowered) ? "ON" : "OFF"
                             color: (root.hub && root.hub.btPowered) ? Theme.brandAccentFg : Theme.textMuted
-                            font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true
+                            font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); font.bold: true
                         }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.toggleBtPower() }
                     }
@@ -102,7 +102,7 @@ PanelWindow {
                     Rectangle {
                         width: 26; height: 26; radius: 13
                         color: closeMouse.containsMouse ? Theme.cardHover : Theme.card
-                        Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
+                        Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: Theme.scaled(11) }
                         MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.close() }
                     }
                 }
@@ -116,7 +116,7 @@ PanelWindow {
                     if (root.hub.btConnectedName !== "") return "Connected: " + root.hub.btConnectedName
                     return "On · no device connected"
                 }
-                color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 10
+                color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10)
                 elide: Text.ElideRight
             }
 
@@ -154,19 +154,19 @@ PanelWindow {
                     anchors.centerIn: parent
                     text: (root.hub && root.hub.btScanning) ? "Scanning…" : "⟳  Scan for devices"
                     color: (root.hub && root.hub.btScanning) ? Theme.textMuted : Theme.textMain
-                    font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true
+                    font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true
                 }
                 MouseArea { id: scanMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.scanBluetooth() }
             }
 
-            Text { text: "DEVICES"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.1 }
+            Text { text: "DEVICES"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); font.bold: true; font.letterSpacing: 1.1 }
 
             // Loading state
             Text {
                 width: parent.width; horizontalAlignment: Text.AlignHCenter
                 visible: (root.hub && root.hub.btScanning) && root.devices.length === 0
                 text: "Scanning for devices…"
-                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
+                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11)
             }
 
             // Empty state
@@ -178,12 +178,12 @@ PanelWindow {
                     text: (!root.hub || !root.hub.btAvailable)
                         ? "Bluetooth service is unavailable."
                         : (!root.hub.btPowered ? "Bluetooth adapter is off." : "No devices found.")
-                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
+                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11)
                 }
                 Text {
                     width: parent.width; horizontalAlignment: Text.AlignHCenter
                     text: "Put the device in pairing mode, then scan."
-                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9
+                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9)
                 }
             }
 
@@ -210,7 +210,7 @@ PanelWindow {
                         Text {
                             width: parent.width
                             text: modelData.name
-                            color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true
+                            color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true
                             elide: Text.ElideRight
                         }
                         Item {
@@ -220,7 +220,7 @@ PanelWindow {
                                 width: parent.width - actionRow.width - 8
                                 text: (modelData.connected ? "Connected" : (modelData.paired ? "Paired" : "Found")) + " · " + modelData.mac
                                 color: modelData.connected ? Theme.brandAccent : Theme.textMuted
-                                font.family: Theme.fontMono; font.pixelSize: 8
+                                font.family: Theme.fontMono; font.pixelSize: Theme.scaled(8)
                                 elide: Text.ElideRight
                             }
                             Row {
@@ -233,7 +233,7 @@ PanelWindow {
                                     visible: !modelData.paired && !modelData.connected
                                     color: pairMouse.containsMouse ? Theme.cardHover : Theme.card
                                     border.width: 1; border.color: Theme.border
-                                    Text { anchors.centerIn: parent; text: "Pair"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
+                                    Text { anchors.centerIn: parent; text: "Pair"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9); font.bold: true }
                                     MouseArea { id: pairMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.pairBtDevice(modelData.mac) }
                                 }
                                 // Connect / Disconnect button
@@ -248,7 +248,7 @@ PanelWindow {
                                             return modelData.connected ? "Disconnect" : "Connect"
                                         }
                                         color: (connMouse.containsMouse || !modelData.connected) ? Theme.brandAccentFg : Theme.textMain
-                                        font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true
+                                        font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9); font.bold: true
                                     }
                                     MouseArea { id: connMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.toggleBtDevice(modelData.mac, modelData.connected) }
                                 }
@@ -261,7 +261,7 @@ PanelWindow {
             Text {
                 width: parent.width
                 text: "Pairing success is only shown after the adapter confirms it."
-                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 8
+                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(8)
                 wrapMode: Text.WordWrap
             }
         }
