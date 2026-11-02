@@ -18,13 +18,7 @@ get_backend() {
 }
 
 island_target_path() {
-    local backend
-    backend="$(get_backend)"
-    if [[ "$backend" == "tide" ]]; then
-        printf '%s\n' "${HOME}/.local/share/tide-island"
-    else
-        printf '%s\n' "${REPO_DIR}/island/IslandProduction.qml"
-    fi
+    printf '%s\n' "${REPO_DIR}/island/IslandProduction.qml"
 }
 
 # Protected QuickShell IPC call with timeout and structured diagnostics.
@@ -137,12 +131,7 @@ case "$cmd" in
         action="${1:-toggle}"
         shift || true
         ipath="$(island_target_path)"
-        backend="$(get_backend)"
-        if [[ "$backend" == "tide" ]]; then
-            call_qs "$ipath" clipboard "$action" "$@"
-        else
-            call_qs "$ipath" island clipboard "$action" "$@"
-        fi
+        call_qs "$ipath" island clipboard "$action" "$@"
         ;;
 
     notify|notification)

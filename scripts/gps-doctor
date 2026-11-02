@@ -501,13 +501,13 @@ def audit_session(repo_root=None, runner=subprocess.run):
         "action": None if qs_shell_run else "scripts/run-gps.fish",
     })
 
-    qs_island_run, qs_island_pids = is_process_running(r"(quickshell.*IslandProduction\.qml|share/tide-[i]sland)", exact=False, runner=runner)
+    qs_island_run, qs_island_pids = is_process_running(r"quickshell.*IslandProduction\.qml", exact=False, runner=runner)
     checks.append({
         "name": "quickshell-island",
         "label": "QS Island Pill",
         "status": "OK" if qs_island_run else "MISSING",
         "essential": True,
-        "details": f"PID {qs_island_pids[0]} (Island)" if qs_island_run else "dead (IslandProduction.qml / tide-island)",
+        "details": f"PID {qs_island_pids[0]} (Island)" if qs_island_run else "dead (IslandProduction.qml)",
         "action": None if qs_island_run else "scripts/run-gps.fish",
     })
 
@@ -539,8 +539,6 @@ def audit_session(repo_root=None, runner=subprocess.run):
     # Logs inspection
     shell_log_path = Path("/tmp/qs-gps.log")
     island_log_path = Path.home() / ".config/quickshell/island.log"
-    if not island_log_path.exists() and Path("/tmp/tide-island.log").exists():
-        island_log_path = Path("/tmp/tide-island.log")
 
     logs_info = {
         "shell": {

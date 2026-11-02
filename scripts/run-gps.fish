@@ -78,14 +78,12 @@ if test $ready_tries -gt 0
 end
 
 # 1. Stop only the stale GPS shell and wallpaper daemon.
-# Tide Island is also a QuickShell process, so never kill all quickshell PIDs.
+# GPS Island is also a QuickShell process, so never kill all quickshell PIDs.
 stop_pattern "quickshell.*shell\.qml" "GPS master shell"
 stop_pattern "awww-daemon" "awww-daemon"
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
 rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
-# /tmp/tide-island.log is NOT deleted here: a preserved island keeps writing
-# to it; when the island is (re)started its redirect truncates the file.
 sleep 0.2
 
 # 1b. Start Polkit authentication agent once across the session.
@@ -181,50 +179,25 @@ if not pgrep -f "wl-paste --type image --watch .*gps-clip-store" >/dev/null 2>&1
     disown
 end
 
-# 5. Keep the selected island untouched; start it only if absent.  Tide is
-#    the safe default because the existing GPS shell still routes clipboard
-#    and notification-center IPC to Tide.  A deliberate production cutover
-#    uses: scripts/switch-island.fish gps
-# The running process is `quickshell -p <prefix>/share/tide-island` (there is
-# no shell.qml in its cmdline), so match the install path instead.
-set -l backend_file "$HOME/.config/quickshell/gps-island-backend"
-set -l island_backend "$GPS_ISLAND_BACKEND"
-if test -z "$island_backend"; and test -f "$backend_file"
-    set island_backend (string lower -- (string trim (cat "$backend_file")))
-end
+# 5. Keep the GPS island untouched; start it only if absent. GPS Island
+#    is the sole top-center island and D-Bus notification owner.
+set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
 set -l island_pid ""
-set -l island_label ""
-if test "$island_backend" = gps
-    set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
-    if not pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" >/dev/null 2>&1
-        nohup /usr/bin/quickshell --no-duplicate -d -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
-        disown
-    end
-    sleep 0.5
-    set island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
-    set island_label "GPS island"
-else
-    if not pgrep -u (id -u) -f "share/tide-[i]sland" >/dev/null 2>&1
-        nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
-        disown
-    end
-    sleep 0.5
-    set island_pid (pgrep -u (id -u) -f 'share/tide-[i]sland' | head -1)
-    set island_label "Tide Island"
+set -l island_label "GPS island"
+if not pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" >/dev/null 2>&1
+    nohup /usr/bin/quickshell --no-duplicate -d -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
+    disown
 end
+sleep 0.5
+set island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
 if test -n "$island_pid"
     log "$island_label up (pid $island_pid)"
 else
     log "ERROR: $island_label is not running"
-    if test "$island_backend" = gps; and test -f "$HOME/.config/quickshell/island.log"
+    if test -f "$HOME/.config/quickshell/island.log"
         set -l err_tail (tail -n 3 "$HOME/.config/quickshell/island.log" 2>/dev/null | string join " | ")
         if test -n "$err_tail"
             log "  island.log: $err_tail"
-        end
-    else if test -f /tmp/tide-island.log
-        set -l err_tail (tail -n 3 /tmp/tide-island.log 2>/dev/null | string join " | ")
-        if test -n "$err_tail"
-            log "  tide-island.log: $err_tail"
         end
     end
 end

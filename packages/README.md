@@ -94,7 +94,6 @@ These packages enhance the desktop experience or provide support for specific su
 | `ttf-plus-jakarta-sans` | Optional | Preferred brand typeface for GPS UI typography (`Noto Sans` fallback) |
 | `awatcher-bundle` | Optional | ActivityWatch screen-time tracking daemon with bundled web UI for ScreenTime card |
 | `ani-cli` | Optional | Interactive anime streaming CLI for Media Hub Tools |
-| `tide-island` | Optional | Alternative dynamic island implementation for Quickshell |
 
 ---
 

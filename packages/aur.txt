@@ -26,4 +26,3 @@
 ttf-plus-jakarta-sans [optional] # Preferred brand typeface for GPS UI typography (Noto Sans fallback)
 awatcher-bundle [optional] # Screen-time tracking daemon with bundled web UI for ScreenTime card
 ani-cli [optional] # Interactive anime streaming CLI for Media Hub Tools
-tide-island [optional] # Alternative dynamic island implementation for Quickshell

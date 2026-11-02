@@ -41,8 +41,8 @@ Scope {
     readonly     property var popupScreen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     property string tooltipText: ""
 
-    // Set to true once Tide Island is running so Tide Island owns top-center notifications/OSD
-    property bool tideIslandActive: true
+    // Set to true once GPS Island is running so Island owns top-center notifications/OSD
+    property bool islandActive: true
 
     // Wallpaper & DND State
     property int wallpaperMode: 0
@@ -158,7 +158,7 @@ Scope {
         ])
     }
 
-    // NotificationServer handled by Tide Island
+    // NotificationServer handled by GPS Island
 
     IpcHandler {
         target: "dashboard"
@@ -734,14 +734,12 @@ Scope {
         wallpaperCarousel.isOpen = false
     }
 
-    // Routes match the verified left-rail/tools-tab form: explicit instance
-    // path (two quickshell instances exist) and --any-display because the
-    // spawned child may lack display context. Tide has no openNotificationCenter;
-    // toggleNotificationCenter is the real, verified function.
+    // Routes match the verified left-rail/tools-tab form: notification center
+    // routes to the integrated GPS notification center.
     function runCenterAction(action) {
         if (action === "wall") cycleWallpaper()
         else if (action === "clip") Quickshell.execDetached([root.repoRoot + "/scripts/gps-ipc", "clipboard", "toggle"])
-        else if (action === "notif") Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", Quickshell.env("HOME") + "/.local/share/tide-island", "call", "tide", "toggleNotificationCenter"])
+        else if (action === "notif") notifCenter.toggle()
     }
 
     function cycleWallpaper() {
@@ -1037,7 +1035,7 @@ Scope {
     }
 
     function showOsd(icon, val) {
-        if (root.tideIslandActive) return
+        if (root.islandActive) return
         root.osdIcon = icon
         root.osdValue = Math.max(0, Math.min(150, Math.round(val)))
         root.osdVisible = true
@@ -1108,7 +1106,7 @@ Scope {
         screenshotTimer.start()
     }
 
-    // Active shell surfaces. Tide Island remains the notification D-Bus owner.
+    // Active shell surfaces. GPS Island remains the notification D-Bus owner.
     // Right-edge activation strip: thin vertical overlay sensor that opens
     // DashboardHost on hover.
     PanelWindow {

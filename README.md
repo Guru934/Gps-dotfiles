@@ -1,6 +1,6 @@
 # Aetheric Shell: Wayland Rice Architecture & System Reference
 
-**Aetheric Shell (GPS Desktop)** is a high-performance, ultra-responsive Wayland desktop environment and "rice" built for **Hyprland** (v0.42+) and **QuickShell** (Qt6/QML), paired with the standalone C++/Qt **Tide Island** status bar. Designed for high-refresh displays (165Hz VRR) and a minimal memory footprint (~220 MiB idle RAM) on Arch Linux / CachyOS.
+**Aetheric Shell (GPS Desktop)** is a high-performance, ultra-responsive Wayland desktop environment and "rice" built for **Hyprland** (v0.42+) and **QuickShell** (Qt6/QML), featuring the integrated GPS Island status pill and notification center. Designed for high-refresh displays (165Hz VRR) and a minimal memory footprint (~220 MiB idle RAM) on Arch Linux / CachyOS.
 
 ---
 
@@ -32,13 +32,11 @@ Aetheric Shell uses an isolated, collision-free dual-shell architecture:
 1. **QuickShell (`shell.qml`)**:
    - Manages the exclusive vertical **Left Rail Dock** (`LeftRail.qml`), the edge-hover **Dashboard drawer** (`DashboardHost.qml` hosting `Dashboard.qml`, whose frame loads the four panes in `components/dashboard/`), the **Notification Center & To-Do Drawer** (`NotifCenter.qml`), the floating **Toast Banners** (`NotifToast.qml`), the Wi-Fi / Bluetooth popups (`WifiPopup.qml`, `BluetoothPopup.qml`), and the **3D Coverflow Wallpaper Carousel** (`WallpaperCarousel.qml`).
    - Operates as a passive notification consumer to prevent D-Bus collision.
-2. **Tide Island (`~/.local/share/tide-island`, run as its own QuickShell instance)**:
-   - Standalone top-center status pill (`quickshell -p ~/.local/share/tide-island`).
+2. **GPS Island (`island/IslandProduction.qml`, run as its own QuickShell instance)**:
+   - Standalone top-center status pill (`quickshell -p island/IslandProduction.qml`).
    - Holds exclusive ownership of `org.freedesktop.Notifications`.
    - Provides live MPRIS media tickers, dynamic battery/volume indicators, and clipboard management via `cliphist`.
-   - Reachable over IPC; the shell calls it as:
-     `quickshell ipc --any-display -p $HOME/.local/share/tide-island call tide <fn>`
-     (`toggleNotificationCenter`, `toggleClipboard`, `openClipboard`, `closeClipboard`, …).
+   - Reachable over IPC; the shell and scripts call it via `gps-ipc island <action>`.
 
 ```
 ┌────────────────────────────────────────────────┐
@@ -383,5 +381,5 @@ QS_LOG_LEVEL=debug quickshell -p <path-to-gps-repo>/shell.qml
 - **Lockscreen (verified in a nested Hyprland sandbox)**: config parses clean, ext-session-lock engages, password prompt served by `pam_unix` via the su fallback, full render matches `design_refs/Lockscreen.html` (clock, pills, glass card, input field, biometric/security tiles, media card, VT hint) with correct z-index layering.
 - **Phases 4–6 E2E (verified live 2026-10-18)**: battery/power-profile popup drives real UPower + `powerprofilesctl` (set `power-saver` → read back → restored `balanced`); the unified theme pipeline was cycled blue → red → blue with **no restarts** (rail pills, Settings Hub hot-reload, rofi `colors.rasi`, Hyprland border via `eval`); island Focus persists across restarts (`~/.cache/gps/dnd`) and **critical-urgency notifications bypass DND** while normal ones stay suppressed (capsule screenshot + history IPC); `run-gps.fish` boot simulation re-applied the wallpaper from `~/.config/quickshell/gps-last-wall.txt` after killing `awww-daemon`, preserved a running island, and left exactly one rice shell / island / settings instance with 0 errors in all logs. Full sweep: 34 QML files `qmllint`-clean, fish/python/bash scripts syntax-checked.
 - **Startup & keybinds (verified live 2026-10-18, second pass)**: root cause of "nothing appears after reboot" — the startup `exec_cmd` ran before the Wayland socket accepted clients; fixed by deferring to `hl.on("hyprland.start", …)` plus a compositor-ready wait and per-step logging in `run-gps.fish`. Verified: two scripted runs brought up exactly one shell / island / awatcher, island and settings untouched, wallpaper re-applied. Added `Super + L` (hyprlock) and `Super + V` (island clipboard toggle, verified live), moved floating to `Super + Shift + V`; full reference in `keybind.txt`.
-- Known limitations (honest unavailable states by design, not bugs): face unlock stays **inactive until enrolled** (`sudo howdy add` — deliberately never automated); the system package install + PAM write is a `sudo scripts/setup-lockscreen.sh` human step; Night Warmth has no `hyprsunset`; End Wine reports none running; VRAM shows `—` when the GPU probe has no data. The rail's *Suspend* acts immediately while Log Out / Reboot / Shut Down are confirm-gated; the dashboard TOOLS suspend/shut-down are confirm-gated. `runCenterAction()` in `shell.qml` is currently uncalled (tide routes repaired). `WorkspaceIndicator.qml` references an undeclared `hub.isHorizontal` — the expression is silently falsy (vertical layout), left as-is. The `popup powerProfiles` IPC getter returns empty until the battery popup has been opened once per shell instance (the profile probe starts on open — by design).
+- Known limitations (honest unavailable states by design, not bugs): face unlock stays **inactive until enrolled** (`sudo howdy add` — deliberately never automated); the system package install + PAM write is a `sudo scripts/setup-lockscreen.sh` human step; Night Warmth has no `hyprsunset`; End Wine reports none running; VRAM shows `—` when the GPU probe has no data. The rail's *Suspend* acts immediately while Log Out / Reboot / Shut Down are confirm-gated; the dashboard TOOLS suspend/shut-down are confirm-gated. `runCenterAction()` in `shell.qml` is currently uncalled. `WorkspaceIndicator.qml` references an undeclared `hub.isHorizontal` — the expression is silently falsy (vertical layout), left as-is. The `popup powerProfiles` IPC getter returns empty until the battery popup has been opened once per shell instance (the profile probe starts on open — by design).
 - **Manual verification owed (human)**: correct-password unlock + Howdy face test on the live session (test with a TTY available; recovery `pkill -x hyprlock`), and the wrong-password retry prompt. AI panel: click the rail brain button and type directly (all IPC paths already verified).

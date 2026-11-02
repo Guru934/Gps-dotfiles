@@ -8,7 +8,7 @@ This document provides the authoritative instruction system for all AI coding ag
 ### Core Components
 - **shell.qml** - Main QuickShell instance managing Left Rail Dock, Dashboard drawer, Notification Center, Toast Banners, and Wallpaper Carousel. Operates as passive notification consumer to prevent D-Bus collision.
 
-- **island/** - Tide Island QuickShell instance (separate process). Contains Island.qml and all state management.
+- **island/** - GPS Island QuickShell instance (separate process). Contains Island.qml and all state management.
   - `Island.qml` - Owns window, morphing pill, live data, and state priority
   - `states/` - Individual state files (Alert, Charge, Clip, Dnd, FaceLock, Launcher, Music, PetFx, Privacy, Workspace)
 

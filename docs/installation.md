@@ -30,7 +30,7 @@ GPS (Aetheric Shell) is a Wayland desktop environment composed of an isolated du
         ┌──────────┴───────────────┐                 │
         │                          │                 │
 ┌───────▼────────────────┐ ┌───────▼──────────────┐  │
-│  Main Shell Instance   │ │ Tide / GPS Island    │  │
+│  Main Shell Instance   │ │      GPS Island        │  │
 │  (Quickshell Qt6/QML)  │ │ (Quickshell Qt6/QML) │◄─┘
 │  - LeftRail 54px Dock  │ │ - Top Status Pill    │
 │  - Dashboard Drawer    │ │ - Notification D-Bus │
@@ -97,7 +97,7 @@ GPS provides a dedicated, non-destructive dependency inspection tool at `scripts
    - `[feature]`: Powers individual subsystems like screenshots (`grim`, `slurp`, `swappy`), clipboard history (`cliphist`, `wl-clipboard`), wallpaper management (`awww`), audio visualizer (`cava`, `pipewire-pulse`), screen lock (`hyprlock`), and idle management (`hypridle`).
    - `[hardware]`: Relevant only when corresponding hardware is present: battery (`upower`), power profiles (`power-profiles-daemon`), backlight (`brightnessctl`), Bluetooth (`bluez`, `bluez-utils`), GPU metrics (`nvidia-utils`).
 3. **Arch User Repository (`packages/aur.txt`)**:
-   Optional packages available from the AUR: preferred typography (`ttf-plus-jakarta-sans`), activity logging (`awatcher-bundle`), anime streaming CLI (`ani-cli`), and alternative island (`tide-island`).
+   Optional packages available from the AUR: preferred typography (`ttf-plus-jakarta-sans`), activity logging (`awatcher-bundle`), and anime streaming CLI (`ani-cli`).
 
 ### Difference Between Required, Optional, and Unavailable Dependencies
 

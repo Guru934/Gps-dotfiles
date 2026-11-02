@@ -40,32 +40,23 @@ function stop_exact --argument-names pattern label
     return 1
 end
 
-if test "$mode" = gps
-    # Stop only Tide's exact QuickShell command line; never use pkill quickshell.
-    stop_exact "/usr/bin/quickshell -p $tide_path" "Tide Island"; or exit 1
-    if not pgrep -u (id -u) -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
-        nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
-        disown
-    end
-    sleep 0.6
-    if not pgrep -u (id -u) -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
-        echo "GPS island failed to start; restore Tide with: switch-island.fish tide" >&2
-        exit 1
-    end
-else
-    # Stop only the GPS production command line.
-    stop_exact "/usr/bin/quickshell.*IslandProduction.qml" "GPS island"; or exit 1
-    if not pgrep -u (id -u) -f "/usr/bin/quickshell -p $tide_path" >/dev/null 2>&1
-        nohup "$HOME/.local/bin/tide-island" >/tmp/tide-island.log 2>&1 &
-        disown
-    end
-    sleep 0.6
-    if not pgrep -u (id -u) -f "/usr/bin/quickshell -p $tide_path" >/dev/null 2>&1
-        echo "Tide Island failed to start; inspect /tmp/tide-island.log" >&2
-        exit 1
-    end
+if test "$mode" = tide
+    echo "Tide Island has been retired; GPS Island is the sole island interface in GPS." >&2
+    exit 1
+end
+
+# Stop only Tide's exact QuickShell command line if present; never use pkill quickshell.
+stop_exact "/usr/bin/quickshell -p $tide_path" "Tide Island"; or true
+if not pgrep -u (id -u) -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
+    nohup /usr/bin/quickshell --no-duplicate -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
+    disown
+end
+sleep 0.6
+if not pgrep -u (id -u) -f "/usr/bin/quickshell.*IslandProduction.qml" >/dev/null 2>&1
+    echo "GPS island failed to start; check $HOME/.config/quickshell/island.log" >&2
+    exit 1
 end
 
 mkdir -p (dirname "$backend_file")
-printf '%s\n' "$mode" >"$backend_file"
-echo "$mode island is running"
+printf '%s\n' "gps" >"$backend_file"
+echo "GPS island is running"

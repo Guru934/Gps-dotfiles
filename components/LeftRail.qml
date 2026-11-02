@@ -740,9 +740,8 @@ PanelWindow {
                                 root.notifications.toggle()
                             } else {
                                 Quickshell.execDetached([
-                                    "quickshell", "ipc", "--any-display",
-                                    "-p", Quickshell.env("HOME") + "/.local/share/tide-island",
-                                    "call", "tide", "toggleNotificationCenter"
+                                    root.hub ? (root.hub.repoRoot + "/scripts/gps-ipc") : "gps-ipc",
+                                    "shell", "notifcenter", "toggle"
                                 ])
                             }
                         }

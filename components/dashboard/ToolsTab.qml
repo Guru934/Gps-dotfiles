@@ -6,7 +6,7 @@ import qs.config
 import qs.components.dashboard
 
 // Tools tab: capture actions, wallpaper/theme workflow, system automation and
-// the Tide Island clipboard/notification routes.
+// the GPS Island clipboard/notification routes.
 //
 // Every action is explicit: nothing runs on tab creation or render. Capture
 // and picker actions are launched detached (scripts/toolkit.sh) so a drawer
@@ -25,7 +25,6 @@ Item {
     readonly property color tileFill: Qt.rgba(Theme.surfaceDeep.r, Theme.surfaceDeep.g, Theme.surfaceDeep.b, 0.55)
     readonly property color chipFill: Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.7)
     readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
-    readonly property string tidePath: Quickshell.env("HOME") + "/.local/share/tide-island"
 
     // ----------------------------------------------------------------
     // Feedback strip: last real toolkit outcome (file-read or in-session)
@@ -409,13 +408,13 @@ Item {
     }
 
     // ----------------------------------------------------------------
-    // Tide Island: notifications + clipboard
+    // GPS Island: notifications + clipboard
     // ----------------------------------------------------------------
     // Both rows route through Quickshell.execDetached: closeDashboard()
     // unloads this pane synchronously, so instance-scoped Processes started
     // in the same handler would be torn down before their IPC could run.
     function openNotif() {
-        Quickshell.execDetached(["env", "LC_CTYPE=C.UTF-8", "quickshell", "ipc", "--any-display", "-p", root.tidePath, "call", "tide", "toggleNotificationCenter"])
+        Quickshell.execDetached([root.projectPath + "/scripts/gps-ipc", "shell", "notifcenter", "toggle"])
         if (root.hub) root.hub.closeDashboard()
     }
 
@@ -939,7 +938,7 @@ Item {
                                     icon: "cycle",
                                     tint: Theme.accentPrimary,
                                     title: root.pendingReload ? "CONFIRM RELOAD" : "RELOAD SHELL",
-                                    sub: "run-gps.fish \u00b7 keeps Tide Island"
+                                    sub: "run-gps.fish \u00b7 keeps Island running"
                                 }
                             }
                             onTapped: root.tapConfirm("reload")
@@ -973,15 +972,15 @@ Item {
                 }
             }
 
-            // ---------- Tide Island: notifications & clipboard ----------
+            // ---------- GPS Island: notifications & clipboard ----------
             DashSurface {
                 Layout.fillWidth: true
                 fill: root.cardFill
                 radius: 14
-                implicitHeight: tideCol.implicitHeight + 20
+                implicitHeight: islandCol.implicitHeight + 20
 
                 ColumnLayout {
-                    id: tideCol
+                    id: islandCol
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 8
@@ -989,7 +988,7 @@ Item {
                     SectionHead {
                         icon: "notifications"
                         tint: Theme.accentPrimary
-                        title: "TIDE ISLAND // CLIPBOARD"
+                        title: "GPS ISLAND // CLIPBOARD"
                         hint: "WL-CLIPBOARD // CLIPHIST"
                     }
 
@@ -998,7 +997,7 @@ Item {
                         icon: "notifications"
                         tint: Theme.accentTertiary
                         title: "NOTIFICATION CENTER"
-                        sub: "tide stays the D-Bus notification owner"
+                        sub: "GPS Island is the D-Bus notification owner"
                         trailing: "OPEN"
                         onTapped: root.openNotif()
                     }
