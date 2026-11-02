@@ -4,8 +4,12 @@ import Quickshell.Services.UPower
 import Quickshell.Services.Pipewire
 import QtQuick
 import Quickshell.Wayland
+import Quickshell.Networking
+import Quickshell.Bluetooth
 import qs.config
 import qs.components
+import "components/WifiStatus.js" as WifiStatus
+import "components/BluetoothStatus.js" as BluetoothStatus
 import "pet"
 
 Scope {
@@ -74,35 +78,55 @@ Scope {
     readonly property string pomoShortText: Math.ceil(pomoRemainingSec / 60) + "m"
 
     // Wi-Fi State
-    property bool wifiEnabled: true
+    readonly property var wifiStatus: WifiStatus.resolve(
+        Networking.backend !== NetworkBackendType.None,
+        Networking.devices ? Networking.devices.values : [],
+        Networking.wifiEnabled,
+        DeviceType.Wifi
+    )
+    readonly property bool wifiStatusAvailable: root.wifiStatus.available
+    readonly property bool wifiEnabled: root.wifiStatus.available && root.wifiStatus.enabled
+    readonly property bool wifiConnected: root.wifiStatus.connected
     property bool wifiScanning: false
-    property string netType: "disconnected"
-    property string netName: "Offline"
-    property string netDevice: "wlan0"
+    readonly property string netType: root.wifiStatus.connected ? "wifi" : "disconnected"
+    readonly property string netName: root.wifiStatus.ssid
+    readonly property string netDevice: root.wifiStatus.device || "wlan0"
     property var wifiNetworks: []
     // Wi-Fi operation feedback (never holds passwords)
-    property string wifiError: ""
+    property string wifiError: !root.wifiStatusAvailable
+        ? (Networking.backend === NetworkBackendType.None
+            ? "Network status unavailable. Is NetworkManager (nmcli) installed?"
+            : "Wi-Fi status unavailable. Check the Wi-Fi device.")
+        : ""
     property string wifiNotice: ""
     property string wifiPending: ""
     property string wifiPendingTarget: ""
-    property int wifiVerifyTries: 0
     property int wifiScanGen: 0
     property int wifiListGen: 0
 
+    onWifiStatusChanged: root.checkWifiPending()
+
     // Bluetooth State
-    property bool btPowered: false
+    readonly property var btAdapter: Bluetooth.defaultAdapter
+    readonly property var btStatus: BluetoothStatus.resolve(root.btAdapter)
+    readonly property bool btAvailable: root.btStatus.available
+    readonly property bool btPowered: root.btStatus.enabled
+    readonly property bool btConnected: root.btStatus.connected
+    readonly property string btConnectedName: root.btStatus.connectedName
+    readonly property var btDevices: root.btStatus.devices
     property bool btScanning: false
-    property string btConnectedName: ""
-    property var btDevices: []
     // Bluetooth operation feedback
-    property string btError: ""
+    property string btError: !root.btAvailable
+        ? "Bluetooth status unavailable. Is BlueZ (bluetoothctl) installed?"
+        : ""
     property string btNotice: ""
     property string btPending: ""
     property string btPendingTarget: ""
     property string btBusyMac: ""
-    property int btVerifyTries: 0
     property int btScanGen: 0
     property int btStatusGen: 0
+
+    onBtStatusChanged: root.checkBtPending()
 
     // Brightness, Power Profile, and Media State
     readonly property int brightnessPct: Brightness.percent
@@ -287,37 +311,10 @@ Scope {
         }
     }
 
-    // Processes: Wi-Fi, Bluetooth, Brightness, Power Profiles, Media
-    Process {
-        id: nmcliProc
-        command: ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: root.parseNmcli(this.text)
-        }
-    }
-
-    Process {
-        id: wifiRadioProc
-        command: ["nmcli", "radio", "wifi"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: {
-                root.wifiEnabled = (this.text.trim() === "enabled")
-                root.checkWifiPending()
-            }
-        }
-        stderr: StdioCollector {
-            onStreamFinished: {
-                if (this.text.trim() !== "")
-                    root.wifiError = "Wi-Fi radio query failed. Is NetworkManager (nmcli) installed?"
-            }
-        }
-    }
-
+    // Processes: Wi-Fi network listing/actions, Bluetooth, Brightness, Power Profiles, Media
     Process {
         id: wifiListProc
-        command: ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"]
+        command: ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
@@ -370,46 +367,6 @@ Scope {
     }
 
     Process {
-        id: btStatusProc
-        command: [
-            "sh", "-c",
-            "bluetoothctl show | grep -q '\''Powered: yes'\'' && echo '\''ON'\'' || echo '\''OFF'\''; "
-            + "bluetoothctl devices | while read -r _ mac name; do "
-            + "  if [ -n \"$mac\" ]; then "
-            + "    info=$(bluetoothctl info \"$mac\" 2>/dev/null); "
-            + "    conn=$(printf '%s' \"$info\" | grep -q '\''Connected: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
-            + "    paired=$(printf '%s' \"$info\" | grep -q '\''Paired: yes'\'' && echo '\''1'\'' || echo '\''0'\''); "
-            + "    echo \"$conn|$paired|$mac|$name\"; "
-            + "  fi; "
-            + "done"
-        ]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (root.btStatusGen === root.btScanGen) {
-                    root.btScanning = false
-                    root.parseBtOutput(this.text)
-                }
-            }
-        }
-        stderr: StdioCollector {
-            onStreamFinished: {
-                if (this.text.trim() !== "" && root.btStatusGen === root.btScanGen) {
-                    root.btScanning = false
-                    root.btError = "Bluetooth query failed. Is BlueZ (bluetoothctl) installed?"
-                }
-            }
-        }
-        onExited: (code, sig) => {
-            if (code !== 0 && root.btStatusGen === root.btScanGen) {
-                root.btScanning = false
-                if (root.btError === "")
-                    root.btError = "Bluetooth status unavailable (exit " + code + ")."
-            }
-        }
-    }
-
-    Process {
         id: btScanProc
         command: ["sh", "-c", "bluetoothctl --timeout 6 scan on >/dev/null 2>&1"]
         stderr: StdioCollector {
@@ -421,19 +378,17 @@ Scope {
             }
         }
         onExited: (code, sig) => {
+            root.btScanning = false
             if (code !== 0) {
-                root.btScanning = false
                 if (root.btError === "")
                     root.btError = "Bluetooth scan failed (exit " + code + ")."
                 return
             }
-            root.btStatusGen = root.btScanGen
-            if (!btStatusProc.running) btStatusProc.running = true
         }
     }
 
-    // One-shot command runners: track async completion so state is only
-    // reported as changed after the command exits AND a re-read verifies it.
+    // One-shot command runners keep action completion separate from native
+    // status updates, which verify the resulting state reactively.
     Process {
         id: wifiCmdProc
         stderr: StdioCollector {
@@ -450,16 +405,16 @@ Scope {
                 // password prompt instead of declaring failure.
                 if (root.wifiPending === "connect" && root.wifiPendingTarget !== "") {
                     root.connectWifiWithPrompt(root.wifiPendingTarget)
-                    root.refreshWifiReads()
+                    root.refreshWifiList()
                     return
                 }
                 root.wifiPending = ""
                 if (root.wifiError === "")
-                    root.wifiError = "Wi-Fi command failed (exit " + code + "). State re-read below."
+                    root.wifiError = "Wi-Fi command failed (exit " + code + "). Checking native network state."
             }
-            root.refreshWifiReads()
-            root.wifiVerifyTries = 0
-            wifiVerifyTimer.restart()
+            root.refreshWifiList()
+            root.checkWifiPending()
+            if (root.wifiPending !== "") wifiVerifyTimer.restart()
         }
     }
 
@@ -480,9 +435,8 @@ Scope {
                 if (root.btPending === "connect-dev")
                     root.btNotice = "Connect did not complete yet. Use Pair first if the device is not paired."
             }
-            root.refreshBtReads()
-            root.btVerifyTries = 0
-            btVerifyTimer.restart()
+            root.checkBtPending()
+            if (root.btPending !== "") btVerifyTimer.restart()
         }
     }
 
@@ -514,11 +468,9 @@ Scope {
         running: true
         repeat: true
         onTriggered: {
-            if (!nmcliProc.running) nmcliProc.running = true
             if (!mediaReadProc.running) mediaReadProc.running = true
             if (root.dashboardOpen) {
                 if (root.activePopup === "battery" && !profileReadProc.running) profileReadProc.running = true
-                if (root.activePopup === "bt" && !btStatusProc.running && !btScanProc.running) btStatusProc.running = true
                 if (root.activePopup === "wifi" && !wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
                     root.wifiListGen = root.wifiScanGen
                     wifiListProc.running = true
@@ -527,27 +479,16 @@ Scope {
         }
     }
 
-    // Re-poll after an async Wi-Fi command until the target state is observed
-    // (or attempts run out). Success is only reported after verification.
+    // Networking updates verify mutations; this timer only bounds waits for
+    // a connection that never reaches its requested state.
     Timer {
         id: wifiVerifyTimer
-        interval: 1500
-        repeat: true
+        interval: root.wifiPending === "connect" ? 36000 : 7500
+        repeat: false
         onTriggered: {
-            root.wifiVerifyTries += 1
-            root.refreshWifiReads()
-            if (root.checkWifiPending()) {
-                stop()
-                return
-            }
-            // Connecting via an external password prompt can take a while.
-            const limit = (root.wifiPending === "connect") ? 24 : 5
-            if (root.wifiVerifyTries >= limit) {
-                stop()
-                if (root.wifiPending !== "") {
-                    root.wifiPending = ""
-                    root.wifiError = "Change not confirmed after re-read. Check the device state."
-                }
+            if (root.wifiPending !== "") {
+                root.wifiPending = ""
+                root.wifiError = "Change not confirmed. Check the device state."
             }
         }
     }
@@ -555,20 +496,13 @@ Scope {
     // Same verification pattern for Bluetooth commands.
     Timer {
         id: btVerifyTimer
-        interval: 1500
-        repeat: true
+        interval: (root.btPending === "connect-dev" || root.btPending === "pair") ? 20000 : 7500
+        repeat: false
         onTriggered: {
-            root.btVerifyTries += 1
-            root.refreshBtReads()
-            if (root.checkBtPending()) {
-                stop()
-            } else if (root.btVerifyTries >= 5) {
-                stop()
-                if (root.btPending !== "") {
-                    root.btPending = ""
-                    root.btBusyMac = ""
-                    root.btError = "Change not confirmed after re-read. Check the adapter/device."
-                }
+            if (root.btPending !== "") {
+                root.btPending = ""
+                root.btBusyMac = ""
+                root.btError = "Change not confirmed after re-read. Check the adapter/device."
             }
         }
     }
@@ -700,19 +634,19 @@ Scope {
         root.closeDashboard()
 
         if (kind === "wifi") {
-            root.wifiError = ""
-            if (!nmcliProc.running) nmcliProc.running = true
-            if (!wifiRadioProc.running) wifiRadioProc.running = true
+            root.wifiError = root.wifiStatusAvailable
+                ? ""
+                : (Networking.backend === NetworkBackendType.None
+                    ? "Network status unavailable. Is NetworkManager (nmcli) installed?"
+                    : "Wi-Fi status unavailable. Check the Wi-Fi device.")
             if (!wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
                 root.wifiListGen = root.wifiScanGen
                 wifiListProc.running = true
             }
         } else if (kind === "bt") {
-            root.btError = ""
-            if (!btStatusProc.running && !btScanProc.running && !btCmdProc.running) {
-                root.btStatusGen = root.btScanGen
-                btStatusProc.running = true
-            }
+            root.btError = !root.btAvailable
+                ? "Bluetooth status unavailable. Is BlueZ (bluetoothctl) installed?"
+                : ""
         } else if (kind === "battery") {
             if (!profileReadProc.running) profileReadProc.running = true
         } else if (kind === "clock") {
@@ -821,9 +755,7 @@ Scope {
     }
 
     // Wi-Fi Actions (async with verification; passwords never touch QML)
-    function refreshWifiReads() {
-        if (!nmcliProc.running) nmcliProc.running = true
-        if (!wifiRadioProc.running) wifiRadioProc.running = true
+    function refreshWifiList() {
         if (!wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
             root.wifiListGen = root.wifiScanGen
             wifiListProc.running = true
@@ -832,22 +764,25 @@ Scope {
 
     // Returns true when a pending Wi-Fi operation is verified complete.
     function checkWifiPending() {
+        if (!root.wifiStatusAvailable) return false
         if (root.wifiPending === "power") {
             const wantOn = (root.wifiPendingTarget === "on")
             if (root.wifiEnabled === wantOn) {
                 root.wifiPending = ""
                 root.wifiError = ""
                 root.wifiNotice = wantOn ? "Wi-Fi enabled." : "Wi-Fi disabled."
+                wifiVerifyTimer.stop()
                 return true
             }
             return false
         }
         if (root.wifiPending === "connect") {
-            if (root.netName === root.wifiPendingTarget) {
+            if (root.wifiConnected && root.netName === root.wifiPendingTarget) {
                 root.wifiPending = ""
                 root.wifiError = ""
                 root.wifiNotice = "Connected to " + root.wifiPendingTarget + "."
                 root.wifiPendingTarget = ""
+                wifiVerifyTimer.stop()
                 return true
             }
             return false
@@ -857,6 +792,7 @@ Scope {
                 root.wifiPending = ""
                 root.wifiError = ""
                 root.wifiNotice = "Disconnected."
+                wifiVerifyTimer.stop()
                 return true
             }
             return false
@@ -874,7 +810,6 @@ Scope {
         root.wifiNotice = (target === "on" ? "Enabling" : "Disabling") + " Wi-Fi…"
         root.wifiPending = "power"
         root.wifiPendingTarget = target
-        root.wifiVerifyTries = 0
         wifiCmdProc.command = ["nmcli", "radio", "wifi", target]
         wifiCmdProc.running = true
     }
@@ -897,13 +832,12 @@ Scope {
         root.wifiNotice = "Connecting to " + ssid + "…"
         root.wifiPending = "connect"
         root.wifiPendingTarget = ssid
-        root.wifiVerifyTries = 0
         // Secured networks need a secret: delegate the password prompt to the
         // helper script (rofi -password). The password never enters QML state.
         if (secured) {
             Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
             root.wifiNotice = "Connecting to " + ssid + "… (password prompt if required)"
-            wifiVerifyTimer.restart()
+            if (root.wifiPending !== "") wifiVerifyTimer.restart()
             return
         }
         wifiCmdProc.command = ["nmcli", "device", "wifi", "connect", ssid]
@@ -914,7 +848,6 @@ Scope {
     function connectWifiWithPrompt(ssid) {
         Quickshell.execDetached([root.repoRoot + "/scripts/wifi-connect.sh", ssid])
         root.wifiNotice = "Password required — answer the prompt for " + ssid + "…"
-        root.wifiVerifyTries = 0
         wifiVerifyTimer.restart()
     }
 
@@ -926,7 +859,6 @@ Scope {
         root.wifiError = ""
         root.wifiNotice = "Disconnecting…"
         root.wifiPending = "disconnect"
-        root.wifiVerifyTries = 0
         wifiCmdProc.command = ["nmcli", "device", "disconnect", root.netDevice]
         wifiCmdProc.running = true
     }
@@ -939,16 +871,14 @@ Scope {
             const line = lines[i]
             if (!line) continue
             const parts = line.split(":")
-            if (parts.length < 4) continue
-            // Fields: IN-USE : SSID (may itself contain ':') : SIGNAL : SECURITY
-            const inUse = (parts[0].trim() === "*")
+            if (parts.length < 3) continue
+            // Fields: SSID (may itself contain ':') : SIGNAL : SECURITY
             const sig = parseInt(parts[parts.length - 2], 10) || 0
             const security = parts[parts.length - 1].trim()
-            const ssid = parts.slice(1, parts.length - 2).join(":").trim()
+            const ssid = parts.slice(0, parts.length - 2).join(":").trim()
             if (!ssid || seen[ssid]) continue
             seen[ssid] = true
             result.push({
-                active: inUse,
                 ssid: ssid,
                 signal: sig,
                 security: security,
@@ -962,13 +892,6 @@ Scope {
     }
 
     // Bluetooth Actions (async with verification)
-    function refreshBtReads() {
-        if (!btStatusProc.running && !btScanProc.running && !btCmdProc.running) {
-            root.btStatusGen = root.btScanGen
-            btStatusProc.running = true
-        }
-    }
-
     function btDeviceByMac(mac) {
         for (let i = 0; i < root.btDevices.length; i++) {
             if (root.btDevices[i].mac === mac) return root.btDevices[i]
@@ -978,23 +901,26 @@ Scope {
 
     // Returns true when a pending Bluetooth operation is verified complete.
     function checkBtPending() {
+        if (!root.btAvailable) return false
         if (root.btPending === "power") {
             const wantOn = (root.btPendingTarget === "on")
             if (root.btPowered === wantOn) {
                 root.btPending = ""
                 root.btError = ""
                 root.btNotice = wantOn ? "Bluetooth on." : "Bluetooth off."
+                btVerifyTimer.stop()
                 return true
             }
             return false
         }
-        if (root.btPending === "connect-dev" || root.btPending === "disconnect-dev" || root.btPending === "pair") {
+        if (root.btPending === "connect-dev" || root.btPending === "disconnect-dev" || root.btPending === "pair" || root.btPending === "remove-dev") {
             const dev = root.btDeviceByMac(root.btPendingTarget)
             if (root.btPending === "pair" && dev && dev.paired) {
                 root.btPending = ""
                 root.btBusyMac = ""
                 root.btError = ""
                 root.btNotice = "Paired with " + dev.name + "."
+                btVerifyTimer.stop()
                 return true
             }
             if (root.btPending === "connect-dev" && dev && dev.connected) {
@@ -1002,6 +928,7 @@ Scope {
                 root.btBusyMac = ""
                 root.btError = ""
                 root.btNotice = "Connected to " + dev.name + "."
+                btVerifyTimer.stop()
                 return true
             }
             if (root.btPending === "disconnect-dev" && (!dev || !dev.connected)) {
@@ -1009,6 +936,15 @@ Scope {
                 root.btBusyMac = ""
                 root.btError = ""
                 root.btNotice = "Disconnected."
+                btVerifyTimer.stop()
+                return true
+            }
+            if (root.btPending === "remove-dev" && (!dev || !dev.paired)) {
+                root.btPending = ""
+                root.btBusyMac = ""
+                root.btError = ""
+                root.btNotice = "Device removed."
+                btVerifyTimer.stop()
                 return true
             }
             return false
@@ -1017,6 +953,10 @@ Scope {
     }
 
     function toggleBtPower() {
+        if (!root.btAvailable) {
+            root.btError = "Bluetooth status unavailable. Is BlueZ (bluetoothctl) installed?"
+            return
+        }
         if (btCmdProc.running) {
             root.btError = "A Bluetooth operation is already running."
             return
@@ -1026,13 +966,17 @@ Scope {
         root.btNotice = (target === "on" ? "Turning" : "Switching") + " Bluetooth " + target + "…"
         root.btPending = "power"
         root.btPendingTarget = target
-        root.btVerifyTries = 0
         btCmdProc.command = ["bluetoothctl", "power", target]
         btCmdProc.running = true
+        btVerifyTimer.restart()
     }
 
     function scanBluetooth() {
-        if (root.btScanning || btScanProc.running || btStatusProc.running || btCmdProc.running) return
+        if (!root.btAvailable) {
+            root.btError = "Bluetooth status unavailable. Is BlueZ (bluetoothctl) installed?"
+            return
+        }
+        if (root.btScanning || btScanProc.running || btCmdProc.running) return
         root.btError = ""
         root.btNotice = ""
         root.btScanning = true
@@ -1051,9 +995,9 @@ Scope {
         root.btPending = isConnected ? "disconnect-dev" : "connect-dev"
         root.btPendingTarget = mac
         root.btBusyMac = mac
-        root.btVerifyTries = 0
         btCmdProc.command = ["bluetoothctl", action, mac]
         btCmdProc.running = true
+        btVerifyTimer.restart()
     }
 
     function pairBtDevice(mac) {
@@ -1066,52 +1010,24 @@ Scope {
         root.btPending = "pair"
         root.btPendingTarget = mac
         root.btBusyMac = mac
-        root.btVerifyTries = 0
         btCmdProc.command = ["bluetoothctl", "pair", mac]
         btCmdProc.running = true
+        btVerifyTimer.restart()
     }
 
-    function parseBtOutput(raw) {
-        const lines = raw.trim().split("\n")
-        if (lines.length === 0) return
-        root.btPowered = (lines[0].trim() === "ON")
-        const devs = []
-        let firstConnected = ""
-        for (let i = 1; i < lines.length; i++) {
-            const line = lines[i]
-            if (!line) continue
-            const parts = line.split("|")
-            let conn = false
-            let paired = false
-            let mac = ""
-            let name = ""
-            if (parts.length >= 4) {
-                // conn|paired|mac|name
-                conn = (parts[0] === "1")
-                paired = (parts[1] === "1")
-                mac = parts[2].trim()
-                name = parts.slice(3).join("|").trim()
-            } else if (parts.length === 3) {
-                // legacy conn|mac|name
-                conn = (parts[0] === "1")
-                mac = parts[1].trim()
-                name = parts.slice(2).join("|").trim()
-            } else {
-                continue
-            }
-            if (!mac) continue
-            if (conn && firstConnected === "") firstConnected = name
-            devs.push({
-                connected: conn,
-                paired: paired,
-                mac: mac,
-                name: name === "" ? mac : name
-            })
-            if (devs.length >= 20) break
+    function removeBtDevice(mac) {
+        if (!mac || btCmdProc.running) {
+            if (btCmdProc.running) root.btError = "A Bluetooth operation is already running."
+            return
         }
-        root.btConnectedName = firstConnected
-        root.btDevices = devs
-        root.checkBtPending()
+        root.btError = ""
+        root.btNotice = "Removing " + mac + "…"
+        root.btPending = "remove-dev"
+        root.btPendingTarget = mac
+        root.btBusyMac = mac
+        btCmdProc.command = ["bluetoothctl", "remove", mac]
+        btCmdProc.running = true
+        btVerifyTimer.restart()
     }
 
     function setPowerProfile(mode) {
@@ -1126,41 +1042,6 @@ Scope {
         root.osdValue = Math.max(0, Math.min(150, Math.round(val)))
         root.osdVisible = true
         osdTimer.restart()
-    }
-
-    function parseNmcli(raw) {
-        const lines = raw.trim().split("\n")
-        let foundType = "disconnected"
-        let foundName = "Offline"
-        let foundDev = root.netDevice || "wlan0"
-        let firstWifiDev = ""
-
-        for (let i = 0; i < lines.length; i++) {
-            const parts = lines[i].split(":")
-            if (parts.length < 4) continue
-            const dev = parts[0]
-            const type = parts[1]
-            const state = parts[2]
-            const conn = parts.slice(3).join(":")
-
-            if (type === "wifi" && !firstWifiDev) {
-                firstWifiDev = dev
-            }
-
-            if ((type === "wifi" || type === "ethernet") && state === "connected") {
-                foundDev = dev
-                foundType = type
-                foundName = conn !== "" ? conn : dev
-                break
-            }
-        }
-        if (foundType === "disconnected" && firstWifiDev) {
-            foundDev = firstWifiDev
-        }
-        root.netDevice = foundDev
-        root.netType = foundType
-        root.netName = foundName
-        root.checkWifiPending()
     }
 
     function parseMedia(raw) {

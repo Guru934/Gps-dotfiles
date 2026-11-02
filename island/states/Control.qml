@@ -4,8 +4,10 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
+import Quickshell.Bluetooth
 import qs.config
 import "../ControlLogic.js" as ControlLogic
+import "../../components/BluetoothStatus.js" as BluetoothStatus
 
 Item {
     id: st
@@ -85,9 +87,11 @@ Item {
     property bool wifiEnabled: false
     property string wifiSsid: ""
 
-    property bool hasBt: false
-    property bool btEnabled: false
-    property string btDevice: ""
+    readonly property var btAdapter: Bluetooth.defaultAdapter
+    readonly property var btStatus: BluetoothStatus.resolve(st.btAdapter)
+    readonly property bool hasBt: st.btStatus.available
+    readonly property bool btEnabled: st.btStatus.enabled
+    readonly property string btDevice: st.btStatus.connectedName
 
     property bool hasSunset: false
     property bool nightLightOn: false
@@ -295,16 +299,7 @@ Item {
             "command -v nmcli >/dev/null 2>&1 && echo 'has_nmcli=1' || echo 'has_nmcli=0'; " +
             "echo \"wifi_radio=$(nmcli radio wifi 2>/dev/null)\"; " +
             "echo \"wifi_ssid=$(nmcli -t -f TYPE,STATE,CONNECTION dev 2>/dev/null | awk -F: '$1==\"wifi\" && $2==\"connected\"{sub(/^[^:]*:[^:]*:/,\"\"); print; exit}')\"; " +
-            "if [ -d /sys/class/bluetooth ] && [ -n \"$(ls -A /sys/class/bluetooth 2>/dev/null)\" ]; then echo 'has_bt=1'; else echo 'has_bt=0'; fi; " +
-            "echo \"bt_power=$(bluetoothctl show 2>/dev/null | awk -F': ' '/Powered:/{print $2; exit}')\"; " +
-            "bt_dev=$(bluetoothctl devices Connected 2>/dev/null | head -n1 | cut -d' ' -f3-); " +
-            "if [ -z \"$bt_dev\" ]; then " +
-            "  bt_dev=$(bluetoothctl devices 2>/dev/null | while read -r _ mac name; do " +
-            "    [ -n \"$mac\" ] || continue; " +
-            "    bluetoothctl info \"$mac\" 2>/dev/null | grep -q 'Connected: yes' && { printf '%s\\n' \"$name\"; break; }; " +
-            "  done); " +
-            "fi; " +
-            "echo \"bt_dev=$bt_dev\"; " +
+            "echo \"bt_dev=$(bluetoothctl devices Connected 2>/dev/null | head -n1 | cut -d' ' -f3-)\"; " +
             "command -v hyprsunset >/dev/null 2>&1 && echo 'has_sunset=1' || echo 'has_sunset=0'; " +
             "pgrep -x hyprsunset >/dev/null 2>&1 && echo 'sunset_run=1' || echo 'sunset_run=0'; " +
             "echo \"sunset_k=$(ps -C hyprsunset -o args= 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"-t\" && $(i+1)~ /^[0-9]+$/){print $(i+1); exit}}')\"; " +
@@ -334,10 +329,6 @@ Item {
                 st.hasNmcli = map.has_nmcli === "1"
                 st.wifiEnabled = map.wifi_radio === "enabled"
                 st.wifiSsid = map.wifi_ssid || ""
-
-                st.hasBt = map.has_bt === "1"
-                st.btEnabled = map.bt_power === "yes"
-                st.btDevice = map.bt_dev || ""
 
                 st.hasSunset = map.has_sunset === "1"
                 st.nightLightOn = map.sunset_run === "1"
@@ -523,10 +514,12 @@ Item {
     }
 
     function toggleBluetooth() {
+        if (st.btAdapter) {
+            st.btAdapter.enabled = !st.btAdapter.enabled
+            return
+        }
         if (!hasBt) return
         const next = !btEnabled
-        btEnabled = next
-        if (!next) btDevice = ""
         runCmd('bluetoothctl power "$1" >/dev/null 2>&1', [next ? "on" : "off"], 500)
     }
 
@@ -1053,15 +1046,15 @@ Item {
     Component {
         id: compBt
         ToggleTile {
-            iconName: st.btEnabled ? "bluetooth" : "bluetooth_disabled"
+            iconName: !st.hasBt ? "bluetooth_disabled" : (st.btEnabled ? "bluetooth" : "bluetooth_disabled")
             iconAlt: "B"
             titleText: "Bluetooth"
-            subText: !st.hasBt ? "No adapter" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
+            subText: !st.hasBt ? "Unavailable" : (st.btEnabled ? (st.btDevice !== "" ? st.btDevice : "On") : "Off")
             trailIcon: "chevron_right"
             trailAlt: ">"
             tileOn: st.btEnabled
             tileAvailable: st.hasBt
-            tooltipText: "Bluetooth power toggle · click arrow for bluetooth settings"
+            tooltipText: !st.hasBt ? "Bluetooth unavailable" : "Bluetooth power toggle · click arrow for bluetooth settings"
             onToggled: st.toggleBluetooth()
             onTrailClicked: st.openSettings("network")
         }

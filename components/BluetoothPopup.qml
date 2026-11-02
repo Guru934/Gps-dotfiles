@@ -111,7 +111,7 @@ PanelWindow {
             Text {
                 width: parent.width
                 text: {
-                    if (!root.hub) return "Unavailable"
+                    if (!root.hub || !root.hub.btAvailable) return "Unavailable"
                     if (!root.hub.btPowered) return "Adapter off"
                     if (root.hub.btConnectedName !== "") return "Connected: " + root.hub.btConnectedName
                     return "On · no device connected"
@@ -175,7 +175,9 @@ PanelWindow {
                 visible: !(root.hub && root.hub.btScanning) && root.devices.length === 0
                 Text {
                     width: parent.width; horizontalAlignment: Text.AlignHCenter
-                    text: (root.hub && !root.hub.btPowered) ? "Bluetooth adapter is off." : "No devices found."
+                    text: (!root.hub || !root.hub.btAvailable)
+                        ? "Bluetooth service is unavailable."
+                        : (!root.hub.btPowered ? "Bluetooth adapter is off." : "No devices found.")
                     color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
                 }
                 Text {

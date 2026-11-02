@@ -1,12 +1,15 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Networking
 import Quickshell.Bluetooth
 import Quickshell.Services.UPower
 import qs.config
 import qs.components.dashboard
+import "../WifiStatus.js" as WifiStatus
+import "../BluetoothStatus.js" as BluetoothStatus
 
 // Home tab: live system overview, quick controls, now playing and clock.
 // All data comes from native services or the SysProbe (one shared shell tick
@@ -128,17 +131,17 @@ Item {
         tickMs: root.hub ? root.hub.telemetryTickMs : 1000
     }
 
-    readonly property var wifiDevice: {
-        const ds = Networking.devices ? Networking.devices.values : []
-        for (const d of ds) {
-            if (d.type === DeviceType.Wifi) return d
-        }
-        return null
-    }
-    readonly property var wifiNet: root.wifiDevice && root.wifiDevice.networks
-        ? (root.wifiDevice.networks.values.find(n => n.connected) || null)
+    readonly property var wifiStatus: WifiStatus.resolve(
+        Networking.backend !== NetworkBackendType.None,
+        Networking.devices ? Networking.devices.values : [],
+        Networking.wifiEnabled,
+        DeviceType.Wifi
+    )
+    readonly property var wifiNet: root.wifiStatus.connected
+        ? root.wifiStatus
         : null
     readonly property var btAdapter: Bluetooth.defaultAdapter
+    readonly property var btStatus: BluetoothStatus.resolve(root.btAdapter)
     readonly property var btDevice: root.btAdapter && root.btAdapter.devices
         ? (root.btAdapter.devices.values.find(d => d.connected) || null)
         : null
@@ -526,44 +529,69 @@ Item {
 
                 QuickToggleCard {
                     Layout.fillWidth: true
-                    icon: (root.wifiNet !== null) ? "wifi" : (Networking.wifiEnabled ? "wifi_find" : "wifi_off")
-                    title: root.wifiNet !== null
-                        ? root.wifiNet.name
-                        : (Networking.wifiEnabled ? "No network" : "Wi-Fi")
+                    icon: root.wifiStatus.connected
+                        ? "wifi"
+                        : (root.wifiStatus.available && root.wifiStatus.enabled ? "wifi_find" : "wifi_off")
+                    title: root.wifiStatus.connected
+                        ? root.wifiStatus.ssid
+                        : (!root.wifiStatus.available
+                            ? "Wi-Fi unavailable"
+                            : (root.wifiStatus.enabled ? "No network" : "Wi-Fi"))
                     subtitle: {
+                        if (!root.wifiStatus.available) return "unavailable"
                         if (root.wifiNet !== null) {
                             const strength = Math.round((root.wifiNet.signalStrength || 0) * 100)
                             return strength > 0 ? "connected \u00b7 " + strength + "%" : "connected"
                         }
-                        return Networking.wifiEnabled ? "not connected" : "radio disabled"
+                        return root.wifiStatus.enabled ? "not connected" : "radio disabled"
                     }
                     accent: Theme.accentPrimary
-                    dotColor: root.wifiNet !== null
+                    dotColor: root.wifiStatus.connected
                         ? Theme.accentPrimary
-                        : (Networking.wifiEnabled ? Theme.accentTertiary : Theme.textDim)
-                    onActivated: Networking.wifiEnabled = !Networking.wifiEnabled
+                        : (root.wifiStatus.available && root.wifiStatus.enabled
+                            ? Theme.accentTertiary
+                            : Theme.textDim)
+                    interactive: root.wifiStatus.available
+                    dimmed: !root.wifiStatus.available
+                    onActivated: {
+                        if (root.wifiStatus.available) {
+                            Networking.wifiEnabled = !Networking.wifiEnabled
+                        }
+                    }
                 }
 
                 QuickToggleCard {
                     Layout.fillWidth: true
-                    icon: root.btAdapter && root.btAdapter.enabled ? "bluetooth" : "bluetooth_disabled"
-                    title: root.btDevice !== null
-                        ? root.btDevice.name
-                        : (root.btAdapter === null ? "Bluetooth"
-                            : (root.btAdapter.enabled
-                                ? (root.btAdapter.discovering ? "Scanning\u2026" : "No device")
+                    icon: !root.btStatus.available
+                        ? "bluetooth_disabled"
+                        : (root.btStatus.enabled ? "bluetooth" : "bluetooth_disabled")
+                    title: !root.btStatus.available
+                        ? "Bluetooth unavailable"
+                        : (root.btStatus.connected
+                            ? root.btStatus.connectedName
+                            : (root.btStatus.enabled
+                                ? (root.btStatus.discovering ? "Scanning\u2026" : "No device")
                                 : "Bluetooth"))
-                    subtitle: root.btAdapter === null
-                        ? "\u2026"
-                        : (root.btDevice !== null
-                            ? ("connected" + (root.btDevice.batteryAvailable ? " \u00b7 " + Math.round(root.btDevice.battery) + "%" : ""))
-                            : (root.btAdapter.enabled ? "radio on" : "radio off"))
+                    subtitle: !root.btStatus.available
+                        ? "unavailable"
+                        : (root.btStatus.connected
+                            ? ("connected" + (root.btDevice && root.btDevice.batteryAvailable ? " \u00b7 " + Math.round(root.btDevice.battery <= 1.0 ? root.btDevice.battery * 100 : root.btDevice.battery) + "%" : ""))
+                            : (root.btStatus.connecting
+                                ? "connecting\u2026"
+                                : (root.btStatus.disconnecting
+                                    ? "disconnecting\u2026"
+                                    : (root.btStatus.enabled ? "radio on" : "radio off"))))
                     accent: Theme.accentSecondary
-                    dotColor: root.btDevice !== null
-                        ? Theme.accentSecondary
-                        : (root.btAdapter && root.btAdapter.enabled ? Theme.accentTertiary : Theme.textDim)
-                    interactive: root.btAdapter !== null
-                    onActivated: root.btAdapter.enabled = !root.btAdapter.enabled
+                    dotColor: !root.btStatus.available
+                        ? Theme.textDim
+                        : (root.btStatus.connected
+                            ? Theme.accentSecondary
+                            : (root.btStatus.enabled ? Theme.accentTertiary : Theme.textDim))
+                    interactive: root.btStatus.available
+                    dimmed: !root.btStatus.available
+                    onActivated: {
+                        if (root.btAdapter) root.btAdapter.enabled = !root.btAdapter.enabled
+                    }
                 }
 
                 QuickToggleCard {

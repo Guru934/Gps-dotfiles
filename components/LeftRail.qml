@@ -98,12 +98,14 @@ PanelWindow {
     property bool colonVisible: true
 
     // Live Hardware & Connectivity States
-    property bool wifiEnabled: true
-    property bool wifiConnected: false
-    property string wifiSsid: "Disconnected"
+    readonly property bool wifiEnabled: root.hub ? root.hub.wifiEnabled : false
+    readonly property bool wifiConnected: root.hub ? root.hub.wifiConnected : false
+    readonly property string wifiSsid: root.hub ? root.hub.netName : "Unavailable"
 
-    property bool btEnabled: true
-    property bool btConnected: false
+    readonly property bool btAvailable: root.hub ? root.hub.btAvailable : false
+    readonly property bool btEnabled: root.hub ? root.hub.btPowered : false
+    readonly property bool btConnected: root.hub ? root.hub.btConnected : false
+    readonly property string btConnectedName: root.hub ? root.hub.btConnectedName : ""
 
     property int fallbackVolPct: 75
     property bool fallbackMuted: false
@@ -205,21 +207,17 @@ PanelWindow {
     mask: root.isSplit ? splitMask : fullMask
 
     // ========================================================================
-    // BACKGROUND POLLING: Wi-Fi, Bluetooth, Volume, Brightness, Media Status
+    // BACKGROUND POLLING: Bluetooth, Volume, Brightness, Media Status
     // ========================================================================
     Process {
         id: sysPollProc
         command: [
             "sh", "-c",
-            "wifi_line=$(nmcli -t -f TYPE,STATE,CONNECTION device 2>/dev/null | grep '^wifi:connected:' | head -n1); "
-            + "wifi_radio=$(nmcli radio wifi 2>/dev/null); "
-            + "bt_power=$(bluetoothctl show 2>/dev/null | grep -q 'Powered: yes' && echo 1 || echo 0); "
-            + "bt_conn=$(bluetoothctl info 2>/dev/null | grep -q 'Connected: yes' && echo 1 || echo 0); "
-            + "vol_line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); "
+            "vol_line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); "
             + "med_line=$(playerctl metadata --format '{{status}}|{{title}}' 2>/dev/null | head -n1); "
             + "rec_line=$(cat \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" 2>/dev/null | grep -o '\"recording\": *true' || echo ''); "
-            + "printf 'WIFI:%s|%s\\nBT:%s|%s\\nVOL:%s\\nMED:%s\\nREC:%s\\n' "
-            + "\"$wifi_radio\" \"$wifi_line\" \"$bt_power\" \"$bt_conn\" \"$vol_line\" \"$med_line\" \"$rec_line\""
+            + "printf 'VOL:%s\\nMED:%s\\nREC:%s\\n' "
+            + "\"$vol_line\" \"$med_line\" \"$rec_line\""
         ]
         running: true
         stdout: StdioCollector {
@@ -264,24 +262,7 @@ PanelWindow {
         const lines = raw.trim().split("\n")
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim()
-            if (line.startsWith("WIFI:")) {
-                const payload = line.slice(5)
-                const sep = payload.indexOf("|")
-                const radio = sep !== -1 ? payload.slice(0, sep).trim() : payload.trim()
-                const connInfo = sep !== -1 ? payload.slice(sep + 1).trim() : ""
-                root.wifiEnabled = (radio === "enabled")
-                if (root.wifiEnabled && connInfo.startsWith("wifi:connected:")) {
-                    root.wifiConnected = true
-                    root.wifiSsid = connInfo.slice(15) || "Connected"
-                } else {
-                    root.wifiConnected = false
-                    root.wifiSsid = root.wifiEnabled ? "Not Connected" : "Wi-Fi Off"
-                }
-            } else if (line.startsWith("BT:")) {
-                const parts = line.slice(3).split("|")
-                root.btEnabled = (parts[0] === "1")
-                root.btConnected = (parts.length > 1 && parts[1] === "1")
-            } else if (line.startsWith("VOL:")) {
+            if (line.startsWith("VOL:")) {
                 const vText = line.slice(4).trim()
                 root.fallbackMuted = vText.indexOf("MUTED") !== -1
                 const m = vText.match(/([0-9]+(?:\.[0-9]+)?)/)
@@ -658,22 +639,24 @@ PanelWindow {
                         tooltip: "Wi-Fi: " + root.wifiSsid
                         onClicked: {
                             if (root.hub) root.hub.openPopup("wifi", wifiBtn.mapToItem(railBg, 16, 12).y)
-                            fastRefreshTimer.restart()
                         }
                     }
 
                     // Bluetooth Button
                     RailButton {
                         id: btBtn
-                        glyph: !root.btEnabled ? "󰂲" : (root.btConnected ? "󰂱" : "󰂯")
-                        iconColor: !root.btEnabled ? Theme.textMuted : (root.btConnected ? Theme.brandAccent : Theme.accentSecondary)
+                        glyph: !root.btAvailable ? "󰂲" : (!root.btEnabled ? "󰂲" : (root.btConnected ? "󰂱" : "󰂯"))
+                        iconColor: !root.btAvailable ? Theme.textMuted : (!root.btEnabled ? Theme.textMuted : (root.btConnected ? Theme.brandAccent : Theme.accentSecondary))
                         accentColor: Theme.accentSecondary
-                        tooltip: !root.btEnabled
-                            ? "Bluetooth: Off"
-                            : (root.btConnected ? "Bluetooth: Connected" : "Bluetooth: On (Not Connected)")
+                        tooltip: !root.btAvailable
+                            ? "Bluetooth: Unavailable"
+                            : (!root.btEnabled
+                                ? "Bluetooth: Off"
+                                : (root.btConnected
+                                    ? ("Bluetooth: Connected" + (root.btConnectedName !== "" ? " (" + root.btConnectedName + ")" : ""))
+                                    : "Bluetooth: On (Not Connected)"))
                         onClicked: {
                             if (root.hub) root.hub.openPopup("bt", btBtn.mapToItem(railBg, 16, 12).y)
-                            fastRefreshTimer.restart()
                         }
                     }
 

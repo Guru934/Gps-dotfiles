@@ -89,14 +89,25 @@ PanelWindow {
                     // Power toggle pill
                     Rectangle {
                         width: 52; height: 26; radius: 13
-                        color: (root.hub && root.hub.wifiEnabled) ? Theme.brandAccent : Theme.border
+                        color: (root.hub && root.hub.wifiStatusAvailable && root.hub.wifiEnabled)
+                            ? Theme.brandAccent
+                            : Theme.border
                         Text {
                             anchors.centerIn: parent
-                            text: (root.hub && root.hub.wifiEnabled) ? "ON" : "OFF"
-                            color: (root.hub && root.hub.wifiEnabled) ? Theme.brandAccentFg : Theme.textMuted
+                            text: !root.hub || !root.hub.wifiStatusAvailable
+                                ? "N/A"
+                                : (root.hub.wifiEnabled ? "ON" : "OFF")
+                            color: (root.hub && root.hub.wifiStatusAvailable && root.hub.wifiEnabled)
+                                ? Theme.brandAccentFg
+                                : Theme.textMuted
                             font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true
                         }
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.toggleWifiPower() }
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: root.hub && root.hub.wifiStatusAvailable
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: if (root.hub) root.hub.toggleWifiPower()
+                        }
                     }
                     // Close button
                     Rectangle {
@@ -110,7 +121,11 @@ PanelWindow {
 
             Text {
                 width: parent.width
-                text: root.hub ? (root.hub.wifiEnabled ? ("Connected: " + root.hub.netName) : "Radio disabled") : "Unavailable"
+                text: {
+                    if (!root.hub || !root.hub.wifiStatusAvailable) return "Unavailable"
+                    if (root.hub.wifiConnected) return "Connected: " + root.hub.netName
+                    return root.hub.wifiEnabled ? "Not connected" : "Radio disabled"
+                }
                 color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 10
                 elide: Text.ElideRight
             }
@@ -170,7 +185,9 @@ PanelWindow {
                 visible: !root.busy && root.networks.length === 0
                 Text {
                     width: parent.width; horizontalAlignment: Text.AlignHCenter
-                    text: (root.hub && !root.hub.wifiEnabled) ? "Wi-Fi radio is off." : "No networks found."
+                    text: (!root.hub || !root.hub.wifiStatusAvailable)
+                        ? "Wi-Fi is unavailable."
+                        : (!root.hub.wifiEnabled ? "Wi-Fi radio is off." : "No networks found.")
                     color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
                 }
                 Text {
@@ -189,13 +206,17 @@ PanelWindow {
                 visible: root.networks.length > 0
                 model: root.networks
                 delegate: Rectangle {
+                    id: networkRow
                     required property var modelData
+                    readonly property bool activeNetwork: root.hub
+                        && root.hub.netType === "wifi"
+                        && root.hub.netName === modelData.ssid
                     width: netList.width
                     height: 46
                     radius: Theme.radiusMd
-                    color: modelData.active ? Qt.alpha(Theme.brandAccent, 0.18) : Theme.card
+                    color: activeNetwork ? Qt.alpha(Theme.brandAccent, 0.18) : Theme.card
                     border.width: Theme.borderWidth
-                    border.color: modelData.active ? Theme.brandAccent : Theme.outlineSoft
+                    border.color: activeNetwork ? Theme.brandAccent : Theme.outlineSoft
                     Row {
                         anchors.fill: parent
                         anchors.leftMargin: 10
@@ -212,24 +233,24 @@ PanelWindow {
                                 elide: Text.ElideRight
                             }
                             Text {
-                                text: (modelData.active ? "Connected · " : "") + modelData.signal + "%" + (modelData.secured ? " · secured" : " · open")
-                                color: modelData.active ? Theme.brandAccent : Theme.textMuted
+                                text: (activeNetwork ? "Connected · " : "") + modelData.signal + "%" + (modelData.secured ? " · secured" : " · open")
+                                color: activeNetwork ? Theme.brandAccent : Theme.textMuted
                                 font.family: Theme.fontMono; font.pixelSize: 8
                             }
                         }
                         Rectangle {
                             width: 84; height: 26; radius: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            color: btnMouse.containsMouse ? Theme.brandAccent : (modelData.active ? Theme.card : Theme.brandAccent)
+                            color: btnMouse.containsMouse ? Theme.brandAccent : (activeNetwork ? Theme.card : Theme.brandAccent)
                             border.width: 1
                             border.color: Theme.brandAccent
                             Text {
                                 anchors.centerIn: parent
                                 text: {
                                     if (root.hub && root.hub.wifiPending === "connect" && root.hub.wifiPendingTarget === modelData.ssid) return "…"
-                                    return modelData.active ? "Leave" : "Join"
+                                    return networkRow.activeNetwork ? "Leave" : "Join"
                                 }
-                                color: (btnMouse.containsMouse || !modelData.active) ? Theme.brandAccentFg : Theme.textMain
+                                color: (btnMouse.containsMouse || !networkRow.activeNetwork) ? Theme.brandAccentFg : Theme.textMain
                                 font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true
                             }
                             MouseArea {
@@ -239,7 +260,7 @@ PanelWindow {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     if (!root.hub) return
-                                    if (modelData.active) root.hub.disconnectWifi()
+                                    if (networkRow.activeNetwork) root.hub.disconnectWifi()
                                     else root.hub.connectWifi(modelData.ssid, modelData.secured)
                                 }
                             }

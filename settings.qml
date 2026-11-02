@@ -23,6 +23,9 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Services.Pipewire
 import Quickshell.Bluetooth
+import Quickshell.Networking
+import "components/WifiStatus.js" as WifiStatus
+import "components/BluetoothStatus.js" as BluetoothStatus
 import qs.config
 
 ShellRoot {
@@ -55,7 +58,6 @@ ShellRoot {
     property string saved: ""
 
     property var wifi: []
-    property string wifiRadio: ""
     property string wifiIp: ""
     property string wifiSel: ""
     property string wifiMsg: ""
@@ -67,6 +69,23 @@ ShellRoot {
     property string confirmDel: ""
 
     readonly property var adapter: Bluetooth.defaultAdapter
+    readonly property var btStatus: BluetoothStatus.resolve(root.adapter)
+    readonly property bool btAvailable: root.btStatus.available
+    readonly property bool btPowered: root.btStatus.enabled
+    readonly property bool btConnected: root.btStatus.connected
+    readonly property string btConnectedName: root.btStatus.connectedName
+
+    readonly property var wifiStatus: WifiStatus.resolve(
+        Networking.backend !== NetworkBackendType.None,
+        Networking.devices ? Networking.devices.values : [],
+        Networking.wifiEnabled,
+        DeviceType.Wifi
+    )
+    readonly property bool wifiAvailable: root.wifiStatus.available
+    readonly property bool wifiEnabled: root.wifiStatus.available && root.wifiStatus.enabled
+    readonly property bool wifiConnected: root.wifiStatus.connected
+    readonly property string wifiSsid: root.wifiStatus.ssid
+    readonly property string wifiRadio: root.wifiEnabled ? "enabled" : "disabled"
     readonly property var sink: Pipewire.defaultAudioSink
     readonly property var source: Pipewire.defaultAudioSource
     readonly property var mon: mons.length > 0 ? mons[Math.min(monIdx, mons.length - 1)] : null
@@ -399,8 +418,7 @@ nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null | sed 's/^/net
         onDone: text => {
             const seen = {}, nets = []
             for (const l of text.split("\n")) {
-                if (l.indexOf("radio=") === 0) root.wifiRadio = l.slice(6)
-                else if (l.indexOf("ip=") === 0) root.wifiIp = l.slice(3)
+                if (l.indexOf("ip=") === 0) root.wifiIp = l.slice(3)
                 else if (l.indexOf("net=") === 0) {
                     const f = l.slice(4).replace(/\\:/g, "\u0001").split(":").map(s => s.replace(/\u0001/g, ":"))
                     if (!f[1]) continue
@@ -908,10 +926,12 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                 sub: "profile " + (root.sys.profile || "n/a"); bar: root.sys.bat ? root.sys.bat / 100 : -1 }
                         }
                         Card { title: "Quick toggles"; icon: "toggle_on"
-                            SRow { label: "Wi-Fi"; visible: root.sys["has_nmcli"] === "1"
-                                Tgl { on: root.wifiRadio === "enabled"; onFlipped: v => { root.sh("nmcli radio wifi " + (v ? "on" : "off")); root.wifiRadio = v ? "enabled" : "disabled" } } }
-                            SRow { label: "Bluetooth"; visible: root.adapter !== null
-                                Tgl { on: root.adapter ? root.adapter.enabled : false; onFlipped: v => { if (root.adapter) root.adapter.enabled = v } } }
+                            SRow { label: "Wi-Fi"; visible: root.wifiAvailable || root.sys["has_nmcli"] === "1"
+                                Dim { text: root.wifiSsid; Layout.preferredWidth: 140; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
+                                Tgl { enabled: root.wifiAvailable; on: root.wifiEnabled; onFlipped: v => { Networking.wifiEnabled = v; root.sh("nmcli radio wifi " + (v ? "on" : "off")) } } }
+                            SRow { label: "Bluetooth"; visible: root.btAvailable || root.adapter !== null
+                                Dim { text: root.btStatus.statusText; Layout.preferredWidth: 140; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight }
+                                Tgl { enabled: root.btAvailable; on: root.btPowered; onFlipped: v => { if (root.adapter) root.adapter.enabled = v } } }
                             SRow { label: "Night light"; desc: "hyprsunset"; visible: root.sys["has_hyprsunset"] === "1"
                                 Tgl { on: root.sys.run_hyprsunset === "1"; onFlipped: v => root.nightLight(v, 4500) } }
                             SRow { label: "Idle lock & suspend"; desc: "hypridle"; visible: root.sys["has_hypridle"] === "1"
@@ -1015,11 +1035,35 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
 
                     // ════════ 5 · NETWORK ════════
                     PageBase {
-                        Card { title: "Wi-Fi"; icon: "wifi"; badge: root.wifiIp
-                            visible: root.sys["has_nmcli"] === "1"
-                            SRow { label: "Wi-Fi radio"
-                                Btn { icon: "refresh"; text: "Scan"; onClicked: { root.sh("nmcli dev wifi rescan"); root.after(2500, cmdWifi.go) } }
-                                Tgl { on: root.wifiRadio === "enabled"; onFlipped: v => { root.sh("nmcli radio wifi " + (v ? "on" : "off")); root.wifiRadio = v ? "enabled" : "disabled"; root.after(1500, cmdWifi.go) } } }
+                        Card {
+                            title: "Wi-Fi"
+                            icon: "wifi"
+                            badge: !root.wifiAvailable
+                                ? "Unavailable"
+                                : (!root.wifiEnabled
+                                    ? "Wi-Fi Off"
+                                    : (root.wifiConnected
+                                        ? ("Connected · " + root.wifiSsid + (root.wifiIp !== "" ? " (" + root.wifiIp + ")" : ""))
+                                        : "Not Connected"))
+                            visible: root.wifiAvailable || root.sys["has_nmcli"] === "1"
+                            SRow {
+                                label: "Wi-Fi radio"
+                                Btn {
+                                    icon: "refresh"
+                                    text: "Scan"
+                                    enabled: root.wifiAvailable && root.wifiEnabled
+                                    onClicked: { root.sh("nmcli dev wifi rescan"); root.after(2500, cmdWifi.go) }
+                                }
+                                Tgl {
+                                    enabled: root.wifiAvailable
+                                    on: root.wifiEnabled
+                                    onFlipped: v => {
+                                        Networking.wifiEnabled = v
+                                        root.sh("nmcli radio wifi " + (v ? "on" : "off"))
+                                        root.after(1500, cmdWifi.go)
+                                    }
+                                }
+                            }
                             Repeater { model: root.wifi
                                 delegate: Rectangle {
                                     required property var modelData
@@ -1039,19 +1083,81 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                     root.sh('nmcli -w 20 dev wifi connect "$1" ${2:+password "$2"} >/dev/null 2>&1 || { command -v notify-send >/dev/null && notify-send "Wi-Fi" "Could not connect to $1"; }', [root.wifiSel, wifiPass.text])
                                     root.after(4000, cmdWifi.go) } }
                                 Btn { text: "Disconnect"; onClicked: { root.sh('nmcli dev disconnect "$(nmcli -t -f DEVICE,TYPE dev | awk -F: \'$2=="wifi"{print $1; exit}\')"'); root.after(1500, cmdWifi.go) } } } }
-                        Dim { visible: root.sys["has_nmcli"] !== "1"; text: "NetworkManager (nmcli) was not found." }
-                        Card { title: "Bluetooth"; icon: "bluetooth"; badge: root.adapter ? root.adapter.name || "" : "no adapter"
-                            visible: root.adapter !== null
-                            SRow { label: "Bluetooth power"
-                                Btn { icon: root.adapter && root.adapter.discovering ? "stop" : "search"; text: root.adapter && root.adapter.discovering ? "Stop scan" : "Scan"
-                                    onClicked: { if (root.adapter) root.adapter.discovering = !root.adapter.discovering } }
-                                Tgl { on: root.adapter ? root.adapter.enabled : false; onFlipped: v => { if (root.adapter) root.adapter.enabled = v } } }
-                            Repeater { model: root.adapter ? root.adapter.devices.values : []
+                        Dim { visible: !root.wifiAvailable && root.sys["has_nmcli"] !== "1"; text: "NetworkManager (nmcli) was not found." }
+                        Dim { visible: !root.btAvailable; text: "Bluetooth service (BlueZ) is unavailable." }
+                        Card {
+                            title: "Bluetooth"
+                            icon: "bluetooth"
+                            badge: !root.btAvailable
+                                ? "Unavailable"
+                                : (!root.btPowered
+                                    ? "Off"
+                                    : (root.btConnected
+                                        ? ("Connected · " + root.btConnectedName)
+                                        : (root.btStatus.connecting
+                                            ? "Connecting…"
+                                            : (root.btStatus.disconnecting
+                                                ? "Disconnecting…"
+                                                : "Not connected"))))
+                            visible: root.btAvailable
+                            SRow {
+                                label: "Bluetooth power"
+                                Btn {
+                                    icon: root.adapter && root.adapter.discovering ? "stop" : "search"
+                                    text: root.adapter && root.adapter.discovering ? "Stop scan" : "Scan"
+                                    enabled: root.btPowered
+                                    onClicked: { if (root.adapter) root.adapter.discovering = !root.adapter.discovering }
+                                }
+                                Tgl {
+                                    on: root.btPowered
+                                    onFlipped: v => { if (root.adapter) root.adapter.enabled = v }
+                                }
+                            }
+                            Repeater {
+                                model: root.adapter ? root.adapter.devices.values : []
                                 delegate: SRow {
                                     required property var modelData
                                     label: modelData.name || modelData.address
-                                    desc: (modelData.paired ? "paired" : "new device") + (modelData.batteryAvailable ? " · battery " + Math.round(modelData.battery * 100) + "%" : "")
-                                    Btn { accent: !modelData.connected; text: modelData.connected ? "Disconnect" : "Connect"; onClicked: modelData.connected = !modelData.connected } } } }
+                                    desc: {
+                                        const statusPart = modelData.state === 3 ? "connecting…" : (modelData.state === 2 ? "disconnecting…" : (modelData.connected ? "connected" : (modelData.paired ? "paired" : "new device")))
+                                        const batPart = modelData.batteryAvailable ? " · battery " + Math.round(modelData.battery <= 1.0 ? modelData.battery * 100 : modelData.battery) + "%" : ""
+                                        return statusPart + batPart
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Btn {
+                                            visible: !modelData.paired && !modelData.connected
+                                            text: "Pair"
+                                            onClicked: {
+                                                if (typeof modelData.pair === "function") modelData.pair()
+                                                else root.sh("bluetoothctl pair " + modelData.address)
+                                            }
+                                        }
+                                        Btn {
+                                            visible: modelData.paired
+                                            text: "Forget"
+                                            onClicked: {
+                                                if (typeof modelData.forget === "function") modelData.forget()
+                                                else root.sh("bluetoothctl remove " + modelData.address)
+                                            }
+                                        }
+                                        Btn {
+                                            accent: !modelData.connected
+                                            text: modelData.state === 3 ? "Connecting…" : (modelData.state === 2 ? "Disconnecting…" : (modelData.connected ? "Disconnect" : "Connect"))
+                                            onClicked: {
+                                                if (modelData.connected) {
+                                                    if (typeof modelData.disconnect === "function") modelData.disconnect()
+                                                    else modelData.connected = false
+                                                } else {
+                                                    if (typeof modelData.connect === "function") modelData.connect()
+                                                    else modelData.connected = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // ════════ 6 · POWER & GPU ════════
