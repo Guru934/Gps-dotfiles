@@ -32,7 +32,7 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: 8
         anchors.rightMargin: 10
-        spacing: 8
+        spacing: Theme.dashboardSpacingSm
         opacity: root.dimmed ? 0.45 : 1
         Behavior on opacity { NumberAnimation { duration: 150 } }
 
@@ -47,7 +47,7 @@ Item {
                 anchors.centerIn: parent
                 name: root.icon
                 color: root.accent
-                font.pixelSize: 15
+                font.pixelSize: Theme.dashboardText(15)
             }
         }
 
@@ -61,7 +61,7 @@ Item {
                 text: root.title
                 color: Theme.textMain
                 font.family: Theme.fontUi
-                font.pixelSize: 12
+                font.pixelSize: Theme.dashboardText(12)
                 font.bold: true
                 elide: Text.ElideRight
             }
@@ -71,7 +71,7 @@ Item {
                 text: root.subtitle
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 elide: Text.ElideRight
             }
         }

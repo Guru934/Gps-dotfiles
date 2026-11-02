@@ -188,6 +188,18 @@ function evaluateVisibility(inputs) {
     };
   }
 
+  // The launcher is modal: once open, hovering the Island panel or leaving
+  // Control pinned must not replace it while the user is searching.
+  if (inputs.launcherOpen) {
+    return {
+      visible: true,
+      state: "launcher",
+      nextExpiry: null,
+      wantsKeyboard: true,
+      reason: "launcher_open"
+    };
+  }
+
   // 2. Explicit User Interaction (Priority 2)
   if (inputs.pinned) {
     return {
@@ -226,17 +238,6 @@ function evaluateVisibility(inputs) {
       nextExpiry: inputs.hoverLeaveExpiry,
       wantsKeyboard: false,
       reason: "hover_leave_grace"
-    };
-  }
-
-  // Optional modal interactions when not fullscreen
-  if (inputs.launcherOpen) {
-    return {
-      visible: true,
-      state: "launcher",
-      nextExpiry: null,
-      wantsKeyboard: true,
-      reason: "launcher_open"
     };
   }
 

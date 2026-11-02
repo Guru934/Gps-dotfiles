@@ -108,6 +108,14 @@ Singleton {
     // Preserved alias for backwards compatibility
     readonly property string fontUi: root.fontSans
 
+    // Central logical-pixel scale for GPS surfaces. Change this one value to
+    // adjust the shell without touching the compositor or Qt scale.
+    readonly property real uiScale: 1.15
+
+    function scaled(value) {
+        return Math.round(value * root.uiScale)
+    }
+
     // Core tokens: live wallpaper palette when available, design defaults otherwise.
     property color surface: root.live.surface !== undefined ? root.live.surface : "#B30F131C"
     Behavior on surface { ColorAnimation { duration: root.animDuration } }
@@ -144,12 +152,15 @@ Singleton {
     property real leftLuminance: (root.live.leftLuminance !== undefined && typeof root.live.leftLuminance === "number") ? root.live.leftLuminance : 0.20
     Behavior on leftLuminance { NumberAnimation { duration: root.animDuration } }
 
-    readonly property int sidebarWindowWidth: 54
-    readonly property int sidebarBarWidth: 54
-    readonly property int sideButtonSize: 38
-    readonly property int radiusPanel: 18
+    readonly property int sidebarWindowWidth: root.scaled(54)
+    readonly property int sidebarBarWidth: root.scaled(54)
+    readonly property int sidebarRailWidth: root.scaled(50)
+    readonly property int sideButtonSize: root.scaled(38)
+    readonly property int railControlSize: root.scaled(36)
+    readonly property int railIconSize: root.scaled(19)
+    readonly property int radiusPanel: root.scaled(18)
     readonly property int radiusPill: 999
-    readonly property int radiusCard: 14
+    readonly property int radiusCard: root.scaled(14)
 
     // Dashboard v2 & additive tokens
     property color surfaceDeep: root.live.track !== undefined ? root.live.track : "#0F131C"
@@ -182,9 +193,43 @@ Singleton {
     property color textDim: root.live.textMuted !== undefined ? root.live.textMuted : "#859490"
     Behavior on textDim { ColorAnimation { duration: root.animDuration } }
 
-    readonly property int radiusDrawer: 16
-    readonly property int radiusControl: 10
-    readonly property int dashboardWidth: 440
+    readonly property int radiusDrawer: root.scaled(16)
+    readonly property int radiusControl: root.scaled(10)
+    readonly property int dashboardWidth: root.scaled(480)
+
+    // Dashboard-only content rhythm. These tokens keep the global UI scale
+    // unchanged while giving the console panes room for readable telemetry.
+    readonly property int dashboardFramePadding: root.scaled(18)
+    readonly property int dashboardCardPadding: root.scaled(14)
+    readonly property int dashboardSectionGap: root.scaled(14)
+    readonly property int dashboardSpacingSm: root.scaled(8)
+    readonly property int dashboardSpacingMd: root.scaled(12)
+    readonly property int dashboardControlHeight: root.scaled(40)
+    readonly property int dashboardTextCaption: root.scaled(9)
+    readonly property int dashboardTextSmall: root.scaled(10)
+    readonly property int dashboardTextBody: root.scaled(12)
+    readonly property int dashboardTextHeading: root.scaled(15)
+    readonly property int dashboardTextTitle: root.scaled(18)
+
+    function dashboardText(baseSize) {
+        return Math.round(baseSize * root.uiScale * 1.08)
+    }
+
+    // Surface-level geometry tokens for layouts that previously used local
+    // pixel constants. Screen and edge bounds are still applied by each view.
+    readonly property int powerPopupWidth: root.scaled(240)
+    readonly property int systemPopupWidth: root.scaled(330)
+    readonly property int trayPopupWidth: root.scaled(280)
+    readonly property int notificationCenterWidth: root.scaled(380)
+    readonly property int notificationCenterMaxHeight: root.scaled(640)
+    readonly property int islandPanelWidth: root.scaled(560)
+    readonly property int islandPanelHeight: root.scaled(580)
+    readonly property int islandControlWidthExpanded: root.scaled(460)
+    readonly property int islandControlWidthCompact: root.scaled(180)
+    readonly property int islandControlHeightCompact: root.scaled(36)
+    readonly property int islandControlMaxHeight: root.scaled(560)
+    readonly property int islandLauncherWidth: root.scaled(520)
+    readonly property int islandLauncherSearchHeight: root.scaled(44)
 
     // ──────────────── Canonical Design Tokens ────────────────
     // Semantic aliases
@@ -202,50 +247,50 @@ Singleton {
     readonly property color statusWarnFg: "#FFD47B"
 
     // Geometry — Spacing Scale
-    readonly property int spacingXs: 4
-    readonly property int spacingSm: 8
-    readonly property int spacingMd: 12
-    readonly property int spacingLg: 16
-    readonly property int spacingXl: 24
+    readonly property int spacingXs: root.scaled(4)
+    readonly property int spacingSm: root.scaled(8)
+    readonly property int spacingMd: root.scaled(12)
+    readonly property int spacingLg: root.scaled(16)
+    readonly property int spacingXl: root.scaled(24)
 
     // Geometry — Corner Radius Scale
-    readonly property int radiusXs: 4
-    readonly property int radiusSm: 8
-    readonly property int radiusMd: 10
-    readonly property int radiusLg: 14
-    readonly property int radiusXl: 18
+    readonly property int radiusXs: root.scaled(4)
+    readonly property int radiusSm: root.scaled(8)
+    readonly property int radiusMd: root.scaled(10)
+    readonly property int radiusLg: root.scaled(14)
+    readonly property int radiusXl: root.scaled(18)
 
     // Geometry — Border Widths
     readonly property int borderWidth: 1
     readonly property int borderWidthThick: 2
 
     // Geometry — Component Heights
-    readonly property int controlHeightSm: 24
-    readonly property int controlHeightMd: 32
-    readonly property int controlHeightLg: 40
-    readonly property int controlHeightXl: 48
+    readonly property int controlHeightSm: root.scaled(24)
+    readonly property int controlHeightMd: root.scaled(32)
+    readonly property int controlHeightLg: root.scaled(40)
+    readonly property int controlHeightXl: root.scaled(48)
 
     // Geometry — Padding Scale
-    readonly property int paddingSm: 8
-    readonly property int paddingMd: 12
-    readonly property int paddingLg: 16
-    readonly property int paddingXl: 20
+    readonly property int paddingSm: root.scaled(8)
+    readonly property int paddingMd: root.scaled(12)
+    readonly property int paddingLg: root.scaled(16)
+    readonly property int paddingXl: root.scaled(20)
 
     // Geometry — Icon Sizes
-    readonly property int iconXs: 12
-    readonly property int iconSm: 16
-    readonly property int iconMd: 20
-    readonly property int iconLg: 24
-    readonly property int iconXl: 32
+    readonly property int iconXs: root.scaled(12)
+    readonly property int iconSm: root.scaled(16)
+    readonly property int iconMd: root.scaled(20)
+    readonly property int iconLg: root.scaled(24)
+    readonly property int iconXl: root.scaled(32)
 
     // Typography Scale
-    readonly property int fontSizeDisplay: 22
-    readonly property int fontSizeHeading: 16
-    readonly property int fontSizeSubheading: 14
-    readonly property int fontSizeBody: 13
-    readonly property int fontSizeSecondary: 12
-    readonly property int fontSizeCaption: 10
-    readonly property int fontSizeSmall: 9
+    readonly property int fontSizeDisplay: root.scaled(22)
+    readonly property int fontSizeHeading: root.scaled(16)
+    readonly property int fontSizeSubheading: root.scaled(14)
+    readonly property int fontSizeBody: root.scaled(13)
+    readonly property int fontSizeSecondary: root.scaled(12)
+    readonly property int fontSizeCaption: root.scaled(10)
+    readonly property int fontSizeSmall: root.scaled(9)
 
     // Effects — Glass, Blur, Opacity, Shadow
     readonly property real glassAlpha: 0.72

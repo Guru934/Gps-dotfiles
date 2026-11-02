@@ -37,7 +37,7 @@ PanelWindow {
             return Math.max(8, Math.min(Math.max(8, sh - h - 8), ay - h / 2))
         }
     }
-    implicitWidth: 330
+    implicitWidth: Theme.systemPopupWidth
     implicitHeight: Math.min(430, Math.max(200, mainCol.implicitHeight + 24))
     color: "transparent"
     visible: root.isOpen
@@ -82,7 +82,7 @@ PanelWindow {
             Item {
                 width: parent.width
                 height: 26
-                Text { text: "WI-FI"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 14; font.bold: true; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
+                Text { text: "WI-FI"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(14); font.bold: true; anchors { left: parent.left; verticalCenter: parent.verticalCenter } }
                 Row {
                     spacing: 6
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }
@@ -100,7 +100,7 @@ PanelWindow {
                             color: (root.hub && root.hub.wifiStatusAvailable && root.hub.wifiEnabled)
                                 ? Theme.brandAccentFg
                                 : Theme.textMuted
-                            font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true
+                            font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); font.bold: true
                         }
                         MouseArea {
                             anchors.fill: parent
@@ -113,7 +113,7 @@ PanelWindow {
                     Rectangle {
                         width: 26; height: 26; radius: 13
                         color: closeMouse.containsMouse ? Theme.cardHover : Theme.card
-                        Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
+                        Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: Theme.scaled(11) }
                         MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.close() }
                     }
                 }
@@ -126,7 +126,7 @@ PanelWindow {
                     if (root.hub.wifiConnected) return "Connected: " + root.hub.netName
                     return root.hub.wifiEnabled ? "Not connected" : "Radio disabled"
                 }
-                color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 10
+                color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10)
                 elide: Text.ElideRight
             }
 
@@ -164,19 +164,19 @@ PanelWindow {
                     anchors.centerIn: parent
                     text: root.busy ? "Scanning…" : "⟳  Scan for networks"
                     color: root.busy ? Theme.textMuted : Theme.textMain
-                    font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true
+                    font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true
                 }
                 MouseArea { id: scanMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.hub) root.hub.rescanWifi() }
             }
 
-            Text { text: "AVAILABLE NETWORKS"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.1 }
+            Text { text: "AVAILABLE NETWORKS"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); font.bold: true; font.letterSpacing: 1.1 }
 
             // Loading state
             Text {
                 width: parent.width; horizontalAlignment: Text.AlignHCenter
                 visible: root.busy && root.networks.length === 0
                 text: "Scanning for networks…"
-                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
+                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11)
             }
 
             // Empty state
@@ -188,12 +188,12 @@ PanelWindow {
                     text: (!root.hub || !root.hub.wifiStatusAvailable)
                         ? "Wi-Fi is unavailable."
                         : (!root.hub.wifiEnabled ? "Wi-Fi radio is off." : "No networks found.")
-                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 11
+                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11)
                 }
                 Text {
                     width: parent.width; horizontalAlignment: Text.AlignHCenter
                     text: "Try scanning again."
-                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9
+                    color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9)
                 }
             }
 
@@ -229,13 +229,13 @@ PanelWindow {
                             Text {
                                 width: parent.width
                                 text: (modelData.secured ? "🔒 " : "") + modelData.ssid
-                                color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true
+                                color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true
                                 elide: Text.ElideRight
                             }
                             Text {
                                 text: (activeNetwork ? "Connected · " : "") + modelData.signal + "%" + (modelData.secured ? " · secured" : " · open")
                                 color: activeNetwork ? Theme.brandAccent : Theme.textMuted
-                                font.family: Theme.fontMono; font.pixelSize: 8
+                                font.family: Theme.fontMono; font.pixelSize: Theme.scaled(8)
                             }
                         }
                         Rectangle {
@@ -251,7 +251,7 @@ PanelWindow {
                                     return networkRow.activeNetwork ? "Leave" : "Join"
                                 }
                                 color: (btnMouse.containsMouse || !networkRow.activeNetwork) ? Theme.brandAccentFg : Theme.textMain
-                                font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true
+                                font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true
                             }
                             MouseArea {
                                 id: btnMouse
@@ -272,7 +272,7 @@ PanelWindow {
             Text {
                 width: parent.width
                 text: "Secured networks ask for a password via a system prompt. Passwords are never shown or stored here."
-                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 8
+                color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(8)
                 wrapMode: Text.WordWrap
             }
         }

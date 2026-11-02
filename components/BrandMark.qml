@@ -7,10 +7,11 @@ Rectangle {
     id: root
 
     property var hub: null
+    property var rail: null
 
-    width: 28
-    height: 28
-    radius: 8
+    width: Theme.railControlSize
+    height: Theme.railControlSize
+    radius: Theme.radiusSm
     color: brandMouse.containsMouse
         ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.20)
         : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
@@ -18,6 +19,7 @@ Rectangle {
     border.color: brandMouse.containsMouse
         ? Theme.brandAccent
         : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.45)
+
 
     Behavior on color { ColorAnimation { duration: Theme.animDuration } }
     Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
@@ -32,8 +34,8 @@ Rectangle {
     Rectangle {
         id: glowAura
         anchors.centerIn: parent
-        width: 32
-        height: 32
+        width: Theme.railControlSize + Theme.spacingXs
+        height: Theme.railControlSize + Theme.spacingXs
         radius: 12
         color: Theme.brandAccent
         opacity: brandMouse.containsMouse ? 0.28 : 0.0
@@ -48,8 +50,8 @@ Rectangle {
     Shape {
         id: markShape
         anchors.centerIn: parent
-        width: 18
-        height: 18
+        width: Theme.iconMd
+        height: Theme.iconMd
         layer.enabled: true
         layer.samples: 4
 
@@ -96,8 +98,8 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onEntered: if (root.hub) root.hub.setTooltip("Application Launcher (Super)")
-        onExited: if (root.hub) root.hub.clearTooltip()
+        onEntered: if (root.rail && root.rail.showRailTooltip) root.rail.showRailTooltip("Application launcher (Super)", root)
+        onExited: if (root.rail && root.rail.hideRailTooltip) root.rail.hideRailTooltip()
         onClicked: {
             var script = (root.hub && root.hub.repoRoot) ? (root.hub.repoRoot + "/scripts/gps-ipc") : "gps-ipc"
             Quickshell.execDetached([script, "island", "launcher", "toggle"])

@@ -71,8 +71,8 @@ PanelWindow {
         }
     }
 
-    implicitWidth:  280
-    implicitHeight: Math.min(Math.max(popupCard.implicitHeight + 2, 80), 460)
+    implicitWidth:  Theme.trayPopupWidth
+    implicitHeight: Math.min(Math.max(popupCard.implicitHeight + Theme.spacingXs / 2, Theme.scaled(80)), Theme.scaled(460))
 
     color: "transparent"
 
@@ -376,7 +376,7 @@ PanelWindow {
             text: "󰠦"
             color: Theme.textMuted
             font.family: Theme.fontMono
-            font.pixelSize: 16
+            font.pixelSize: Theme.scaled(16)
         }
 
         // NeedsAttention accent dot (bottom-right)

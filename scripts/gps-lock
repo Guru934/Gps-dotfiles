@@ -94,5 +94,24 @@ if [ -x "$BG_ROTATOR" ]; then
     "$BG_ROTATOR" >/dev/null 2>&1 || true
 fi
 
-# 5. Execute lock without shell concatenation
-exec "$LOCK_BIN" --config "$CONFIG_FILE" "$@"
+# 5. Keep an owner-readable diagnostic log and report failures while the
+# session is still unlocked. A successful hyprlock remains in the foreground
+# until the user authenticates and exits.
+LOCK_LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gps/logs"
+LOCK_LOG="$LOCK_LOG_DIR/gps-lock.log"
+if ! mkdir -p "$LOCK_LOG_DIR"; then
+    echo "WARN: could not create lock log directory; launching hyprlock without file logging." >&2
+    exec "$LOCK_BIN" --config "$CONFIG_FILE" "$@"
+fi
+
+if "$LOCK_BIN" --config "$CONFIG_FILE" "$@" >>"$LOCK_LOG" 2>&1; then
+    exit 0
+else
+    LOCK_STATUS=$?
+    echo "ERROR: hyprlock exited with status $LOCK_STATUS. Recent diagnostics:" >&2
+    tail -n 40 "$LOCK_LOG" >&2 || true
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -u critical "Lock Failed" "hyprlock exited with status $LOCK_STATUS. See $LOCK_LOG" || true
+    fi
+    exit "$LOCK_STATUS"
+fi

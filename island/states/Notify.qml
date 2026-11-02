@@ -4,6 +4,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Effects
+import qs.config
 import Quickshell.Services.Notifications
 import "PetSprites.js" as S
 import "PetFx.js" as PetFx
@@ -18,8 +19,8 @@ Item {
     readonly property int count: queue.length
     readonly property bool expanded: core.hovered && n !== null
     readonly property bool stack: count > 1 && !expanded
-    readonly property real w: expanded ? 420 : stack ? 430 : 410
-    readonly property real h: expanded ? 140 : stack ? 98 : 72
+    readonly property real w: core.scale(expanded ? 420 : stack ? 430 : 410)
+    readonly property real h: core.scale(expanded ? 140 : stack ? 98 : 72)
     readonly property color tone: !n ? core.teal : n.urgency === NotificationUrgency.Critical ? core.coral : n.urgency === NotificationUrgency.Low ? core.dim : core.teal
     readonly property color accent: tone
     property double waveStart: -1
@@ -78,14 +79,14 @@ Item {
     }
 
     // ── small local widgets ──
-    component Txt: Text { color: st.core.text; font.family: st.core.uiFont; font.pixelSize: 13; elide: Text.ElideRight; textFormat: Text.PlainText }
-    component Mono: Text { color: st.core.dim; font.family: st.core.monoFont; font.pixelSize: 10; elide: Text.ElideRight; textFormat: Text.PlainText }
+    component Txt: Text { color: st.core.text; font.family: st.core.uiFont; font.pixelSize: core.scale(13); elide: Text.ElideRight; textFormat: Text.PlainText }
+    component Mono: Text { color: st.core.dim; font.family: st.core.monoFont; font.pixelSize: core.scale(10); elide: Text.ElideRight; textFormat: Text.PlainText }
     component Ico: Text {
         property string alt: ""
         property string name: ""
         text: st.core.iconOk ? name : alt
         font.family: st.core.iconOk ? st.core.iconFont : st.core.uiFont
-        font.pixelSize: 17; color: st.core.text
+        font.pixelSize: core.scale(17); color: st.core.text
         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
     }
     component Avatar: Item {
@@ -114,9 +115,9 @@ Item {
     }
     component CloseBtn: Rectangle {
         signal clicked()
-        implicitWidth: 28; implicitHeight: 28; radius: 14; color: cm.containsMouse ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(1, 1, 1, 0.07)
+        implicitWidth: Theme.scaled(28); implicitHeight: Theme.scaled(28); radius: 14; color: cm.containsMouse ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(1, 1, 1, 0.07)
         Behavior on color { ColorAnimation { duration: 100 } }
-        Ico { anchors.centerIn: parent; name: "close"; alt: "×"; font.pixelSize: 15; color: st.core.dim }
+        Ico { anchors.centerIn: parent; name: "close"; alt: "×"; font.pixelSize: core.scale(15); color: st.core.dim }
         MouseArea { id: cm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked() }
     }
     component Pillbtn: Rectangle {
@@ -124,7 +125,7 @@ Item {
         property string text: ""
         property bool primary: false
         signal clicked()
-        implicitHeight: 26; implicitWidth: pt.implicitWidth + 26; radius: 13
+        implicitHeight: Theme.scaled(26); implicitWidth: pt.implicitWidth + 26; radius: 13
         color: primary ? st.tone : Qt.rgba(1, 1, 1, 0.08)
         scale: pm.containsMouse ? 1.06 : 1
         Behavior on scale { NumberAnimation { duration: 100 } }
@@ -170,17 +171,17 @@ Item {
                         Txt { text: st.title(st.item); font.weight: Font.DemiBold; Layout.fillWidth: true }
                         Mono { text: st.item ? st.core.ago(st.item.ts) : "" }
                     }
-                    Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
+                    Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: core.scale(12); Layout.fillWidth: true }
                 }
                 Rectangle {
-                    implicitHeight: 24; implicitWidth: br.implicitWidth + 20; radius: 12
+                    implicitHeight: Theme.scaled(24); implicitWidth: br.implicitWidth + 20; radius: 12
                     color: Qt.rgba(st.tone.r, st.tone.g, st.tone.b, 0.15); border.width: 1; border.color: Qt.rgba(st.tone.r, st.tone.g, st.tone.b, 0.3)
                     RowLayout { id: br; anchors.centerIn: parent; spacing: 5
                         Rectangle { width: 6; height: 6; radius: 3; color: st.tone
                             SequentialAnimation on opacity { loops: Animation.Infinite; running: st.stack
                                 NumberAnimation { to: 0.3; duration: 700 } NumberAnimation { to: 1; duration: 700 } } }
-                        Mono { text: "+" + (st.count - 1); color: st.tone; font.pixelSize: 11; font.weight: Font.DemiBold }
-                        Mono { text: "MORE"; color: st.tone; font.pixelSize: 9; opacity: 0.7; font.letterSpacing: 1 } }
+                        Mono { text: "+" + (st.count - 1); color: st.tone; font.pixelSize: core.scale(11); font.weight: Font.DemiBold }
+                        Mono { text: "MORE"; color: st.tone; font.pixelSize: core.scale(9); opacity: 0.7; font.letterSpacing: 1 } }
                 }
             }
             MouseArea { anchors.fill: parent; anchors.rightMargin: 120; cursorShape: Qt.PointingHandCursor; onClicked: if (st.item) st.open(st.item) }
@@ -204,7 +205,7 @@ Item {
                     Txt { text: st.title(st.item); font.weight: Font.DemiBold; Layout.fillWidth: true }
                     Mono { text: st.item ? st.core.ago(st.item.ts) : ""; font.letterSpacing: 1 }
                 }
-                Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: 12; Layout.fillWidth: true }
+                Txt { text: st.bodyText(st.item); color: st.core.dim; font.pixelSize: core.scale(12); Layout.fillWidth: true }
             }
             CloseBtn { onClicked: if (st.item) st.core.dismissNotif(st.item) }
         }
@@ -226,7 +227,7 @@ Item {
         Text {
             Layout.fillWidth: true; Layout.fillHeight: true
             textFormat: Text.PlainText
-            text: st.bodyText(st.item); color: st.core.dim; font.family: st.core.uiFont; font.pixelSize: 12
+            text: st.bodyText(st.item); color: st.core.dim; font.family: st.core.uiFont; font.pixelSize: core.scale(12)
             wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; verticalAlignment: Text.AlignTop
         }
         RowLayout {

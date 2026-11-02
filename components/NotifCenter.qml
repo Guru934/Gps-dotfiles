@@ -457,15 +457,15 @@ PanelWindow {
     readonly property var groupedEntries: NotifCenterLogic.groupEntriesByDay(root.filteredEntries, Date.now())
 
     // 80% of 800 logical screen height is 640px
-    readonly property int maxDrawerHeight: 640
-    readonly property int calculatedContentHeight: Math.min(root.maxDrawerHeight, Math.max(320, mainCol.implicitHeight + 36))
+    readonly property int maxDrawerHeight: Theme.notificationCenterMaxHeight
+    readonly property int calculatedContentHeight: Math.min(root.maxDrawerHeight, Math.max(Theme.scaled(320), mainCol.implicitHeight + Theme.spacingXl + Theme.spacingSm))
 
     anchors { top: true; left: true }
     margins {
         left: 60
         top: 20
     }
-    implicitWidth: 380
+    implicitWidth: Theme.notificationCenterWidth
     implicitHeight: root.calculatedContentHeight
     color: "transparent"
     visible: root.open
@@ -501,7 +501,7 @@ PanelWindow {
                     text: "NOTIFICATIONS"
                     color: Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.scaled(13)
                     font.bold: true
                 }
 
@@ -520,7 +520,7 @@ PanelWindow {
                         text: root.unreadCount + " unread"
                         color: Theme.brandAccent
                         font.family: Theme.fontUi
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
                 }
@@ -541,8 +541,8 @@ PanelWindow {
                         id: clearRow
                         anchors.centerIn: parent
                         spacing: 4
-                        Text { text: "󰆴"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: "Clear all"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "󰆴"; color: Theme.textMuted; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(11); anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Clear all"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                     }
 
                     MouseArea {
@@ -560,7 +560,7 @@ PanelWindow {
                     height: 22
                     radius: 6
                     color: escMa.containsMouse ? Theme.surfaceHigh : "transparent"
-                    Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: 11 }
+                    Text { anchors.centerIn: parent; text: "✕"; color: Theme.textMuted; font.pixelSize: Theme.scaled(11) }
                     MouseArea {
                         id: escMa
                         anchors.fill: parent
@@ -614,7 +614,7 @@ PanelWindow {
                                     text: modelData.label
                                     color: Number(root.currentSection) === index ? Theme.brandAccentFg : (tabMa.containsMouse ? Theme.textMain : Theme.textMuted)
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.scaled(11)
                                     font.bold: true
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -633,7 +633,7 @@ PanelWindow {
                                         text: modelData.badge
                                         color: Number(root.currentSection) === index ? Theme.brandAccentFg : Theme.brandAccent
                                         font.family: Theme.fontMono
-                                        font.pixelSize: 9
+                                        font.pixelSize: Theme.scaled(9)
                                         font.bold: true
                                     }
                                 }
@@ -670,7 +670,7 @@ PanelWindow {
                         text: "Cleared all notifications"
                         color: Theme.textMain
                         font.family: Theme.fontUi
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.scaled(11)
                         font.bold: true
                     }
 
@@ -688,7 +688,7 @@ PanelWindow {
                             text: "Undo (" + root.undoSeconds + "s)"
                             color: Theme.brandAccentFg
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.scaled(10)
                             font.bold: true
                         }
 
@@ -726,7 +726,7 @@ PanelWindow {
                             text: "󰍉"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.scaled(13)
                         }
 
                         Item {
@@ -739,7 +739,7 @@ PanelWindow {
                                 verticalAlignment: TextInput.AlignVCenter
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.scaled(11)
                                 text: root.searchQuery
                                 onTextChanged: root.searchQuery = text
                             }
@@ -751,7 +751,7 @@ PanelWindow {
                                 text: "Search notifications…"
                                 color: Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.scaled(11)
                             }
                         }
 
@@ -759,7 +759,7 @@ PanelWindow {
                             visible: root.searchQuery !== ""
                             text: "✕"
                             color: Theme.textMuted
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.scaled(10)
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
@@ -811,7 +811,7 @@ PanelWindow {
                                 text: "All"
                                 color: (root.activeAppFilter === "All" && !root.unreadOnly) ? Theme.brandAccentFg : Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.scaled(10)
                                 font.bold: true
                             }
                             MouseArea {
@@ -839,7 +839,7 @@ PanelWindow {
                                 text: "Unread" + (root.unreadCount > 0 ? (" (" + root.unreadCount + ")") : "")
                                 color: root.unreadOnly ? Theme.brandAccentFg : Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.scaled(10)
                                 font.bold: true
                             }
                             MouseArea {
@@ -870,7 +870,7 @@ PanelWindow {
                                     text: modelData
                                     color: (root.activeAppFilter === modelData && !root.unreadOnly) ? Theme.brandAccentFg : Theme.textMuted
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.scaled(10)
                                     font.bold: true
                                 }
                                 MouseArea {
@@ -945,14 +945,14 @@ PanelWindow {
                                 text: "󰂚"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 36
+                                font.pixelSize: Theme.scaled(36)
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: root.searchQuery ? "No matching notifications" : "All caught up"
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.scaled(13)
                                 font.bold: true
                             }
                             Text {
@@ -960,7 +960,7 @@ PanelWindow {
                                 text: root.searchQuery ? "Try a different search term" : "No new notifications right now."
                                 color: Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.scaled(10)
                             }
                         }
 
@@ -1021,7 +1021,7 @@ PanelWindow {
                                 height: 22
                                 radius: 4
                                 color: prevMoMa.containsMouse ? Theme.surfaceHigh : "transparent"
-                                Text { anchors.centerIn: parent; text: "󰅁"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
+                                Text { anchors.centerIn: parent; text: "󰅁"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(13) }
                                 MouseArea {
                                     id: prevMoMa
                                     anchors.fill: parent
@@ -1038,7 +1038,7 @@ PanelWindow {
                                 }
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.scaled(12)
                                 font.bold: true
                             }
 
@@ -1047,7 +1047,7 @@ PanelWindow {
                                 height: 22
                                 radius: 4
                                 color: nextMoMa.containsMouse ? Theme.surfaceHigh : "transparent"
-                                Text { anchors.centerIn: parent; text: "󰅂"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: 13 }
+                                Text { anchors.centerIn: parent; text: "󰅂"; color: Theme.textMain; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(13) }
                                 MouseArea {
                                     id: nextMoMa
                                     anchors.fill: parent
@@ -1074,7 +1074,7 @@ PanelWindow {
                                     text: "Today"
                                     color: Theme.textMuted
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.scaled(9)
                                     font.bold: true
                                 }
                                 MouseArea {
@@ -1102,7 +1102,7 @@ PanelWindow {
                                         text: modelData
                                         color: Theme.textMuted
                                         font.family: Theme.fontMono
-                                        font.pixelSize: 9
+                                        font.pixelSize: Theme.scaled(9)
                                         font.bold: true
                                     }
                                 }
@@ -1135,7 +1135,7 @@ PanelWindow {
                                             text: "" + modelData.dayNumber
                                             color: modelData.isSelected ? Theme.brandAccentFg : (modelData.isOtherMonth ? Qt.rgba(Theme.textMuted.r, Theme.textMuted.g, Theme.textMuted.b, 0.45) : Theme.textMain)
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.scaled(10)
                                             font.bold: modelData.isSelected || modelData.isToday || !modelData.isOtherMonth
                                         }
 
@@ -1184,7 +1184,7 @@ PanelWindow {
                         }
                         color: Theme.textMain
                         font.family: Theme.fontUi
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.scaled(11)
                         font.bold: true
                     }
 
@@ -1200,7 +1200,7 @@ PanelWindow {
                             text: root.selectedDayTasks.length + " tasks"
                             color: Theme.brandAccent
                             font.family: Theme.fontUi
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.scaled(8)
                             font.bold: true
                         }
                     }
@@ -1221,8 +1221,8 @@ PanelWindow {
                             id: carryText
                             anchors.centerIn: parent
                             spacing: 4
-                            Text { text: "󰁔"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: "Carry (" + root.carriedPendingCount + ") to today"; color: Theme.statusWarn; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "󰁔"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Carry (" + root.carriedPendingCount + ") to today"; color: Theme.statusWarn; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                         }
 
                         MouseArea {
@@ -1255,7 +1255,7 @@ PanelWindow {
                                 text: modelData
                                 color: root.taskFilterMode === modelData ? Theme.brandAccentFg : Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.scaled(9)
                                 font.bold: true
                             }
 
@@ -1295,7 +1295,7 @@ PanelWindow {
                                 verticalAlignment: TextInput.AlignVCenter
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.scaled(11)
                                 text: root.taskDraftText
                                 onTextChanged: root.taskDraftText = text
                                 Keys.onReturnPressed: root.addPlannerTask()
@@ -1306,7 +1306,7 @@ PanelWindow {
                                 text: "Add a task for this day…"
                                 color: Theme.textMuted
                                 font.family: Theme.fontUi
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.scaled(11)
                             }
                         }
                     }
@@ -1328,7 +1328,7 @@ PanelWindow {
                             verticalAlignment: TextInput.AlignVCenter
                             color: Theme.textMain
                             font.family: Theme.fontMono
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.scaled(10)
                             maximumLength: 5
                             text: root.taskDraftTime
                             onTextChanged: root.taskDraftTime = text
@@ -1341,7 +1341,7 @@ PanelWindow {
                             text: "HH:MM"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.scaled(8)
                         }
                     }
 
@@ -1356,7 +1356,7 @@ PanelWindow {
                             anchors.centerIn: parent
                             text: "+"
                             color: Theme.brandAccentFg
-                            font.pixelSize: 18
+                            font.pixelSize: Theme.scaled(18)
                             font.bold: true
                         }
 
@@ -1391,7 +1391,7 @@ PanelWindow {
                             text: "No tasks for this day. Add one above!"
                             color: Theme.textMuted
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.scaled(10)
                         }
 
                         Repeater {
@@ -1425,7 +1425,7 @@ PanelWindow {
                                             visible: modelData.done
                                             text: "✓"
                                             color: Theme.brandAccentFg
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.scaled(10)
                                             font.bold: true
                                         }
 
@@ -1448,7 +1448,7 @@ PanelWindow {
                                             text: modelData.text
                                             color: modelData.done ? Theme.textMuted : Theme.textMain
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.scaled(11)
                                             font.strikeout: modelData.done
                                             elide: Text.ElideRight
 
@@ -1464,7 +1464,7 @@ PanelWindow {
                                             verticalAlignment: TextInput.AlignVCenter
                                             color: Theme.textMain
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.scaled(11)
                                             text: root.editingTaskDraft
                                             onTextChanged: root.editingTaskDraft = text
                                             Keys.onReturnPressed: root.commitEditTask()
@@ -1484,8 +1484,8 @@ PanelWindow {
                                             id: timeBadgeRow
                                             anchors.centerIn: parent
                                             spacing: 3
-                                            Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
-                                            Text { text: modelData.time || ""; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                            Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); anchors.verticalCenter: parent.verticalCenter }
+                                            Text { text: modelData.time || ""; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                                         }
                                     }
 
@@ -1501,7 +1501,7 @@ PanelWindow {
                                             text: "󰆴"
                                             color: delTaskMa.containsMouse ? Theme.statusDanger : Theme.textMuted
                                             font.family: Theme.fontMono
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.scaled(10)
                                         }
 
                                         MouseArea {
@@ -1569,7 +1569,7 @@ PanelWindow {
                                     text: root.dndActive ? "󰂛" : "󰂚"
                                     color: root.dndActive ? Theme.brandAccentFg : Theme.textMain
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 18
+                                    font.pixelSize: Theme.scaled(18)
                                 }
                             }
 
@@ -1581,7 +1581,7 @@ PanelWindow {
                                     text: "Do Not Disturb"
                                     color: Theme.textMain
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.scaled(13)
                                     font.bold: true
                                 }
 
@@ -1589,7 +1589,7 @@ PanelWindow {
                                     text: root.dndActive ? "Popups and alert banners are silenced" : "Banner notifications and popups active"
                                     color: Theme.textMuted
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.scaled(10)
                                 }
                             }
 
@@ -1609,7 +1609,7 @@ PanelWindow {
                             text: "QUICK DURATION"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.scaled(9)
                             font.bold: true
                             font.letterSpacing: 1.1
                         }
@@ -1631,8 +1631,8 @@ PanelWindow {
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: 5
-                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "30 min"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "30 min"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
                                 MouseArea {
@@ -1656,8 +1656,8 @@ PanelWindow {
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: 5
-                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "1 hour"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "󰥔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "1 hour"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
                                 MouseArea {
@@ -1681,8 +1681,8 @@ PanelWindow {
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: 5
-                                    Text { text: "󰖔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "Until tomorrow"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "󰖔"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Until tomorrow"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
                                 MouseArea {
@@ -1706,8 +1706,8 @@ PanelWindow {
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: 5
-                                    Text { text: "󰂛"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "Until I turn it off"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "󰂛"; color: Theme.brandAccent; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Until I turn it off"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
                                 MouseArea {
@@ -1730,7 +1730,7 @@ PanelWindow {
                             text: "SCHEDULED DO NOT DISTURB"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.scaled(9)
                             font.bold: true
                             font.letterSpacing: 1.1
                         }
@@ -1754,8 +1754,8 @@ PanelWindow {
                                     Column {
                                         Layout.fillWidth: true
                                         spacing: 1
-                                        Text { text: "Enable Schedule"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
-                                        Text { text: "Automatically silence notifications during set hours"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                        Text { text: "Enable Schedule"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true }
+                                        Text { text: "Automatically silence notifications during set hours"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9) }
                                     }
 
                                     ToggleSwitch {
@@ -1771,7 +1771,7 @@ PanelWindow {
 
                                     Row {
                                         spacing: 6
-                                        Text { text: "From"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                        Text { text: "From"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
                                         Rectangle {
                                             width: 54
                                             height: 24
@@ -1786,7 +1786,7 @@ PanelWindow {
                                                 verticalAlignment: TextInput.AlignVCenter
                                                 color: Theme.textMain
                                                 font.family: Theme.fontMono
-                                                font.pixelSize: 10
+                                                font.pixelSize: Theme.scaled(10)
                                                 maximumLength: 5
                                                 text: (root.dndState && root.dndState.schedule && root.dndState.schedule.from) ? root.dndState.schedule.from : "22:00"
                                                 onEditingFinished: root.updateScheduleTimes(text, null)
@@ -1796,7 +1796,7 @@ PanelWindow {
 
                                     Row {
                                         spacing: 6
-                                        Text { text: "To"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                        Text { text: "To"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(10); anchors.verticalCenter: parent.verticalCenter }
                                         Rectangle {
                                             width: 54
                                             height: 24
@@ -1811,7 +1811,7 @@ PanelWindow {
                                                 verticalAlignment: TextInput.AlignVCenter
                                                 color: Theme.textMain
                                                 font.family: Theme.fontMono
-                                                font.pixelSize: 10
+                                                font.pixelSize: Theme.scaled(10)
                                                 maximumLength: 5
                                                 text: (root.dndState && root.dndState.schedule && root.dndState.schedule.to) ? root.dndState.schedule.to : "07:00"
                                                 onEditingFinished: root.updateScheduleTimes(null, text)
@@ -1847,7 +1847,7 @@ PanelWindow {
                                                 text: modelData
                                                 color: isDayActive ? Theme.brandAccentFg : Theme.textMuted
                                                 font.family: Theme.fontMono
-                                                font.pixelSize: 9
+                                                font.pixelSize: Theme.scaled(9)
                                                 font.bold: true
                                             }
 
@@ -1872,7 +1872,7 @@ PanelWindow {
                             text: "SETTINGS & PRIVACY"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.scaled(9)
                             font.bold: true
                             font.letterSpacing: 1.1
                         }
@@ -1897,8 +1897,8 @@ PanelWindow {
                                     Column {
                                         Layout.fillWidth: true
                                         spacing: 1
-                                        Text { text: "Allow critical alerts"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
-                                        Text { text: "Urgent notifications bypass Do Not Disturb"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                        Text { text: "Allow critical alerts"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true }
+                                        Text { text: "Urgent notifications bypass Do Not Disturb"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9) }
                                     }
 
                                     ToggleSwitch {
@@ -1916,8 +1916,8 @@ PanelWindow {
                                     Column {
                                         Layout.fillWidth: true
                                         spacing: 1
-                                        Text { text: "Store notification body text"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true }
-                                        Text { text: "Preserve message content in disk history"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9 }
+                                        Text { text: "Store notification body text"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true }
+                                        Text { text: "Preserve message content in disk history"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9) }
                                     }
 
                                     ToggleSwitch {
@@ -1938,7 +1938,7 @@ PanelWindow {
                             text: "MUTED APPLICATIONS"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.scaled(9)
                             font.bold: true
                             font.letterSpacing: 1.1
                         }
@@ -1961,7 +1961,7 @@ PanelWindow {
                                     text: "No applications registered yet"
                                     color: Theme.textMuted
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.scaled(10)
                                 }
 
                                 Repeater {
@@ -1977,7 +1977,7 @@ PanelWindow {
                                             text: modelData
                                             color: Theme.textMain
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.scaled(11)
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
                                         }
@@ -1986,7 +1986,7 @@ PanelWindow {
                                             text: isMuted ? "Muted" : "Active"
                                             color: isMuted ? Theme.statusWarn : Theme.textMuted
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 9
+                                            font.pixelSize: Theme.scaled(9)
                                             font.bold: true
                                         }
 
@@ -2017,8 +2017,8 @@ PanelWindow {
                             Row {
                                 anchors.centerIn: parent
                                 spacing: 6
-                                Text { text: "󰆴"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: "Clear notification history"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "󰆴"; color: Theme.statusWarn; font.family: Theme.fontMono; font.pixelSize: Theme.scaled(12); anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "Clear notification history"; color: Theme.textMain; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(11); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                             }
 
                             MouseArea {
@@ -2049,7 +2049,7 @@ PanelWindow {
                                     text: "Permanently delete all stored notifications?"
                                     color: Theme.textMain
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.scaled(10)
                                     font.bold: true
                                 }
 
@@ -2063,7 +2063,7 @@ PanelWindow {
                                         color: Theme.surfaceHigh
                                         border.width: 1
                                         border.color: Theme.border
-                                        Text { anchors.centerIn: parent; text: "Cancel"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
+                                        Text { anchors.centerIn: parent; text: "Cancel"; color: Theme.textMuted; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9); font.bold: true }
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -2076,7 +2076,7 @@ PanelWindow {
                                         height: 24
                                         radius: 5
                                         color: Theme.statusWarn
-                                        Text { anchors.centerIn: parent; text: "Clear All"; color: Theme.brandAccentFg; font.family: Theme.fontUi; font.pixelSize: 9; font.bold: true }
+                                        Text { anchors.centerIn: parent; text: "Clear All"; color: Theme.brandAccentFg; font.family: Theme.fontUi; font.pixelSize: Theme.scaled(9); font.bold: true }
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -2108,7 +2108,7 @@ PanelWindow {
                 text: groupRoot.title + " (" + groupRoot.entries.length + ")"
                 color: Theme.textMuted
                 font.family: Theme.fontMono
-                font.pixelSize: 9
+                font.pixelSize: Theme.scaled(9)
                 font.bold: true
                 font.letterSpacing: 1.1
             }
@@ -2127,7 +2127,7 @@ PanelWindow {
                     text: "Clear"
                     color: Theme.textMuted
                     font.family: Theme.fontUi
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.scaled(9)
                     font.bold: true
                 }
 
@@ -2207,7 +2207,7 @@ PanelWindow {
                         text: (entry && entry.appName && entry.appName.length > 0) ? entry.appName.charAt(0).toUpperCase() : "󰂚"
                         color: Theme.brandAccent
                         font.family: Theme.fontUi
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
                 }
@@ -2216,7 +2216,7 @@ PanelWindow {
                     text: entry ? (entry.appName || entry.app || "Notification") : ""
                     color: Theme.brandAccent
                     font.family: Theme.fontUi
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.scaled(10)
                     font.bold: true
                     Layout.maximumWidth: 160
                     elide: Text.ElideRight
@@ -2226,7 +2226,7 @@ PanelWindow {
                     text: cardItem.formattedTime
                     color: Theme.textMuted
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.scaled(8)
                 }
 
                 // Unread dot
@@ -2251,7 +2251,7 @@ PanelWindow {
                         anchors.centerIn: parent
                         text: "✕"
                         color: dismissCardMa.containsMouse ? Theme.statusDanger : Theme.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                     }
 
                     MouseArea {
@@ -2272,7 +2272,7 @@ PanelWindow {
                 text: entry ? (entry.summary || "") : ""
                 color: Theme.textMain
                 font.family: Theme.fontUi
-                font.pixelSize: 11
+                font.pixelSize: Theme.scaled(11)
                 font.bold: true
                 wrapMode: Text.WordWrap
                 maximumLineCount: cardItem.isExpanded ? 10 : 2
@@ -2287,7 +2287,7 @@ PanelWindow {
                 textFormat: Text.PlainText
                 color: Theme.textMuted
                 font.family: Theme.fontUi
-                font.pixelSize: 10
+                font.pixelSize: Theme.scaled(10)
                 wrapMode: Text.WordWrap
                 maximumLineCount: cardItem.isExpanded ? 20 : 1
                 elide: Text.ElideRight
@@ -2316,7 +2316,7 @@ PanelWindow {
                             text: modelData.text || modelData.identifier
                             color: Theme.textMain
                             font.family: Theme.fontUi
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.scaled(9)
                             font.bold: true
                         }
 

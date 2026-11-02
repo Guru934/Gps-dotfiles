@@ -348,18 +348,18 @@ Item {
         ColumnLayout {
             id: content
             width: parent.width
-            spacing: 10
+            spacing: Theme.dashboardSpacingMd
 
             // HUD header row: section label + runtime chips.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.dashboardSpacingSm
 
                 Text {
                     text: "HUD // SYSTEM TELEMETRY"
                     color: Theme.accentPrimary
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                     font.letterSpacing: 1
                 }
@@ -379,7 +379,7 @@ Item {
                         text: "WAYLAND // QS-" + (root.qsVersion !== "" ? root.qsVersion : "\u2026")
                         color: Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.dashboardText(7)
                     }
                 }
 
@@ -414,7 +414,7 @@ Item {
                             text: "LIVE (" + root.tickMs + "ms)"
                             color: Theme.accentPrimary
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             font.bold: true
                         }
                     }
@@ -431,8 +431,8 @@ Item {
                 ColumnLayout {
                     id: engine
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -442,7 +442,7 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                             name: "tune"
                             color: Theme.accentPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
@@ -450,7 +450,7 @@ Item {
                             text: "DASHBOARD ENGINE"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -459,7 +459,7 @@ Item {
                             text: "QUICKSHELL HOST"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                         }
                     }
 
@@ -474,13 +474,13 @@ Item {
                             anchors.fill: parent
                             anchors.leftMargin: 10
                             anchors.rightMargin: 10
-                            spacing: 8
+                            spacing: Theme.dashboardSpacingSm
 
                             DashIcon {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "swipe_left"
                                 color: Theme.accentSecondary
-                                font.pixelSize: 16
+                                font.pixelSize: Theme.dashboardText(16)
                             }
 
                             ColumnLayout {
@@ -492,7 +492,7 @@ Item {
                                     text: "EDGE HOTSPOT"
                                     color: Theme.textMain
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.dashboardText(11)
                                     font.bold: true
                                 }
 
@@ -500,7 +500,7 @@ Item {
                                     text: "bottom-right hot zone opens this drawer"
                                     color: Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                 }
                             }
 
@@ -536,7 +536,7 @@ Item {
                                     Layout.alignment: Qt.AlignVCenter
                                     name: "timer"
                                     color: Theme.textMuted
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.dashboardText(13)
                                 }
 
                                 Text {
@@ -544,7 +544,7 @@ Item {
                                     text: "AUTO-DISMISS GRACE"
                                     color: Theme.textMuted
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 8
+                                    font.pixelSize: Theme.dashboardText(8)
                                     font.bold: true
                                 }
 
@@ -552,7 +552,7 @@ Item {
                                     text: root.autoHideMs + " MS"
                                     color: Theme.accentPrimary
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.dashboardText(9)
                                     font.bold: true
                                 }
                             }
@@ -579,7 +579,7 @@ Item {
                                     text: "150MS SNAP"
                                     color: Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                 }
 
                                 Item { Layout.fillWidth: true }
@@ -588,7 +588,7 @@ Item {
                                     text: "800MS RELAXED"
                                     color: Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                 }
                             }
                         }
@@ -603,7 +603,7 @@ Item {
                             text: "TELEMETRY POLLING RATE"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                         }
 
@@ -640,7 +640,7 @@ Item {
                                         text: selector.modelData.label
                                         color: selector.selected ? Theme.onAccent : Theme.textMuted
                                         font.family: Theme.fontMono
-                                        font.pixelSize: 8
+                                        font.pixelSize: Theme.dashboardText(8)
                                         font.bold: selector.selected
                                     }
 
@@ -671,8 +671,8 @@ Item {
                 ColumnLayout {
                     id: brightness
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -682,7 +682,7 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                             name: "brightness_6"
                             color: Theme.accentTertiary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
@@ -690,7 +690,7 @@ Item {
                             text: "DISPLAY BRIGHTNESS"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -701,13 +701,13 @@ Item {
                                 : "NO BACKLIGHT"
                             color: root.brightAvailable ? Theme.textDim : Theme.statusWarn
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         Item {
                             Layout.alignment: Qt.AlignVCenter
@@ -725,7 +725,7 @@ Item {
                                 anchors.centerIn: parent
                                 name: "remove"
                                 color: brightnessReady ? Theme.textMain : Theme.textDim
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.dashboardText(14)
                             }
 
                             HoverHandler {
@@ -767,7 +767,7 @@ Item {
                                 anchors.centerIn: parent
                                 name: "add"
                                 color: brightnessReady ? Theme.textMain : Theme.textDim
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.dashboardText(14)
                             }
 
                             HoverHandler {
@@ -787,7 +787,7 @@ Item {
                             text: root.brightPct >= 0 ? root.brightPct + "%" : "\u2014"
                             color: Theme.textMain
                             font.family: Theme.fontMono
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             font.bold: true
                             horizontalAlignment: Text.AlignRight
                         }
@@ -799,7 +799,7 @@ Item {
                         text: "no adjustable backlight device was found"
                         color: Theme.statusWarn
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: Theme.dashboardText(8)
                     }
                 }
             }
@@ -813,7 +813,7 @@ Item {
                     Layout.alignment: Qt.AlignVCenter
                     name: "memory"
                     color: Theme.accentPrimary
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.dashboardText(13)
                 }
 
                 Text {
@@ -821,7 +821,7 @@ Item {
                     text: "COMPUTE HARDWARE TELEMETRY"
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                     font.letterSpacing: 0.8
                 }
@@ -830,7 +830,7 @@ Item {
                     text: probe.coreCount > 0 ? (probe.coreCount + " LOGICAL CPUs") : "READING\u2026"
                     color: Theme.accentPrimaryDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                 }
             }
@@ -845,12 +845,12 @@ Item {
                 ColumnLayout {
                     id: cpuCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         Rectangle {
                             Layout.alignment: Qt.AlignVCenter
@@ -863,7 +863,7 @@ Item {
                                 anchors.centerIn: parent
                                 name: "developer_board"
                                 color: Theme.accentPrimary
-                                font.pixelSize: 16
+                                font.pixelSize: Theme.dashboardText(16)
                             }
                         }
 
@@ -877,7 +877,7 @@ Item {
                                 text: probe.cpuModelLong !== "" ? probe.cpuModelLong : "\u2014"
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.dashboardText(12)
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -887,7 +887,7 @@ Item {
                                 text: root.cpuSubtitle()
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
                         }
 
@@ -900,7 +900,7 @@ Item {
                                 text: probe.cpuReady ? Math.round(probe.cpuUsage) + "%" : "\u2014"
                                 color: Theme.accentPrimary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 19
+                                font.pixelSize: Theme.dashboardText(19)
                                 font.bold: true
                             }
 
@@ -909,7 +909,7 @@ Item {
                                 text: "LOAD"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.letterSpacing: 0.5
                             }
                         }
@@ -924,14 +924,14 @@ Item {
                             text: "CORE DISTRIBUTION"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                         }
 
                         Text {
                             text: root.coreSummary()
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                         }
                     }
 
@@ -989,12 +989,12 @@ Item {
                 ColumnLayout {
                     id: gpuCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         Rectangle {
                             Layout.alignment: Qt.AlignVCenter
@@ -1007,7 +1007,7 @@ Item {
                                 anchors.centerIn: parent
                                 name: "videogame_asset"
                                 color: Theme.accentSecondary
-                                font.pixelSize: 16
+                                font.pixelSize: Theme.dashboardText(16)
                             }
                         }
 
@@ -1023,7 +1023,7 @@ Item {
                                     : (probe.gpuName !== "" ? probe.gpuName.replace(/^NVIDIA\s+/, "") : "\u2014")
                                 color: probe.gpuAvailable ? Theme.textMain : Theme.textDim
                                 font.family: Theme.fontUi
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.dashboardText(12)
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -1035,7 +1035,7 @@ Item {
                                     : root.vramLine()
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
                         }
 
@@ -1049,7 +1049,7 @@ Item {
                                 text: probe.gpuTempC >= 0 ? probe.gpuTempC + "\u00b0C" : "\u2014"
                                 color: Theme.accentSecondary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 19
+                                font.pixelSize: Theme.dashboardText(19)
                                 font.bold: true
                             }
 
@@ -1058,7 +1058,7 @@ Item {
                                 text: probe.gpuPowerW >= 0 ? probe.gpuPowerW.toFixed(1) + " W" : "\u2014"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                             }
                         }
                     }
@@ -1090,7 +1090,7 @@ Item {
             // RAM + storage pair.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.dashboardSpacingSm
 
                 DashSurface {
                     Layout.fillWidth: true
@@ -1112,7 +1112,7 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "data_usage"
                                 color: Theme.accentPrimary
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.dashboardText(12)
                             }
 
                             Text {
@@ -1120,7 +1120,7 @@ Item {
                                 text: "RAM"
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
 
@@ -1128,7 +1128,7 @@ Item {
                                 text: probe.memPct >= 0 ? probe.memPct + "%" : "\u2014"
                                 color: Theme.accentPrimary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
                         }
@@ -1155,7 +1155,7 @@ Item {
                                 text: probe.memReady ? probe.memUsedGiB.toFixed(1) + " G" : "\u2014"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.dashboardText(9)
                             }
 
                             Item { Layout.fillWidth: true }
@@ -1164,7 +1164,7 @@ Item {
                                 text: probe.memReady ? probe.memTotalGiB.toFixed(1) + " G" : "\u2014"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.dashboardText(9)
                             }
                         }
                     }
@@ -1190,7 +1190,7 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "storage"
                                 color: Theme.accentTertiary
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.dashboardText(12)
                             }
 
                             Text {
@@ -1198,7 +1198,7 @@ Item {
                                 text: "NVME ROOT (/)"
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
 
@@ -1207,14 +1207,14 @@ Item {
                                 text: probe.nvmeTempC + "\u00b0C"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
 
                             Text {
                                 text: probe.storageReady ? Math.round(probe.storageFraction * 100) + "%" : "\u2014"
                                 color: Theme.accentTertiary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
                         }
@@ -1241,7 +1241,7 @@ Item {
                                 text: probe.storageReady ? root.fmtBytes(probe.fsFreeBytes) + " free" : "\u2014"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.dashboardText(9)
                             }
 
                             Item { Layout.fillWidth: true }
@@ -1250,7 +1250,7 @@ Item {
                                 text: probe.storageReady ? root.fmtBytes(probe.fsTotalBytes) + " cap" : "\u2014"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.dashboardText(9)
                             }
                         }
                     }
@@ -1267,8 +1267,8 @@ Item {
                 ColumnLayout {
                     id: audioCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -1278,7 +1278,7 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                             name: "headphones"
                             color: Theme.accentPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
@@ -1286,7 +1286,7 @@ Item {
                             text: "DEFAULT AUDIO OUTPUT"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -1303,7 +1303,7 @@ Item {
                                 text: "WPCTL"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                             }
                         }
                     }
@@ -1313,14 +1313,14 @@ Item {
                         text: root.sinkName !== "" ? root.sinkName : "\u2014"
                         color: Theme.textMain
                         font.family: Theme.fontUi
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.dashboardText(12)
                         font.bold: true
                         elide: Text.ElideRight
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         Item {
                             Layout.alignment: Qt.AlignVCenter
@@ -1338,7 +1338,7 @@ Item {
                                 anchors.centerIn: parent
                                 name: probe.volumeMuted ? "volume_off" : "volume_up"
                                 color: probe.volumeMuted ? Theme.statusDanger : Theme.textMain
-                                font.pixelSize: 15
+                                font.pixelSize: Theme.dashboardText(15)
                             }
 
                             HoverHandler {
@@ -1370,7 +1370,7 @@ Item {
                             text: probe.volumeAvailable ? Math.round(root.volUi * 100) + "%" : "\u2014"
                             color: Theme.textMain
                             font.family: Theme.fontMono
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             font.bold: true
                             horizontalAlignment: Text.AlignRight
                         }
@@ -1381,7 +1381,7 @@ Item {
                         text: "output devices can be switched from the MEDIA tab"
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.dashboardText(7)
                     }
                 }
             }
@@ -1396,8 +1396,8 @@ Item {
                 ColumnLayout {
                     id: powerCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -1407,7 +1407,7 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                             name: "bolt"
                             color: Theme.accentPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
@@ -1415,7 +1415,7 @@ Item {
                             text: "POWER PROFILE"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -1428,7 +1428,7 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "thermostat"
                                 color: probe.cpuTempC >= 0 ? Theme.accentPrimary : Theme.textDim
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.dashboardText(12)
                             }
 
                             Text {
@@ -1436,7 +1436,7 @@ Item {
                                 text: probe.cpuTempC >= 0 ? probe.cpuTempC + "\u00b0C" : "\u2014"
                                 color: Theme.accentPrimary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 font.bold: true
                             }
                         }
@@ -1477,7 +1477,7 @@ Item {
                                         Layout.alignment: Qt.AlignHCenter
                                         name: root.profileIcon(profileTile.modelData.id)
                                         color: profileTile.active ? Theme.onAccent : Theme.textMuted
-                                        font.pixelSize: 17
+                                        font.pixelSize: Theme.dashboardText(17)
                                     }
 
                                     Text {
@@ -1485,7 +1485,7 @@ Item {
                                         text: root.profileLabel(profileTile.modelData.id)
                                         color: profileTile.active ? Theme.onAccent : Theme.textMain
                                         font.family: Theme.fontUi
-                                        font.pixelSize: 9
+                                        font.pixelSize: Theme.dashboardText(9)
                                         font.bold: profileTile.active
                                     }
 
@@ -1499,7 +1499,7 @@ Item {
                                             ? Qt.rgba(Theme.onAccent.r, Theme.onAccent.g, Theme.onAccent.b, 0.75)
                                             : Theme.statusWarn
                                         font.family: Theme.fontMono
-                                        font.pixelSize: 6
+                                        font.pixelSize: Theme.dashboardText(6)
                                         font.bold: true
                                         font.letterSpacing: 0.5
                                     }
@@ -1528,7 +1528,7 @@ Item {
                                 : (root.profileError !== "" ? root.profileError : "querying profiles\u2026")
                             color: root.profileError !== "" ? Theme.statusDanger : Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             wrapMode: Text.WordWrap
                         }
 
@@ -1537,7 +1537,7 @@ Item {
                             text: "APPLYING\u2026"
                             color: Theme.accentPrimary
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             font.bold: true
                         }
                     }
@@ -1553,7 +1553,7 @@ Item {
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
-                            spacing: 6
+                            spacing: Theme.dashboardSpacingSm
 
                             Rectangle {
                                 Layout.alignment: Qt.AlignVCenter
@@ -1568,7 +1568,7 @@ Item {
                                 text: root.thermalsText()
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
 
                             Text {
@@ -1576,7 +1576,7 @@ Item {
                                 text: root.fansText()
                                 color: Theme.accentPrimaryDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 font.bold: true
                             }
                         }
@@ -1594,7 +1594,7 @@ Item {
                 ColumnLayout {
                     id: sessionCol
                     anchors.fill: parent
-                    anchors.margins: 10
+                    anchors.margins: Theme.dashboardCardPadding
                     spacing: 5
 
                     RowLayout {
@@ -1605,7 +1605,7 @@ Item {
                             Layout.alignment: Qt.AlignVCenter
                             name: "dvr"
                             color: Theme.accentPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
@@ -1613,7 +1613,7 @@ Item {
                             text: "SESSION & RUNTIME"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -1631,14 +1631,14 @@ Item {
                                 text: probe.kernel !== "" ? probe.kernel : "\u2014"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         ColumnLayout {
                             Layout.alignment: Qt.AlignVCenter
@@ -1648,7 +1648,7 @@ Item {
                                 text: "COMPOSITOR"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.letterSpacing: 0.5
                             }
 
@@ -1656,7 +1656,7 @@ Item {
                                 text: root.compositorVersion !== "" ? "Hyprland " + root.compositorVersion : "\u2014"
                                 color: Theme.textMain
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
                         }
@@ -1676,7 +1676,7 @@ Item {
                                 text: "UPTIME"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.letterSpacing: 0.5
                             }
 
@@ -1684,7 +1684,7 @@ Item {
                                 text: root.fmtUptime(probe.uptimeSec)
                                 color: Theme.accentPrimary
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
                         }
@@ -1704,7 +1704,7 @@ Item {
                                 text: "SHELL"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.letterSpacing: 0.5
                             }
 
@@ -1712,7 +1712,7 @@ Item {
                                 text: root.qsVersion !== "" ? "Quickshell " + root.qsVersion : "\u2014"
                                 color: Theme.textMain
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.dashboardText(10)
                                 font.bold: true
                             }
                         }

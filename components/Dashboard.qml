@@ -44,17 +44,17 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 14
-            spacing: 12
+            anchors.margins: Theme.dashboardFramePadding
+            spacing: Theme.dashboardSectionGap
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 10
+                spacing: Theme.dashboardSpacingMd
 
                 Rectangle {
                     Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 30
-                    implicitHeight: 30
+                    implicitWidth: Theme.dashboardControlHeight
+                    implicitHeight: Theme.dashboardControlHeight
                     radius: 9
                     color: Theme.surfaceHigh
                     border.width: 1
@@ -64,7 +64,7 @@ Item {
                         anchors.centerIn: parent
                         name: "hub"
                         color: Theme.accentPrimary
-                        font.pixelSize: 17
+                        font.pixelSize: Theme.iconMd
                     }
                 }
 
@@ -78,7 +78,7 @@ Item {
                         text: "SYSTEM CONSOLE"
                         color: Theme.textMain
                         font.family: Theme.fontUi
-                        font.pixelSize: 14
+                        font.pixelSize: Theme.dashboardTextHeading
                         font.bold: true
                     }
 
@@ -87,7 +87,7 @@ Item {
                         text: "DASHBOARD // " + (root.currentTab ? root.currentTab.label : "")
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardTextCaption
                         font.letterSpacing: 1
                     }
                 }
@@ -95,8 +95,8 @@ Item {
                 Item {
                     id: closeButton
                     Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 30
-                    implicitHeight: 30
+                    implicitWidth: Theme.dashboardControlHeight
+                    implicitHeight: Theme.dashboardControlHeight
 
                     Rectangle {
                         anchors.fill: parent
@@ -109,7 +109,7 @@ Item {
                         anchors.centerIn: parent
                         name: "close"
                         color: closeHover.hovered ? Theme.textMain : Theme.textMuted
-                        font.pixelSize: 16
+                        font.pixelSize: Theme.iconMd
                     }
 
                     HoverHandler { id: closeHover; cursorShape: Qt.PointingHandCursor }
@@ -204,7 +204,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 30
+                Layout.preferredHeight: Theme.dashboardControlHeight
                 radius: Theme.radiusControl
                 color: Theme.surfaceBase
                 border.width: 1
@@ -212,22 +212,22 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 8
+                    anchors.leftMargin: Theme.paddingMd
+                    anchors.rightMargin: Theme.paddingMd
+                    spacing: Theme.dashboardSpacingSm
 
                     Text {
                         text: "ESC"
                         color: Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardTextCaption
                         font.bold: true
                     }
                     Text {
                         text: "close"
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardTextCaption
                     }
 
                     Item { Layout.fillWidth: true }
@@ -236,14 +236,14 @@ Item {
                         text: "SUPER+D"
                         color: Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
                     Text {
                         text: "toggle"
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                     }
                 }
             }

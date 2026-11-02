@@ -478,7 +478,7 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             name: parent.icon
             color: parent.tint
-            font.pixelSize: 13
+            font.pixelSize: Theme.dashboardText(13)
         }
 
         Text {
@@ -486,7 +486,7 @@ Item {
             text: parent.title
             color: Theme.textDim
             font.family: Theme.fontMono
-            font.pixelSize: 8
+            font.pixelSize: Theme.dashboardText(8)
             font.bold: true
             font.letterSpacing: 0.8
         }
@@ -495,7 +495,7 @@ Item {
             text: parent.hint
             color: Theme.textDim
             font.family: Theme.fontMono
-            font.pixelSize: 7
+            font.pixelSize: Theme.dashboardText(7)
         }
     }
 
@@ -527,7 +527,7 @@ Item {
                     anchors.centerIn: parent
                     name: tile.modelData.icon
                     color: tile.modelData.tint
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.dashboardText(14)
                 }
             }
 
@@ -536,7 +536,7 @@ Item {
                 text: tile.modelData.title
                 color: (tileHover.hovered && tile.actionEnabled) ? Theme.textMain : Theme.textMuted
                 font.family: Theme.fontUi
-                font.pixelSize: 10
+                font.pixelSize: Theme.dashboardText(10)
                 font.bold: true
             }
 
@@ -545,7 +545,7 @@ Item {
                 text: tile.modelData.sub
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 7
+                font.pixelSize: Theme.dashboardText(7)
             }
         }
 
@@ -582,13 +582,13 @@ Item {
             anchors.fill: parent
             anchors.leftMargin: 10
             anchors.rightMargin: 10
-            spacing: 8
+            spacing: Theme.dashboardSpacingSm
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: row.icon
                 color: row.rowEnabled ? row.tint : Theme.textDim
-                font.pixelSize: 16
+                font.pixelSize: Theme.dashboardText(16)
             }
 
             ColumnLayout {
@@ -600,7 +600,7 @@ Item {
                     text: row.confirmActive ? "CONFIRM " + row.title + "?" : row.title
                     color: row.confirmActive ? row.confirmTint : Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.dashboardText(11)
                     font.bold: true
                 }
 
@@ -608,7 +608,7 @@ Item {
                     text: row.sub
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 7
+                    font.pixelSize: Theme.dashboardText(7)
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -619,7 +619,7 @@ Item {
                 text: row.trailing
                 color: Theme.textMuted
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
             }
         }
@@ -656,13 +656,13 @@ Item {
 
         RowLayout {
             anchors.centerIn: parent
-            spacing: 6
+            spacing: Theme.dashboardSpacingSm
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: pill.icon
                 color: pill.tint
-                font.pixelSize: 14
+                font.pixelSize: Theme.dashboardText(14)
             }
 
             Text {
@@ -670,7 +670,7 @@ Item {
                 text: pill.confirmActive ? pill.confirmLabel : pill.label
                 color: pill.confirmActive ? pill.tint : Theme.textMain
                 font.family: Theme.fontMono
-                font.pixelSize: 9
+                font.pixelSize: Theme.dashboardText(9)
                 font.bold: true
             }
         }
@@ -695,18 +695,18 @@ Item {
         ColumnLayout {
             id: content
             width: parent.width
-            spacing: 10
+            spacing: Theme.dashboardSpacingMd
 
             // HUD header row: section label + real runtime chip.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.dashboardSpacingSm
 
                 Text {
                     text: "HUD // TOOLKIT"
                     color: Theme.accentPrimary
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                     font.letterSpacing: 1
                 }
@@ -726,7 +726,7 @@ Item {
                         text: "HYPRLAND " + (root.hyprVersion !== "" ? root.hyprVersion : "\u2026")
                         color: Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.dashboardText(7)
                     }
                 }
             }
@@ -741,8 +741,8 @@ Item {
                 ColumnLayout {
                     id: captureCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     SectionHead {
                         icon: "crop_free"
@@ -784,8 +784,8 @@ Item {
                 ColumnLayout {
                     id: wallCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     SectionHead {
                         icon: "wallpaper"
@@ -836,8 +836,8 @@ Item {
                 ColumnLayout {
                     id: autoCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     SectionHead {
                         icon: "bolt"
@@ -947,7 +947,7 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         PowerPill {
                             Layout.fillWidth: true
@@ -982,8 +982,8 @@ Item {
                 ColumnLayout {
                     id: islandCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     SectionHead {
                         icon: "notifications"
@@ -1033,13 +1033,13 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
-                    spacing: 6
+                    spacing: Theme.dashboardSpacingSm
 
                     DashIcon {
                         Layout.alignment: Qt.AlignVCenter
                         name: root.fbKind === "ok" ? "check_circle" : (root.fbKind === "err" ? "error" : "info")
                         color: root.fbKind === "ok" ? Theme.accentPrimary : (root.fbKind === "err" ? Theme.statusDanger : Theme.textMuted)
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.dashboardText(13)
                     }
 
                     Text {
@@ -1047,7 +1047,7 @@ Item {
                         text: root.fbText
                         color: root.fbKind === "err" ? Theme.statusDanger : Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: Theme.dashboardText(8)
                         elide: Text.ElideRight
                     }
 
@@ -1056,7 +1056,7 @@ Item {
                         text: root.fmtFbTime()
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.dashboardText(7)
                     }
                 }
             }

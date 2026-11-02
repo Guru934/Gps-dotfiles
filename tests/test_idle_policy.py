@@ -40,7 +40,7 @@ class HypridleConfigTests(HermeticTestCase):
         self.assertIn("Registered timeout rule for 1200s", combined)
         self.assertIn("gps-idle-bright dim", combined)
         self.assertIn("gps-idle-bright restore", combined)
-        self.assertIn("loginctl lock-session", combined)
+        self.assertIn("gps-lock", combined)
         self.assertIn("hl.dsp.dpms({action = \"off\"})", combined)
         self.assertIn("hl.dsp.dpms({action = \"on\"})", combined)
         self.assertIn("gps-idle-suspend", combined)

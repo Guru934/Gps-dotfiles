@@ -191,7 +191,7 @@ DashSurface {
             text: field.labelText
             color: Theme.textDim
             font.family: Theme.fontMono
-            font.pixelSize: 8
+            font.pixelSize: Theme.dashboardText(8)
             font.bold: true
             font.letterSpacing: 0.6
         }
@@ -213,7 +213,7 @@ DashSurface {
                 color: Theme.textMain
                 selectionColor: Qt.rgba(root.tone.r, root.tone.g, root.tone.b, 0.35)
                 font.family: Theme.fontMono
-                font.pixelSize: 11
+                font.pixelSize: Theme.dashboardText(11)
                 selectByMouse: true
                 clip: true
                 maximumLength: field.numeric ? 5 : 100
@@ -255,7 +255,7 @@ DashSurface {
             text: button.labelText
             color: button.primary ? Theme.onAccent : Theme.textMain
             font.family: Theme.fontMono
-            font.pixelSize: 9
+            font.pixelSize: Theme.dashboardText(9)
             font.bold: true
         }
 
@@ -274,8 +274,8 @@ DashSurface {
     ColumnLayout {
         id: body
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 8
+        anchors.margins: Theme.dashboardCardPadding
+        spacing: Theme.dashboardSpacingSm
 
         RowLayout {
             Layout.fillWidth: true
@@ -291,7 +291,7 @@ DashSurface {
                     anchors.centerIn: parent
                     name: "timer"
                     color: root.tone
-                    font.pixelSize: 15
+                    font.pixelSize: Theme.dashboardText(15)
                 }
             }
 
@@ -303,7 +303,7 @@ DashSurface {
                     text: "FOCUS"
                     color: Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.dashboardText(12)
                     font.bold: true
                 }
 
@@ -318,7 +318,7 @@ DashSurface {
                                 : "Ready to start a session"
                     color: root.available ? Theme.textDim : Theme.statusDanger
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     elide: Text.ElideRight
                 }
             }
@@ -343,7 +343,7 @@ DashSurface {
                                 : root.isBreak ? "BREAK" : "RUNNING"
                     color: !root.available && root.loaded ? Theme.statusDanger : root.tone
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                 }
             }
@@ -362,7 +362,7 @@ DashSurface {
                     text: "PRESETS"
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                     font.letterSpacing: 0.6
                 }
@@ -451,7 +451,7 @@ DashSurface {
                     : "Use whole numbers: work 1\u201310080, break 0\u201310080, sessions 1\u20131000."
                 color: root.actionError !== "" ? Theme.statusDanger : Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 elide: Text.ElideRight
             }
         }
@@ -463,13 +463,13 @@ DashSurface {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.dashboardSpacingSm
 
                 Text {
                     text: root.isBreak ? "BREAK" : "FOCUS"
                     color: root.tone
                     font.family: Theme.fontMono
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.dashboardText(10)
                     font.bold: true
                     font.letterSpacing: 0.8
                 }
@@ -481,7 +481,7 @@ DashSurface {
                         : "Session " + root.sessionIndex + " / " + root.sessionCount
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.dashboardText(9)
                     elide: Text.ElideRight
                 }
 
@@ -489,7 +489,7 @@ DashSurface {
                     text: root.fmt(root.remaining)
                     color: Theme.textMain
                     font.family: Theme.fontMono
-                    font.pixelSize: 15
+                    font.pixelSize: Theme.dashboardText(15)
                     font.bold: true
                 }
             }
@@ -510,14 +510,14 @@ DashSurface {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.dashboardSpacingSm
 
                 Text {
                     Layout.fillWidth: true
                     text: root.sessionTitle !== "" ? root.sessionTitle : "FOCUS SESSION"
                     color: Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.dashboardText(10)
                     elide: Text.ElideRight
                 }
 

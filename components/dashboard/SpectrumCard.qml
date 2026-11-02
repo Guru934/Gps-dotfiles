@@ -23,17 +23,17 @@ DashSurface {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
-        spacing: 6
+        spacing: Theme.dashboardSpacingSm
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.dashboardSpacingSm
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: "equalizer"
                 color: Theme.accentPrimary
-                font.pixelSize: 14
+                font.pixelSize: Theme.dashboardText(14)
             }
 
             Text {
@@ -41,7 +41,7 @@ DashSurface {
                 text: "PIPEWIRE MONITOR"
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
                 font.letterSpacing: 0.8
             }
@@ -51,7 +51,7 @@ DashSurface {
                 text: AudioSpectrum.streaming ? "48.0 kHz // s16le" : "stream idle"
                 color: AudioSpectrum.streaming ? Theme.accentPrimary : Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
             }
         }
 

@@ -108,17 +108,17 @@ DashSurface {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
-        spacing: 8
+        spacing: Theme.dashboardSpacingSm
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.dashboardSpacingSm
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: "podcasts"
                 color: Theme.accentSecondary
-                font.pixelSize: 14
+                font.pixelSize: Theme.dashboardText(14)
             }
 
             Text {
@@ -128,7 +128,7 @@ DashSurface {
                     : "IDLE")
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
                 font.letterSpacing: 0.8
             }
@@ -139,7 +139,7 @@ DashSurface {
                 text: root.hasPlayer ? root.player.identity : ""
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 elide: Text.ElideRight
                 Layout.maximumWidth: 140
             }
@@ -149,14 +149,14 @@ DashSurface {
         RowLayout {
             Layout.fillWidth: true
             Layout.topMargin: 6
-            spacing: 10
+            spacing: Theme.dashboardSpacingMd
             visible: !root.hasPlayer
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: "music_off"
                 color: Theme.surfaceVariant
-                font.pixelSize: 26
+                font.pixelSize: Theme.dashboardText(26)
             }
 
             ColumnLayout {
@@ -168,7 +168,7 @@ DashSurface {
                     text: "NO ACTIVE PLAYER"
                     color: Theme.textMuted
                     font.family: Theme.fontMono
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.dashboardText(10)
                     font.bold: true
                     font.letterSpacing: 1
                 }
@@ -177,7 +177,7 @@ DashSurface {
                     text: "playback controls appear here when a player connects"
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                 }
             }
         }
@@ -185,7 +185,7 @@ DashSurface {
         // Active player: artwork + metadata.
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.dashboardSpacingMd
             visible: root.hasPlayer
 
             Item {
@@ -212,7 +212,7 @@ DashSurface {
                     text: root.hasPlayer && root.player.trackTitle.length > 0 ? root.player.trackTitle : "Unknown title"
                     color: Theme.textMain
                     font.family: Theme.fontUi
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.dashboardText(13)
                     font.bold: true
                     elide: Text.ElideRight
                 }
@@ -224,7 +224,7 @@ DashSurface {
                         : ""
                     color: Theme.textMuted
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.dashboardText(9)
                     elide: Text.ElideRight
                 }
             }
@@ -261,7 +261,7 @@ DashSurface {
                     text: root.fmt(root.displayPos)
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                 }
 
                 Item { Layout.fillWidth: true }
@@ -270,7 +270,7 @@ DashSurface {
                     text: root.fmt(root.player ? root.player.length * 1000 : 0)
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                 }
             }
         }
@@ -279,7 +279,7 @@ DashSurface {
         RowLayout {
             Layout.fillWidth: true
             Layout.topMargin: 2
-            spacing: 8
+            spacing: Theme.dashboardSpacingSm
             visible: root.hasPlayer
 
             TransportButton {

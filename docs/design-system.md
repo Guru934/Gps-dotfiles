@@ -1,5 +1,13 @@
 # GPS Unified Visual Design System (P4)
 
+GPS surface sizing is controlled by `config/Theme.qml` through `uiScale` (default
+`1.15`) and `Theme.scaled(value)`, which rounds logical pixel values consistently.
+Typography, icon, spacing, padding, control, sidebar and key surface geometry
+tokens are defined from unscaled base values there. Components should consume
+these tokens directly; they must not scale a token a second time. Responsive
+views still clamp their dimensions to the available screen area. The compositor
+monitor scale and global Qt scale remain independent of this setting.
+
 The GPS Visual Design System establishes a single, canonical visual language across all Wayland shell surfaces, QuickShell components, and Hyprland compositor settings.
 
 ---

@@ -78,6 +78,34 @@ class GpsLockWrapperTests(HermeticTestCase):
         self.assertIn("--config", invoked_args)
         self.assertIn("hyprlock.conf", invoked_args)
 
+    def test_reports_hyprlock_startup_failure_and_preserves_exit_status(self):
+        mock_pidof = self.mock_bin_dir / "pidof"
+        mock_pidof.write_text("#!/bin/sh\nexit 1\n")
+        mock_pidof.chmod(mock_pidof.stat().st_mode | stat.S_IEXEC)
+
+        mock_hyprlock = self.mock_bin_dir / "hyprlock"
+        mock_hyprlock.write_text("#!/bin/sh\necho 'mock startup failure' >&2\nexit 42\n")
+        mock_hyprlock.chmod(mock_hyprlock.stat().st_mode | stat.S_IEXEC)
+
+        # Keep the hermetic failure-path test from posting into the user's live
+        # notification server when the test runner inherits the desktop bus.
+        mock_notify = self.mock_bin_dir / "notify-send"
+        mock_notify.write_text("#!/bin/sh\nexit 0\n")
+        mock_notify.chmod(mock_notify.stat().st_mode | stat.S_IEXEC)
+
+        env = {
+            **self.hermetic.env,
+            "PATH": f"{self.mock_bin_dir}:{self.hermetic.env.get('PATH', '')}",
+            "XDG_CACHE_HOME": str(self.tmp_path / "cache"),
+        }
+        res = subprocess.run([str(GPS_LOCK_SCRIPT)], env=env, capture_output=True, text=True)
+
+        self.assertEqual(res.returncode, 42)
+        self.assertIn("hyprlock exited with status 42", res.stderr)
+        self.assertIn("mock startup failure", res.stderr)
+        failure_log = self.tmp_path / "cache/gps/logs/gps-lock.log"
+        self.assertIn("mock startup failure", failure_log.read_text(encoding="utf-8"))
+
 
 class GpsIdleControllerTests(HermeticTestCase):
     """Unit tests for scripts/gps-idle lifecycle management."""

@@ -12,7 +12,7 @@ Item {
 
     signal tabSelected(string key, int index)
 
-    implicitHeight: 40
+    implicitHeight: Theme.dashboardControlHeight
 
     Rectangle {
         anchors.fill: parent
@@ -60,7 +60,7 @@ Item {
                         color: cell.active
                             ? Theme.accentPrimary
                             : (cellHover.hovered ? Theme.textMain : Theme.textDim)
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.iconSm
                     }
 
                     Text {
@@ -70,7 +70,7 @@ Item {
                             ? Theme.accentPrimary
                             : (cellHover.hovered ? Theme.textMain : Theme.textDim)
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: Theme.dashboardTextCaption
                         font.bold: true
                         font.letterSpacing: 0.8
                     }

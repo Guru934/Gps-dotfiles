@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Start GPS only when it can safely own desktop notifications.
+set -euo pipefail
+
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if ! command -v gdbus >/dev/null 2>&1; then
+    echo "GPS startup refused: gdbus is unavailable; notification ownership cannot be checked." >&2
+    exit 2
+fi
+
+notification_owner=""
+notification_pid=""
+for attempt in {1..20}; do
+    owner_result="$(gdbus call --session \
+        --dest org.freedesktop.DBus \
+        --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.GetNameOwner \
+        org.freedesktop.Notifications 2>&1)" || owner_result="${owner_result}"
+
+    if [[ "$owner_result" =~ \'(:[0-9]+\.[0-9]+)\' ]]; then
+        notification_owner="${BASH_REMATCH[1]}"
+        pid_result="$(gdbus call --session \
+            --dest org.freedesktop.DBus \
+            --object-path /org/freedesktop/DBus \
+            --method org.freedesktop.DBus.GetConnectionUnixProcessID \
+            "$notification_owner" 2>&1)" || {
+                echo "GPS startup refused: could not identify notification owner $notification_owner." >&2
+                exit 2
+            }
+        if [[ "$pid_result" =~ uint32\ ([0-9]+) ]]; then
+            notification_pid="${BASH_REMATCH[1]}"
+        fi
+        break
+    fi
+
+    if [[ "$owner_result" != *"org.freedesktop.DBus.Error.NameHasNoOwner"* ]]; then
+        echo "GPS startup refused: notification ownership check failed: $owner_result" >&2
+        exit 2
+    fi
+    sleep 0.1
+done
+
+if [[ -n "$notification_owner" ]]; then
+    owner_command="$(ps -p "$notification_pid" -o args= 2>/dev/null || true)"
+    if [[ "$owner_command" != *"$REPO_DIR/island/IslandProduction.qml"* ]]; then
+        echo "GPS startup refused: org.freedesktop.Notifications is owned by PID $notification_pid ($owner_command)." >&2
+        echo "Resolve notification ownership before starting GPS Island." >&2
+        exit 2
+    fi
+fi
+
+# Also fail closed during Caelestia's startup race, before its D-Bus name appears.
+for qs_pid in $(pgrep -u "$(id -u)" -x qs 2>/dev/null || true); do
+    qs_command="$(tr '\0' ' ' <"/proc/$qs_pid/cmdline" 2>/dev/null || true)"
+    if [[ "$qs_command" == *"caelestia"* ]]; then
+        echo "GPS startup refused: Caelestia shell is active (PID $qs_pid); notification ownership must remain unchanged." >&2
+        exit 2
+    fi
+done
+
+export GPS_ROOT="$REPO_DIR"
+exec "$REPO_DIR/scripts/run-gps.fish"

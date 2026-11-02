@@ -10,6 +10,7 @@ This guide provides the authoritative reference for inspecting prerequisites, in
 2. [Prerequisites & Supported Environments](#2-prerequisites--supported-environments)
 3. [Dependency Inspection (`gps-deps`)](#3-dependency-inspection-gps-deps)
 4. [Installation Workflow (`install.sh`)](#4-installation-workflow-installsh)
+   - [Caelestia-Compatible Hyprland Integration](#caelestia-compatible-hyprland-integration)
 5. [Repository Relocation Contract](#5-repository-relocation-contract)
 6. [Transaction Safety, Backups & Recovery](#6-transaction-safety-backups--recovery)
 7. [Safe Uninstallation](#7-safe-uninstallation)
@@ -197,6 +198,36 @@ The check verifies:
 1. **Managed Files**: Confirms that all symlinks point to the active repository clone.
 2. **Dependencies**: Runs `gps-deps` to report any missing packages.
 3. **Session Health**: Invokes `scripts/gps-doctor` to test compositor rules, audio pipelines, and IPC sockets.
+
+### Caelestia-Compatible Hyprland Integration
+
+The installer deploys the opt-in modules as symlinks under `$XDG_CONFIG_HOME/hypr/gps/`:
+
+- `integration.lua` adds only GPS layer rules and standalone `Super_L` / `Super_R` launcher binds.
+- `startup.lua` exports an explicit startup hook; requiring it alone does nothing.
+- The active `hyprland.lua` and `hypridle.conf` are never installer targets. A conflicting file at either GPS namespace target is reported as `[CONFLICT: PRESERVED]` and left unchanged.
+
+Install or refresh the module links with `./install.sh --apply`, then opt in by adding this line to the active Hyprland Lua config:
+
+```lua
+require("gps.integration")
+```
+
+`Super_R` is enabled by default. `Super_L` is not claimed by default because Caelestia already uses it for its launcher; opt in with `GPS_LAUNCHER_LEFT="SUPER + SUPER_L"` only when you intentionally want to replace that binding. Both binds can be configured before Hyprland starts with `GPS_LAUNCHER_LEFT` and `GPS_LAUNCHER_RIGHT`. Existing Caelestia bindings are not removed by GPS.
+
+To opt in to GPS startup separately, add:
+
+```lua
+require("gps.startup").enable()
+```
+
+This registers `hyprland.start` to run `scripts/gps-start-safe`. The guard fails closed if D-Bus cannot be queried, if another process owns `org.freedesktop.Notifications`, or if Caelestia is running. GPS Island owns a `NotificationServer`, so it cannot safely start beside a Caelestia notification owner. The guard does not change ownership. Resolve that runtime conflict before enabling startup; without GPS Island, the launcher IPC target is unavailable.
+
+Known default key collisions with Caelestia include `Super+Q`, `M`, `R`, `D`, `W`, `N`, `L`, `V`, `,`, `S`, and `Shift+S`; `Super+F` and `Super+E` duplicate fullscreen and `thunar` actions. `XF86MonBrightnessUp/Down` and `XF86AudioRaiseVolume`, `LowerVolume`, `Mute`, `MicMute`, `Next`, `Pause`, `Play`, and `Prev` are also shared. Caelestia's `Super_L` launcher is preserved; GPS leaves its left launcher disabled unless explicitly configured. The integration module intentionally binds none of these conflicting combinations by default. Review active Caelestia key variables before approving additional GPS binds.
+
+To disable the integration, remove `require("gps.integration")` and, if enabled, `require("gps.startup").enable()` from the active config, then reload Hyprland. The installer does not edit that config; uninstalling removes only GPS links that its manifest says it created. Hyprland's Lua `require` mechanism is documented in the [Hyprland Lua configuration guide](https://wiki.hypr.land/Configuring/Core/).
+
+GPS idle and lock actions remain separate from this integration. Keep the existing Caelestia `hypridle.conf` and its lock behavior until a single idle manager, lock command, timeout policy, suspend behavior, and recovery path have been selected and verified together. Do not start `gps-idle` alongside Caelestia's `hypridle`.
 
 ---
 
