@@ -15,6 +15,16 @@ end
 
 mkdir -p "$HOME/.config/quickshell"
 
+# Keep runtime diagnostics in a user-owned cache directory rather than shared
+# /tmp paths, which may belong to another user or a previous sandbox session.
+set -l gps_cache_root "$HOME/.cache"
+if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"
+    set gps_cache_root "$XDG_CACHE_HOME"
+end
+set -l gps_log_dir "$gps_cache_root/gps/logs"
+mkdir -p "$gps_log_dir"
+set -l gps_shell_log "$gps_log_dir/qs-gps.log"
+
 # Ensure repository-managed user fontconfig is installed
 if not test -e "$HOME/.config/fontconfig/fonts.conf"
     "$REPO_DIR/scripts/setup-fonts.sh" --no-cache >/dev/null 2>&1; or true
@@ -29,7 +39,7 @@ end
 "$REPO_DIR/scripts/setup-cursor.sh" >/dev/null 2>&1; or true
 
 # Visible startup log: every run appends here so a startup failure leaves a
-# trace even after /tmp/qs-gps.log is rotated by the next run.
+# trace even after the previous QuickShell log is rotated by the next run.
 function log --argument-names msg
     printf '[%s] %s\n' (date '+%Y-%m-%d %H:%M:%S') "$msg" >>"$HOME/.config/quickshell/startup.log"
 end
@@ -83,7 +93,7 @@ stop_pattern "quickshell.*shell\.qml" "GPS master shell"
 stop_pattern "awww-daemon" "awww-daemon"
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
-rm -f /tmp/qs-gps.log "$HOME/.config/quickshell/theme.log"
+rm -f "$gps_shell_log" "$HOME/.config/quickshell/theme.log"
 sleep 0.2
 
 # 1b. Start Polkit authentication agent once across the session.
@@ -147,7 +157,7 @@ end
 
 # 2. Start the wallpaper daemon before extracting the initial palette.
 if not pgrep -x awww-daemon >/dev/null 2>&1
-    nohup awww-daemon >/tmp/awww-daemon.log 2>&1 &
+    nohup awww-daemon >"$gps_log_dir/awww-daemon.log" 2>&1 &
     disown
     sleep 0.3
 end
@@ -171,11 +181,11 @@ end
 # 4. Start clipboard watchers using the GPS privacy-preserving clip-store wrapper.
 set -l clip_store "$REPO_DIR/scripts/gps-clip-store"
 if not pgrep -f "wl-paste --type text --watch .*gps-clip-store" >/dev/null 2>&1
-    setsid wl-paste --type text --watch "$clip_store" </dev/null >/tmp/cliphist-text.log 2>&1 &
+    setsid wl-paste --type text --watch "$clip_store" </dev/null >"$gps_log_dir/cliphist-text.log" 2>&1 &
     disown
 end
 if not pgrep -f "wl-paste --type image --watch .*gps-clip-store" >/dev/null 2>&1
-    setsid wl-paste --type image --watch "$clip_store" </dev/null >/tmp/cliphist-image.log 2>&1 &
+    setsid wl-paste --type image --watch "$clip_store" </dev/null >"$gps_log_dir/cliphist-image.log" 2>&1 &
     disown
 end
 
@@ -204,7 +214,7 @@ end
 
 # 6. Launch the QuickShell master shell.
 if not pgrep -u (id -u) -f "quickshell.*shell\.qml" >/dev/null 2>&1
-    nohup /usr/bin/quickshell --no-duplicate -d -p "$REPO_DIR/shell.qml" >/tmp/qs-gps.log 2>&1 &
+    nohup /usr/bin/quickshell --no-duplicate -d -p "$REPO_DIR/shell.qml" >"$gps_shell_log" 2>&1 &
     disown
 end
 sleep 0.8
@@ -212,9 +222,9 @@ set -l shell_pid (pgrep -u (id -u) -f "quickshell.*shell\.qml" | head -1)
 if test -n "$shell_pid"
     log "GPS shell up (pid $shell_pid)"
 else
-    log "ERROR: GPS shell exited during startup - see /tmp/qs-gps.log"
-    if test -f /tmp/qs-gps.log
-        set -l err_tail (tail -n 3 /tmp/qs-gps.log 2>/dev/null | string join " | ")
+    log "ERROR: GPS shell exited during startup - see $gps_shell_log"
+    if test -f "$gps_shell_log"
+        set -l err_tail (tail -n 3 "$gps_shell_log" 2>/dev/null | string join " | ")
         if test -n "$err_tail"
             log "  qs-gps.log: $err_tail"
         end
@@ -224,7 +234,7 @@ end
 # 7. Start the local screen-time tracker (ActivityWatch-compatible awatcher
 # bundle) if it is not already running. Server binds 127.0.0.1:5600 only.
 if not pgrep -x awatcher >/dev/null 2>&1
-    nohup "$HOME/.local/opt/awatcher/awatcher" --no-tray >/tmp/awatcher.log 2>&1 &
+    nohup "$HOME/.local/opt/awatcher/awatcher" --no-tray >"$gps_log_dir/awatcher.log" 2>&1 &
     disown
 end
 

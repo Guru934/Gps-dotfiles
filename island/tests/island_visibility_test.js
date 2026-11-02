@@ -143,6 +143,59 @@ check("pinned keeps control open indefinitely and requests keyboard", () => {
     assert.strictEqual(res.reason, "pinned_open");
 });
 
+check("open launcher takes priority over pinned or hovered control", () => {
+    const res = IV.evaluateVisibility({
+        now: 1000,
+        activeAlert: false,
+        fullscreen: false,
+        launcherOpen: true,
+        pinned: true,
+        manualShow: true,
+        hovered: true,
+        windowFocused: true
+    });
+    assert.strictEqual(res.visible, true);
+    assert.strictEqual(res.state, "launcher");
+    assert.strictEqual(res.wantsKeyboard, true);
+    assert.strictEqual(res.reason, "launcher_open");
+});
+
+check("launcher lifecycle survives unrelated states and supports repeated open and close", () => {
+    let launcherOpen = false;
+    let manualHide = false;
+    const setLauncher = open => {
+        launcherOpen = Boolean(open);
+        if (launcherOpen) manualHide = false;
+    };
+    const evaluate = extra => IV.evaluateVisibility(Object.assign({
+        now: 1000,
+        fullscreen: false,
+        manualHide,
+        activeAlert: false,
+        launcherOpen,
+        windowFocused: true,
+        transientQueue: []
+    }, extra || {}));
+
+    setLauncher(true);
+    assert.strictEqual(launcherOpen, true);
+    assert.strictEqual(evaluate().state, "launcher");
+    assert.strictEqual(evaluate({ hovered: true, pinned: true }).state, "launcher");
+    assert.strictEqual(evaluate({ transientQueue: [{ kind: "osd", priority: PRIORITY.TRANSIENT, expiry: 2000 }] }).state, "launcher");
+    assert.strictEqual(evaluate({ activeAlert: true }).state, "alert");
+    assert.strictEqual(launcherOpen, true);
+
+    setLauncher(false);
+    assert.strictEqual(launcherOpen, false);
+    assert.notStrictEqual(evaluate().state, "launcher");
+    manualHide = true;
+    setLauncher(true);
+    assert.strictEqual(manualHide, false);
+    assert.strictEqual(evaluate().state, "launcher");
+    setLauncher(false);
+    assert.strictEqual(evaluate().state, "hidden");
+});
+
 // 7. Window focus hides idle pill
 check("window focus hides idle pill when windows present", () => {
     const res = IV.evaluateVisibility({

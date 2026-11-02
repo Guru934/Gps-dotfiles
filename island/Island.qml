@@ -36,6 +36,8 @@ import "AgentAlertLogic.js" as AgentAlertLogic
 Scope {
     id: root
 
+    function scale(value) { return Theme.scaled(value) }
+
     // ───────────── settings you can change ─────────────
     property bool followWallpaper: true      // accent colours from pywal / Caelestia palette
     property bool glow: true                 // soft coloured glow behind the pill
@@ -373,6 +375,7 @@ Scope {
     function setLauncher(open) {
         if (open && alerts.length > 0) return
         launcherOpen = Boolean(open)
+        if (launcherOpen) root.manualHide = false
         root.updateVisibility()
     }
     function openControl() {
@@ -1838,8 +1841,8 @@ Scope {
         margins.top: root.topMargin
         exclusiveZone: 0
         color: "transparent"
-        implicitWidth: 560
-        implicitHeight: 580
+        implicitWidth: Theme.islandPanelWidth
+        implicitHeight: Theme.islandPanelHeight
         mask: Region { item: pill }
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "island"

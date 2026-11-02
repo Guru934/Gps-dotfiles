@@ -214,14 +214,15 @@ class LocationIndependenceContractTests(HermeticTestCase):
             res = subprocess.run(["lua", "-e", lua_script], capture_output=True, text=True)
             self.assertIn("[GPS ERROR]", res.stderr)
 
-    def test_hypridle_and_hyprlock_use_variable_resolution(self):
-        """hypridle.conf and hyprlock.conf use $GPS_ROOT variables rather than hardcoded home."""
+    def test_hypridle_uses_location_independent_gps_wrappers(self):
+        """hypridle invokes PATH wrappers that resolve GPS_ROOT from their own location."""
         hypridle_txt = (ROOT / "dots" / "hypr" / "hypridle.conf").read_text()
         hyprlock_txt = (ROOT / "dots" / "hypr" / "hyprlock.conf").read_text()
 
-        self.assertIn("$GPS_ROOT/scripts/gps-lock", hypridle_txt)
-        self.assertIn("$GPS_ROOT/scripts/gps-idle-bright", hypridle_txt)
-        self.assertIn("$GPS_ROOT/scripts/gps-idle-suspend", hypridle_txt)
+        self.assertIn("lock_cmd = gps-lock", hypridle_txt)
+        self.assertIn("on-timeout = gps-lock", hypridle_txt)
+        self.assertIn("gps-idle-bright", hypridle_txt)
+        self.assertIn("gps-idle-suspend", hypridle_txt)
         self.assertIn("$GPS_ROOT/scripts/lock-info.sh", hyprlock_txt)
 
     def test_user_state_files_remain_outside_repository(self):

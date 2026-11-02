@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 ISLAND = (ROOT / "island/Island.qml").read_text()
 CONTROL = (ROOT / "island/states/Control.qml").read_text()
+ISLAND_BT_STATUS = ROOT / "island/BluetoothStatus.js"
+SHARED_BT_STATUS = ROOT / "components/BluetoothStatus.js"
 
 
 class ControlIntegrationContractTests(unittest.TestCase):
@@ -26,6 +28,12 @@ class ControlIntegrationContractTests(unittest.TestCase):
             re.S,
         ))
         self.assertIn('function control(action: string)', ISLAND)
+
+    def test_control_uses_island_local_bluetooth_status_helper(self):
+        """The Island cannot import helper scripts outside its config root."""
+        self.assertIn('import "../BluetoothStatus.js" as BluetoothStatus', CONTROL)
+        self.assertTrue(ISLAND_BT_STATUS.is_file())
+        self.assertEqual(ISLAND_BT_STATUS.read_text(), SHARED_BT_STATUS.read_text())
 
     def test_priority_keeps_alert_privacy_and_launcher_ahead(self):
         auto_mode = re.search(r"readonly property string autoMode: (.+)", ISLAND).group(1)

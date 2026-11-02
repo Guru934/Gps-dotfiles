@@ -7,7 +7,7 @@ import Quickshell.Services.Mpris
 import Quickshell.Bluetooth
 import qs.config
 import "../ControlLogic.js" as ControlLogic
-import "../../components/BluetoothStatus.js" as BluetoothStatus
+import "../BluetoothStatus.js" as BluetoothStatus
 
 Item {
     id: st
@@ -16,8 +16,8 @@ Item {
     readonly property string key: "control"
     readonly property bool active: core.mode === key
     readonly property bool expanded: core.hovered || Boolean(core.controlExpanded) || localExpanded
-    readonly property real w: expanded ? 460 : 180
-    readonly property real h: expanded ? Math.min(560, Math.max(380, controlContent.implicitHeight + footerRow.implicitHeight + 8 + 40)) : 36
+    readonly property real w: expanded ? Theme.islandControlWidthExpanded : Theme.islandControlWidthCompact
+    readonly property real h: expanded ? Math.min(Theme.islandControlMaxHeight, Math.max(Theme.scaled(380), controlContent.implicitHeight + footerRow.implicitHeight + Theme.spacingSm + Theme.controlHeightXl)) : Theme.islandControlHeightCompact
     readonly property color accent: core.teal
 
     anchors.fill: parent
@@ -693,7 +693,7 @@ Item {
         property string alt: ""
         text: st.core.iconOk ? name : alt
         font.family: st.core.iconOk ? st.core.iconFont : st.core.uiFont
-        font.pixelSize: 16
+        font.pixelSize: core.scale(16)
         color: st.core.text
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
@@ -707,8 +707,8 @@ Item {
         property bool active: false
         signal triggered()
 
-        Layout.preferredWidth: 32
-        Layout.preferredHeight: 32
+        Layout.preferredWidth: Theme.scaled(32)
+        Layout.preferredHeight: Theme.scaled(32)
         radius: Theme.radiusCard
         activeFocusOnTab: true
         color: hb.active ? Theme.brandAccent : ((hbMa.containsMouse || hb.activeFocus) ? Theme.cardHover : Theme.card)
@@ -728,7 +728,7 @@ Item {
             anchors.centerIn: parent
             name: hb.iconName
             alt: hb.iconAlt
-            font.pixelSize: 16
+            font.pixelSize: core.scale(16)
             color: hb.active ? Theme.brandAccentFg : ((hbMa.containsMouse || hb.activeFocus) ? Theme.textMain : Theme.textMuted)
         }
 
@@ -762,8 +762,8 @@ Item {
         readonly property color inactiveFg: Theme.textMain
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 54
-        implicitHeight: 54
+        Layout.preferredHeight: Theme.scaled(54)
+        implicitHeight: Theme.scaled(54)
         radius: Theme.radiusCard
         opacity: tileAvailable ? 1.0 : 0.45
         activeFocusOnTab: tileAvailable && tileInteractable
@@ -789,8 +789,8 @@ Item {
             spacing: 10
 
             Rectangle {
-                Layout.preferredWidth: 32
-                Layout.preferredHeight: 32
+                Layout.preferredWidth: Theme.scaled(32)
+                Layout.preferredHeight: Theme.scaled(32)
                 radius: 8
                 color: tile.tileOn ? Qt.rgba(0, 0, 0, 0.15) : Qt.rgba(1, 1, 1, 0.08)
 
@@ -798,7 +798,7 @@ Item {
                     anchors.centerIn: parent
                     name: tile.iconName
                     alt: tile.iconAlt
-                    font.pixelSize: 18
+                    font.pixelSize: core.scale(18)
                     color: tile.tileOn ? tile.activeFg : Theme.textMuted
                 }
             }
@@ -811,7 +811,7 @@ Item {
                     Layout.fillWidth: true
                     text: tile.titleText
                     font.family: Theme.fontUi
-                    font.pixelSize: 12
+                    font.pixelSize: core.scale(12)
                     font.weight: Font.DemiBold
                     color: tile.tileOn ? tile.activeFg : tile.inactiveFg
                     elide: Text.ElideRight
@@ -822,7 +822,7 @@ Item {
                     visible: tile.subText !== ""
                     text: tile.subText
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: core.scale(9)
                     font.weight: Font.Medium
                     color: tile.tileOn ? Qt.rgba(tile.activeFg.r, tile.activeFg.g, tile.activeFg.b, 0.85) : Theme.textMuted
                     elide: Text.ElideRight
@@ -831,14 +831,14 @@ Item {
 
             Item {
                 visible: tile.trailIcon !== ""
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 28
+                Layout.preferredWidth: Theme.scaled(24)
+                Layout.preferredHeight: Theme.scaled(28)
 
                 Ico {
                     anchors.centerIn: parent
                     name: tile.trailIcon
                     alt: tile.trailAlt
-                    font.pixelSize: 16
+                    font.pixelSize: core.scale(16)
                     color: tile.tileOn ? tile.activeFg : Theme.textMuted
                 }
             }
@@ -885,14 +885,14 @@ Item {
         spacing: 10
 
         Item {
-            Layout.preferredWidth: 20
-            Layout.preferredHeight: 20
+            Layout.preferredWidth: Theme.scaled(20)
+            Layout.preferredHeight: Theme.scaled(20)
 
             Ico {
                 anchors.centerIn: parent
                 name: srow.iconName
                 alt: srow.iconAlt
-                font.pixelSize: 18
+                font.pixelSize: core.scale(18)
                 color: srow.tone
             }
 
@@ -905,7 +905,7 @@ Item {
 
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 12
+            Layout.preferredHeight: Theme.scaled(12)
 
             Rectangle {
                 id: track
@@ -947,11 +947,11 @@ Item {
         }
 
         Text {
-            Layout.preferredWidth: 38
+            Layout.preferredWidth: Theme.scaled(38)
             horizontalAlignment: Text.AlignRight
             text: srow.labelText
             font.family: Theme.fontMono
-            font.pixelSize: 10
+            font.pixelSize: core.scale(10)
             font.weight: Font.Medium
             color: Theme.textMain
             elide: Text.ElideRight
@@ -959,14 +959,14 @@ Item {
 
         Item {
             visible: srow.trailIcon !== ""
-            Layout.preferredWidth: 20
-            Layout.preferredHeight: 20
+            Layout.preferredWidth: Theme.scaled(20)
+            Layout.preferredHeight: Theme.scaled(20)
 
             Ico {
                 anchors.centerIn: parent
                 name: srow.trailIcon
                 alt: srow.trailAlt
-                font.pixelSize: 18
+                font.pixelSize: core.scale(18)
                 color: trailMa.containsMouse ? Theme.accentPrimary : Theme.textMuted
             }
 
@@ -989,8 +989,8 @@ Item {
         property string tooltipText: ""
         signal triggered()
 
-        Layout.preferredWidth: 36
-        Layout.preferredHeight: 36
+        Layout.preferredWidth: Theme.scaled(36)
+        Layout.preferredHeight: Theme.scaled(36)
         radius: 18
         activeFocusOnTab: true
         color: danger
@@ -1013,7 +1013,7 @@ Item {
             anchors.centerIn: parent
             name: ac.iconName
             alt: ac.iconAlt
-            font.pixelSize: 16
+            font.pixelSize: core.scale(16)
             color: ac.danger ? (ac.armed ? "#000000" : Theme.statusDanger) : Theme.textMain
         }
 
@@ -1239,7 +1239,7 @@ Item {
                 visible: st.hasNmcli
                 name: !st.wifiEnabled ? "wifi_off" : (st.wifiSsid !== "" ? "wifi" : "network_wifi")
                 alt: "W"
-                font.pixelSize: 14
+                font.pixelSize: core.scale(14)
                 color: st.wifiEnabled ? Theme.brandAccent : Theme.textMuted
             }
 
@@ -1247,7 +1247,7 @@ Item {
                 visible: st.hasBt
                 name: !st.btEnabled ? "bluetooth_disabled" : (st.btDevice !== "" ? "bluetooth_connected" : "bluetooth")
                 alt: "B"
-                font.pixelSize: 14
+                font.pixelSize: core.scale(14)
                 color: st.btEnabled ? Theme.brandAccent : Theme.textMuted
             }
         }
@@ -1260,14 +1260,14 @@ Item {
             Ico {
                 name: (st.core.charging || st.core.full) ? "bolt" : "battery_5_bar"
                 alt: "+"
-                font.pixelSize: 13
+                font.pixelSize: core.scale(13)
                 color: (!st.core.charging && st.core.batPct <= 20) ? Theme.statusDanger : Theme.brandAccent
             }
 
             Text {
                 text: Math.round(st.core.batPct) + "%"
                 font.family: Theme.fontMono
-                font.pixelSize: 10
+                font.pixelSize: core.scale(10)
                 font.weight: Font.DemiBold
                 color: Theme.textMain
             }
@@ -1282,14 +1282,14 @@ Item {
             Ico {
                 name: st.core.volIcon()
                 alt: "V"
-                font.pixelSize: 14
+                font.pixelSize: core.scale(14)
                 color: Theme.textMuted
             }
 
             Text {
                 text: st.core.muted ? "0" : String(Math.round(st.core.volume * 100))
                 font.family: Theme.fontMono
-                font.pixelSize: 9
+                font.pixelSize: core.scale(9)
                 font.weight: Font.DemiBold
                 color: Theme.textMuted
             }
@@ -1337,7 +1337,7 @@ Item {
 
                     Rectangle {
                         visible: st.headerBadgeText !== ""
-                        Layout.preferredHeight: 30
+                        Layout.preferredHeight: Theme.scaled(30)
                         Layout.preferredWidth: Math.min(280, badgeText.implicitWidth + (st.core.hasBat ? 22 : 0) + 24)
                         radius: Theme.radiusCard
                         color: badgeMa.containsMouse ? Theme.cardHover : Theme.card
@@ -1355,7 +1355,7 @@ Item {
                                 visible: st.core.hasBat
                                 name: st.core.charging ? "battery_charging_full" : "battery_5_bar"
                                 alt: "B"
-                                font.pixelSize: 14
+                                font.pixelSize: core.scale(14)
                                 color: (!st.core.charging && st.core.batPct <= 20) ? Theme.statusDanger : Theme.brandAccent
                             }
 
@@ -1364,7 +1364,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: st.headerBadgeText
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: core.scale(10)
                                 font.weight: Font.Medium
                                 color: Theme.textMain
                                 elide: Text.ElideRight
@@ -1449,15 +1449,15 @@ Item {
                             Text {
                                 text: "CUSTOMIZE TILES"
                                 font.family: Theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: core.scale(10)
                                 font.weight: Font.Bold
                                 font.letterSpacing: 0.8
                                 color: Theme.brandAccent
                             }
                             Item { Layout.fillWidth: true }
                             Rectangle {
-                                Layout.preferredHeight: 24
-                                Layout.preferredWidth: 96
+                                Layout.preferredHeight: Theme.scaled(24)
+                                Layout.preferredWidth: Theme.scaled(96)
                                 radius: 6
                                 color: rstMa.containsMouse ? Theme.cardHover : Qt.rgba(1, 1, 1, 0.06)
                                 border.width: 1
@@ -1466,7 +1466,7 @@ Item {
                                     anchors.centerIn: parent
                                     text: "Reset Defaults"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 9
+                                    font.pixelSize: core.scale(9)
                                     font.weight: Font.Medium
                                     color: Theme.textMuted
                                 }
@@ -1478,15 +1478,15 @@ Item {
                                 }
                             }
                             Rectangle {
-                                Layout.preferredHeight: 24
-                                Layout.preferredWidth: 60
+                                Layout.preferredHeight: Theme.scaled(24)
+                                Layout.preferredWidth: Theme.scaled(60)
                                 radius: 6
                                 color: Theme.brandAccent
                                 Text {
                                     anchors.centerIn: parent
                                     text: "Done"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.Bold
                                     color: Theme.brandAccentFg
                                 }
@@ -1504,7 +1504,7 @@ Item {
                                 required property var modelData
                                 required property int index
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 34
+                                Layout.preferredHeight: Theme.scaled(34)
                                 radius: 8
                                 color: Qt.rgba(1, 1, 1, 0.04)
                                 border.width: 1
@@ -1517,8 +1517,8 @@ Item {
                                     spacing: 8
 
                                     Rectangle {
-                                        Layout.preferredWidth: 24
-                                        Layout.preferredHeight: 24
+                                        Layout.preferredWidth: Theme.scaled(24)
+                                        Layout.preferredHeight: Theme.scaled(24)
                                         radius: 4
                                         color: upMa.containsMouse ? Theme.cardHover : "transparent"
                                         opacity: index > 0 ? 1.0 : 0.25
@@ -1526,7 +1526,7 @@ Item {
                                             anchors.centerIn: parent
                                             name: "arrow_upward"
                                             alt: "^"
-                                            font.pixelSize: 14
+                                            font.pixelSize: core.scale(14)
                                             color: Theme.textMain
                                         }
                                         MouseArea {
@@ -1539,8 +1539,8 @@ Item {
                                     }
 
                                     Rectangle {
-                                        Layout.preferredWidth: 24
-                                        Layout.preferredHeight: 24
+                                        Layout.preferredWidth: Theme.scaled(24)
+                                        Layout.preferredHeight: Theme.scaled(24)
                                         radius: 4
                                         color: downMa.containsMouse ? Theme.cardHover : "transparent"
                                         opacity: (st.controlTiles && index < st.controlTiles.length - 1) ? 1.0 : 0.25
@@ -1548,7 +1548,7 @@ Item {
                                             anchors.centerIn: parent
                                             name: "arrow_downward"
                                             alt: "v"
-                                            font.pixelSize: 14
+                                            font.pixelSize: core.scale(14)
                                             color: Theme.textMain
                                         }
                                         MouseArea {
@@ -1564,15 +1564,15 @@ Item {
                                         Layout.fillWidth: true
                                         text: modelData.title
                                         font.family: Theme.fontUi
-                                        font.pixelSize: 11
+                                        font.pixelSize: core.scale(11)
                                         font.weight: Font.DemiBold
                                         color: modelData.enabled ? Theme.textMain : Theme.textMuted
                                         elide: Text.ElideRight
                                     }
 
                                     Rectangle {
-                                        Layout.preferredWidth: 64
-                                        Layout.preferredHeight: 22
+                                        Layout.preferredWidth: Theme.scaled(64)
+                                        Layout.preferredHeight: Theme.scaled(22)
                                         radius: 6
                                         color: modelData.enabled ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.2) : Qt.rgba(1, 1, 1, 0.06)
                                         border.width: 1
@@ -1584,13 +1584,13 @@ Item {
                                             Ico {
                                                 name: modelData.enabled ? "visibility" : "visibility_off"
                                                 alt: modelData.enabled ? "O" : "X"
-                                                font.pixelSize: 12
+                                                font.pixelSize: core.scale(12)
                                                 color: modelData.enabled ? Theme.brandAccent : Theme.textMuted
                                             }
                                             Text {
                                                 text: modelData.enabled ? "Shown" : "Hidden"
                                                 font.family: Theme.fontUi
-                                                font.pixelSize: 9
+                                                font.pixelSize: core.scale(9)
                                                 font.weight: Font.Medium
                                                 color: modelData.enabled ? Theme.brandAccent : Theme.textMuted
                                             }
@@ -1623,7 +1623,7 @@ Item {
                             required property var modelData
                             required property int index
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 54
+                            Layout.preferredHeight: Theme.scaled(54)
                             Layout.row: Math.floor(index / 2)
                             Layout.column: index % 2
                             sourceComponent: {
@@ -1651,7 +1651,7 @@ Item {
                 Rectangle {
                     visible: st.dndExpanded
                     Layout.fillWidth: true
-                    implicitHeight: 40
+                    implicitHeight: Theme.scaled(40)
                     radius: Theme.radiusCard
                     color: Theme.card
                     border.width: Theme.borderWidth
@@ -1666,7 +1666,7 @@ Item {
                         Text {
                             text: "DND for:"
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: core.scale(10)
                             font.weight: Font.DemiBold
                             color: Theme.textMuted
                         }
@@ -1682,7 +1682,7 @@ Item {
                             delegate: Rectangle {
                                 required property var modelData
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 26
+                                Layout.preferredHeight: Theme.scaled(26)
                                 radius: 6
                                 color: chipMa.containsMouse ? Theme.cardHover : Qt.rgba(1, 1, 1, 0.06)
                                 border.width: 1
@@ -1692,7 +1692,7 @@ Item {
                                     anchors.centerIn: parent
                                     text: modelData.label
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 9
+                                    font.pixelSize: core.scale(9)
                                     font.weight: Font.DemiBold
                                     color: Theme.textMain
                                 }
@@ -1767,7 +1767,7 @@ Item {
                                 delegate: Rectangle {
                                     required property var modelData
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 30
+                                    Layout.preferredHeight: Theme.scaled(30)
                                     radius: 8
                                     color: modelData.default
                                         ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.16)
@@ -1785,7 +1785,7 @@ Item {
                                         Ico {
                                             name: modelData.default ? "check" : "speaker"
                                             alt: modelData.default ? "✓" : "S"
-                                            font.pixelSize: 13
+                                            font.pixelSize: core.scale(13)
                                             color: modelData.default ? Theme.brandAccent : Theme.textMuted
                                         }
 
@@ -1793,7 +1793,7 @@ Item {
                                             Layout.fillWidth: true
                                             text: modelData.name + (modelData.available === false ? " · (unavailable)" : "")
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 11
+                                            font.pixelSize: core.scale(11)
                                             font.weight: modelData.default ? Font.DemiBold : Font.Normal
                                             color: modelData.default ? Theme.brandAccent : Theme.textMain
                                             elide: Text.ElideRight
@@ -1875,8 +1875,8 @@ Item {
 
                             // Album Art / Fallback
                             Rectangle {
-                                Layout.preferredWidth: 44
-                                Layout.preferredHeight: 44
+                                Layout.preferredWidth: Theme.scaled(44)
+                                Layout.preferredHeight: Theme.scaled(44)
                                 radius: 8
                                 color: Qt.rgba(1, 1, 1, 0.08)
                                 clip: true
@@ -1894,7 +1894,7 @@ Item {
                                     anchors.centerIn: parent
                                     name: "music_note"
                                     alt: "♫"
-                                    font.pixelSize: 20
+                                    font.pixelSize: core.scale(20)
                                     color: Theme.textMuted
                                 }
 
@@ -1914,7 +1914,7 @@ Item {
                                     Layout.fillWidth: true
                                     text: (st.player && st.player.trackTitle) ? st.player.trackTitle : ""
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 12
+                                    font.pixelSize: core.scale(12)
                                     font.weight: Font.DemiBold
                                     color: Theme.textMain
                                     elide: Text.ElideRight
@@ -1924,7 +1924,7 @@ Item {
                                     Layout.fillWidth: true
                                     text: (st.player && st.player.trackArtist) ? st.player.trackArtist : "Unknown Artist"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.Medium
                                     color: Theme.textMuted
                                     elide: Text.ElideRight
@@ -1937,8 +1937,8 @@ Item {
 
                                 // Previous
                                 Rectangle {
-                                    Layout.preferredWidth: 28
-                                    Layout.preferredHeight: 28
+                                    Layout.preferredWidth: Theme.scaled(28)
+                                    Layout.preferredHeight: Theme.scaled(28)
                                     radius: 14
                                     color: prevMa.containsMouse ? Theme.cardHover : "transparent"
                                     opacity: Boolean(st.player && st.player.canGoPrevious) ? 1.0 : 0.35
@@ -1947,7 +1947,7 @@ Item {
                                         anchors.centerIn: parent
                                         name: "skip_previous"
                                         alt: "|<"
-                                        font.pixelSize: 18
+                                        font.pixelSize: core.scale(18)
                                         color: Theme.textMain
                                     }
 
@@ -1962,8 +1962,8 @@ Item {
 
                                 // Play / Pause
                                 Rectangle {
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
+                                    Layout.preferredWidth: Theme.scaled(32)
+                                    Layout.preferredHeight: Theme.scaled(32)
                                     radius: 16
                                     color: playMa.containsMouse ? Qt.lighter(Theme.brandAccent, 1.08) : Theme.brandAccent
 
@@ -1971,7 +1971,7 @@ Item {
                                         anchors.centerIn: parent
                                         name: (st.player && st.player.isPlaying) ? "pause" : "play_arrow"
                                         alt: (st.player && st.player.isPlaying) ? "||" : ">"
-                                        font.pixelSize: 18
+                                        font.pixelSize: core.scale(18)
                                         color: Theme.brandAccentFg
                                     }
 
@@ -1985,8 +1985,8 @@ Item {
 
                                 // Next
                                 Rectangle {
-                                    Layout.preferredWidth: 28
-                                    Layout.preferredHeight: 28
+                                    Layout.preferredWidth: Theme.scaled(28)
+                                    Layout.preferredHeight: Theme.scaled(28)
                                     radius: 14
                                     color: nextMa.containsMouse ? Theme.cardHover : "transparent"
                                     opacity: Boolean(st.player && st.player.canGoNext) ? 1.0 : 0.35
@@ -1995,7 +1995,7 @@ Item {
                                         anchors.centerIn: parent
                                         name: "skip_next"
                                         alt: ">|"
-                                        font.pixelSize: 18
+                                        font.pixelSize: core.scale(18)
                                         color: Theme.textMain
                                     }
 
@@ -2019,13 +2019,13 @@ Item {
                             Text {
                                 text: ControlLogic.formatDuration(st.displayPos)
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: core.scale(9)
                                 color: Theme.textMuted
                             }
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 4
+                                Layout.preferredHeight: Theme.scaled(4)
                                 radius: 2
                                 color: Qt.rgba(1, 1, 1, 0.08)
                                 clip: true
@@ -2041,7 +2041,7 @@ Item {
                             Text {
                                 text: st.player ? ControlLogic.formatDuration(st.player.length * 1000) : "0:00"
                                 font.family: Theme.fontMono
-                                font.pixelSize: 9
+                                font.pixelSize: core.scale(9)
                                 color: Theme.textMuted
                             }
                         }
@@ -2051,7 +2051,7 @@ Item {
                 // Compact CPU / RAM / Temp Strip
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: 34
+                    implicitHeight: Theme.scaled(34)
                     radius: Theme.radiusCard
                     color: Theme.card
                     border.width: Theme.borderWidth
@@ -2074,20 +2074,20 @@ Item {
                                 Ico {
                                     name: "memory"
                                     alt: "C"
-                                    font.pixelSize: 15
+                                    font.pixelSize: core.scale(15)
                                     color: Theme.brandAccent
                                 }
                                 Text {
                                     text: "CPU"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.DemiBold
                                     color: Theme.textMuted
                                 }
                                 Text {
                                     text: st.cpuUsage >= 0 ? (st.cpuUsage + "%") : "--%"
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.Medium
                                     color: Theme.textMain
                                 }
@@ -2098,7 +2098,7 @@ Item {
                             MouseArea { id: cpuMa; anchors.fill: parent; hoverEnabled: true }
                         }
 
-                        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
+                        Rectangle { Layout.preferredWidth: Theme.scaled(1); Layout.preferredHeight: Theme.scaled(16); color: Theme.outlineSoft }
 
                         // RAM Item
                         Item {
@@ -2111,20 +2111,20 @@ Item {
                                 Ico {
                                     name: "storage"
                                     alt: "R"
-                                    font.pixelSize: 15
+                                    font.pixelSize: core.scale(15)
                                     color: Theme.accentSecondary
                                 }
                                 Text {
                                     text: "RAM"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.DemiBold
                                     color: Theme.textMuted
                                 }
                                 Text {
                                     text: st.memPct >= 0 ? (st.memPct + "%") : "--%"
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.Medium
                                     color: Theme.textMain
                                 }
@@ -2135,7 +2135,7 @@ Item {
                             MouseArea { id: ramMa; anchors.fill: parent; hoverEnabled: true }
                         }
 
-                        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 16; color: Theme.outlineSoft }
+                        Rectangle { Layout.preferredWidth: Theme.scaled(1); Layout.preferredHeight: Theme.scaled(16); color: Theme.outlineSoft }
 
                         // TEMP Item
                         Item {
@@ -2148,20 +2148,20 @@ Item {
                                 Ico {
                                     name: "thermostat"
                                     alt: "T"
-                                    font.pixelSize: 15
+                                    font.pixelSize: core.scale(15)
                                     color: st.tempC >= 80 ? Theme.statusDanger : (st.tempC >= 70 ? Theme.statusWarn : Theme.brandAccent)
                                 }
                                 Text {
                                     text: "TEMP"
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.DemiBold
                                     color: Theme.textMuted
                                 }
                                 Text {
                                     text: st.tempC > 0 ? (st.tempC + "°C") : "--°C"
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.weight: Font.Medium
                                     color: Theme.textMain
                                 }
@@ -2194,7 +2194,7 @@ Item {
                 Ico {
                     name: "memory"
                     alt: "M"
-                    font.pixelSize: 14
+                    font.pixelSize: core.scale(14)
                     color: Theme.textMuted
                 }
 
@@ -2202,7 +2202,7 @@ Item {
                     Layout.fillWidth: true
                     text: st.sessionSummary
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: core.scale(9)
                     font.weight: Font.Medium
                     color: Theme.textMuted
                     elide: Text.ElideRight

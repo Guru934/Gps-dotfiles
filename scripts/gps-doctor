@@ -437,7 +437,7 @@ def audit_session(repo_root=None, runner=subprocess.run):
         "status": "OK" if awww_run else "MISSING",
         "essential": True,
         "details": f"PID {awww_pids[0]} (wallpaper daemon)" if awww_run else "not running",
-        "action": None if awww_run else "nohup awww-daemon >/tmp/awww-daemon.log 2>&1 &",
+        "action": None if awww_run else "scripts/run-gps.fish",
     })
 
     # 14. Cliphist Watchers
@@ -537,7 +537,8 @@ def audit_session(repo_root=None, runner=subprocess.run):
     }
 
     # Logs inspection
-    shell_log_path = Path("/tmp/qs-gps.log")
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    shell_log_path = cache_home / "gps" / "logs" / "qs-gps.log"
     island_log_path = Path.home() / ".config/quickshell/island.log"
 
     logs_info = {

@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import qs.config
 
 Item {
     id: st
@@ -19,12 +20,12 @@ Item {
     property var usage: ({})
     property var favorites: []
     readonly property bool hasQuery: query.trim() !== ""
-    readonly property real w: 520
+    readonly property real w: Theme.islandLauncherWidth
     readonly property real h: calc
-        ? 120
-        : (hasQuery
-            ? Math.min(460, 58 + Math.max(1, results.length) * 40 + 36)
-            : Math.min(460, Math.max(220, 58 + Math.max(1, results.length) * 40 + (favorites.length === 0 ? 32 : 56) + 36)))
+        ? core.scale(120)
+        : hasQuery
+            ? Math.min(core.scale(460), core.scale(58) + Math.max(1, results.length) * core.scale(40) + core.scale(36))
+            : Math.min(core.scale(460), Math.max(core.scale(220), core.scale(58) + Math.max(1, results.length) * core.scale(40) + (favorites.length === 0 ? core.scale(32) : core.scale(56)) + core.scale(36)))
     readonly property color accent: calc ? core.amber : core.teal
     anchors.fill: parent
     opacity: active ? 1 : 0
@@ -433,7 +434,7 @@ Item {
         // Top Search Bar
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
+            Layout.preferredHeight: Theme.islandLauncherSearchHeight
             radius: 14
             color: Qt.rgba(1, 1, 1, 0.05)
             border.width: 1
@@ -448,9 +449,9 @@ Item {
                 Text {
                     text: st.core.iconOk ? "search" : "⌕"
                     font.family: st.core.iconOk ? st.core.iconFont : st.core.uiFont
-                    font.pixelSize: 18
+                    font.pixelSize: core.scale(18)
                     color: st.core.teal
-                    Layout.preferredWidth: 22
+                    Layout.preferredWidth: Theme.scaled(22)
                 }
 
                 Item {
@@ -463,7 +464,7 @@ Item {
                         text: "Search apps, favorites, shortcuts or math…"
                         color: st.core.dim
                         font.family: st.core.uiFont
-                        font.pixelSize: 13
+                        font.pixelSize: core.scale(13)
                     }
 
                     TextInput {
@@ -472,7 +473,7 @@ Item {
                         verticalAlignment: TextInput.AlignVCenter
                         color: st.core.text
                         font.family: st.core.uiFont
-                        font.pixelSize: 14
+                        font.pixelSize: core.scale(14)
                         clip: true
                         text: st.query
                         onTextChanged: {
@@ -516,14 +517,14 @@ Item {
                 // Clear query button
                 Rectangle {
                     visible: st.hasQuery
-                    Layout.preferredWidth: 20
-                    Layout.preferredHeight: 20
+                    Layout.preferredWidth: Theme.scaled(20)
+                    Layout.preferredHeight: Theme.scaled(20)
                     radius: 10
                     color: clearMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(1, 1, 1, 0.08)
                     Text {
                         anchors.centerIn: parent
                         text: "✕"
-                        font.pixelSize: 10
+                        font.pixelSize: core.scale(10)
                         color: clearMouse.containsMouse ? st.core.text : st.core.dim
                     }
                     MouseArea {
@@ -542,15 +543,15 @@ Item {
 
                 // Close button / ESC indicator
                 Rectangle {
-                    Layout.preferredWidth: 38
-                    Layout.preferredHeight: 22
+                    Layout.preferredWidth: Theme.scaled(38)
+                    Layout.preferredHeight: Theme.scaled(22)
                     radius: 6
                     color: closeMouse.containsMouse ? Qt.rgba(st.core.coral ? st.core.coral.r : 0.9, 0.3, 0.3, 0.25) : Qt.rgba(1, 1, 1, 0.06)
                     Text {
                         anchors.centerIn: parent
                         text: "ESC"
                         font.family: st.core.monoFont
-                        font.pixelSize: 10
+                        font.pixelSize: core.scale(10)
                         color: closeMouse.containsMouse ? st.core.text : st.core.dim
                     }
                     MouseArea {
@@ -568,7 +569,7 @@ Item {
         RowLayout {
             visible: calc !== null
             Layout.fillWidth: true
-            Layout.preferredHeight: 48
+            Layout.preferredHeight: Theme.scaled(48)
             spacing: 12
             Rectangle {
                 Layout.fillWidth: true
@@ -585,13 +586,13 @@ Item {
                         text: st.core.iconOk ? "calculate" : "="
                         color: st.core.amber
                         font.family: st.core.iconOk ? st.core.iconFont : st.core.uiFont
-                        font.pixelSize: 20
+                        font.pixelSize: core.scale(20)
                     }
                     Text {
                         text: calc ? calc.text : ""
                         color: st.core.amber
                         font.family: st.core.monoFont
-                        font.pixelSize: 20
+                        font.pixelSize: core.scale(20)
                         font.bold: true
                         Layout.fillWidth: true
                     }
@@ -599,7 +600,7 @@ Item {
                         text: "[↵] Copy to clipboard"
                         color: st.core.dim
                         font.family: st.core.monoFont
-                        font.pixelSize: 11
+                        font.pixelSize: core.scale(11)
                     }
                 }
             }
@@ -609,7 +610,7 @@ Item {
         Rectangle {
             visible: !hasQuery && !calc && st.favorites.length === 0
             Layout.fillWidth: true
-            Layout.preferredHeight: 32
+            Layout.preferredHeight: Theme.scaled(32)
             radius: 8
             color: Qt.rgba(st.core.amber.r, st.core.amber.g, st.core.amber.b, 0.08)
             border.width: 1
@@ -622,13 +623,13 @@ Item {
                 Text {
                     text: "★"
                     color: st.core.amber
-                    font.pixelSize: 12
+                    font.pixelSize: core.scale(12)
                 }
                 Text {
                     text: "No favorites pinned yet · Click the star on any app below to pin it here"
                     color: st.core.text
                     font.family: st.core.uiFont
-                    font.pixelSize: 11
+                    font.pixelSize: core.scale(11)
                     Layout.fillWidth: true
                 }
             }
@@ -664,7 +665,7 @@ Item {
                         Item {
                             visible: !st.hasQuery && (index === 0 || (st.results[index - 1] && modelData.section !== st.results[index - 1].section))
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 24
+                            Layout.preferredHeight: Theme.scaled(24)
                             Layout.topMargin: index === 0 ? 0 : 8
 
                             RowLayout {
@@ -676,13 +677,13 @@ Item {
                                 Text {
                                     text: modelData.section === "favorites" ? "★" : (modelData.section === "frequent" ? "󰁯" : "✦")
                                     color: modelData.section === "favorites" ? st.core.amber : st.core.teal
-                                    font.pixelSize: 11
+                                    font.pixelSize: core.scale(11)
                                 }
                                 Text {
                                     text: modelData.section === "favorites" ? "FAVORITES" : (modelData.section === "frequent" ? "FREQUENTLY OPENED" : "SUGGESTIONS")
                                     color: st.core.dim
                                     font.family: st.core.monoFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     font.bold: true
                                     Layout.fillWidth: true
                                 }
@@ -692,7 +693,7 @@ Item {
                         // App / Action Row Card
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 38
+                            Layout.preferredHeight: Theme.scaled(38)
                             radius: 9
                             color: chosen
                                 ? Qt.rgba(st.core.teal.r, st.core.teal.g, st.core.teal.b, 0.16)
@@ -708,8 +709,8 @@ Item {
 
                                 // App Icon or Kind Glyph
                                 Item {
-                                    Layout.preferredWidth: 24
-                                    Layout.preferredHeight: 24
+                                    Layout.preferredWidth: Theme.scaled(24)
+                                    Layout.preferredHeight: Theme.scaled(24)
 
                                     Image {
                                         id: appIcon
@@ -731,7 +732,7 @@ Item {
                                         visible: appIcon.status !== Image.Ready
                                         text: st.core.iconOk ? st.glyph(modelData.kind) : "•"
                                         font.family: st.core.iconOk ? st.core.iconFont : st.core.uiFont
-                                        font.pixelSize: 18
+                                        font.pixelSize: core.scale(18)
                                         color: st.tone(modelData.kind)
                                         horizontalAlignment: Text.AlignHCenter
                                         verticalAlignment: Text.AlignVCenter
@@ -743,7 +744,7 @@ Item {
                                     text: modelData.name
                                     color: st.core.text
                                     font.family: st.core.uiFont
-                                    font.pixelSize: 13
+                                    font.pixelSize: core.scale(13)
                                     font.bold: chosen
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
@@ -755,14 +756,14 @@ Item {
                                     text: modelData.sub || ""
                                     color: st.core.dim
                                     font.family: st.core.monoFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: core.scale(10)
                                     elide: Text.ElideRight
                                 }
 
                                 // Section Tag / Kind Badge
                                 Rectangle {
                                     visible: modelData.kind !== "app" || modelData.isFavorite
-                                    Layout.preferredHeight: 18
+                                    Layout.preferredHeight: Theme.scaled(18)
                                     implicitWidth: tagText.implicitWidth + 10
                                     radius: 5
                                     color: modelData.isFavorite
@@ -773,7 +774,7 @@ Item {
                                         anchors.centerIn: parent
                                         text: modelData.isFavorite ? "PINNED" : modelData.kind.toUpperCase()
                                         font.family: st.core.monoFont
-                                        font.pixelSize: 9
+                                        font.pixelSize: core.scale(9)
                                         font.bold: true
                                         color: modelData.isFavorite ? st.core.amber : st.tone(modelData.kind)
                                     }
@@ -782,13 +783,13 @@ Item {
                                 // Star / Favorite Toggle Button
                                 Item {
                                     visible: modelData.kind === "app"
-                                    Layout.preferredWidth: 26
-                                    Layout.preferredHeight: 26
+                                    Layout.preferredWidth: Theme.scaled(26)
+                                    Layout.preferredHeight: Theme.scaled(26)
 
                                     Text {
                                         anchors.centerIn: parent
                                         text: modelData.isFavorite ? "★" : "☆"
-                                        font.pixelSize: 16
+                                        font.pixelSize: core.scale(16)
                                         color: modelData.isFavorite
                                             ? st.core.amber
                                             : (starMouse.containsMouse ? st.core.text : (chosen ? st.core.dim : Qt.rgba(1, 1, 1, 0.2)))
@@ -825,14 +826,14 @@ Item {
         // Bottom Footer Keyboard Help
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 20
+            Layout.preferredHeight: Theme.scaled(20)
             visible: !calc
 
             Text {
                 text: "[↵] Open   [Tab] Complete   [↑↓] Move   [Ctrl+D] Star   [ESC] Close"
                 color: st.core.dim
                 font.family: st.core.monoFont
-                font.pixelSize: 10
+                font.pixelSize: core.scale(10)
                 Layout.fillWidth: true
             }
 
@@ -841,7 +842,7 @@ Item {
                 text: st.results.length + (st.results.length === 1 ? " match" : " matches")
                 color: st.core.dim
                 font.family: st.core.monoFont
-                font.pixelSize: 10
+                font.pixelSize: core.scale(10)
             }
         }
     }

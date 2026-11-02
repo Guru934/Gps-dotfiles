@@ -20,10 +20,12 @@ class LauncherSuperContractTests(unittest.TestCase):
     """Verifies that the Super key alone triggers GPS Island launcher and that Tide is removed."""
 
     def test_hyprland_super_modifier_only_bindings(self):
-        """Hyprland must bind Super_L and Super_R on release to the launcher command."""
-        self.assertIn('hl.bind(mainMod .. " + Super_L", hl.dsp.exec_cmd(menu), { release = true })', HYPRLAND_LUA)
-        self.assertIn('hl.bind(mainMod .. " + Super_R", hl.dsp.exec_cmd(menu), { release = true })', HYPRLAND_LUA)
-        self.assertIn('local menu        = repo .. "/scripts/gps-ipc island launcher toggle"', HYPRLAND_LUA)
+        """Releasing either Super key opens the launcher; Space remains unbound."""
+        integration = (ROOT / "dots" / "hypr" / "gps" / "integration.lua").read_text(encoding="utf-8")
+        self.assertIn('{ "SUPER + Super_L", hl.dsp.exec_cmd(ipc_command("island launcher toggle")), { release = true } }', integration)
+        self.assertIn('{ "SUPER + Super_R", hl.dsp.exec_cmd(ipc_command("island launcher toggle")), { release = true } }', integration)
+        self.assertNotIn('{ "SUPER + SPACE",', integration)
+        self.assertIn('{ "SUPER + R", hl.dsp.exec_cmd(ipc_command("island launcher toggle")) }', integration)
 
     def test_hyprland_preserves_super_key_shortcuts(self):
         """Window management and utility shortcuts on Super+key must remain intact."""
@@ -48,6 +50,19 @@ class LauncherSuperContractTests(unittest.TestCase):
         self.assertIn('? WlrKeyboardFocus.Exclusive', ISLAND_QML)
         self.assertIn('function launcher(state: string)', ISLAND_QML)
         self.assertIn('root.setLauncher(', ISLAND_QML)
+
+    def test_launcher_state_lifecycle_and_focus_contract(self):
+        """IPC state changes persist through visibility updates and the search input is focused."""
+        set_launcher = re.search(r"function setLauncher\(open\) \{(?P<body>.*?)\n    \}", ISLAND_QML, re.S)
+        self.assertIsNotNone(set_launcher)
+        self.assertIn("launcherOpen = Boolean(open)", set_launcher.group("body"))
+        self.assertIn("if (launcherOpen) root.manualHide = false", set_launcher.group("body"))
+        self.assertIn("root.updateVisibility()", set_launcher.group("body"))
+        self.assertIn('root.setLauncher(state === "toggle" ? !root.launcherOpen : state !== "close")', ISLAND_QML)
+        self.assertIn("onActiveChanged: {", LAUNCHER_QML)
+        self.assertIn("focusTimer.restart()", LAUNCHER_QML)
+        self.assertIn("onTriggered: input.forceActiveFocus()", LAUNCHER_QML)
+        self.assertIn("onTextChanged:", LAUNCHER_QML)
 
     def test_brandmark_routes_to_gps_launcher(self):
         """Clicking the dock brand mark routes to GPS Island launcher."""

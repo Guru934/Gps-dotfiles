@@ -59,13 +59,24 @@ get_managed_pid() {
             fi
         fi
     fi
-    # Check if a hypridle instance was launched with gps hypridle.conf
-    local matched
-    matched="$(pgrep -f "hypridle.*hypridle\.conf" | head -1 || true)"
-    if [ -n "$matched" ]; then
-        printf '%s\n' "$matched"
-        return 0
+    # Adopt only a hypridle process launched with the exact config selected by
+    # this invocation. A broad match can capture a desktop-owned process during
+    # hermetic tests or when another config is in use.
+    local cfg="" candidate="" command_line=""
+    cfg="$(resolve_config 2>/dev/null || true)"
+    if [ -z "$cfg" ]; then
+        return 1
     fi
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        command_line="$(tr '\0' ' ' <"/proc/$candidate/cmdline" 2>/dev/null || true)"
+        case "$command_line" in
+            *"--config $cfg"*|*"-c $cfg"*)
+                printf '%s\n' "$candidate"
+                return 0
+                ;;
+        esac
+    done < <(pgrep -u "$(id -u)" -f '(^|/)hypridle([[:space:]]|$)' 2>/dev/null || true)
     return 1
 }
 

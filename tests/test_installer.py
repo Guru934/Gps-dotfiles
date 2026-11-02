@@ -114,8 +114,8 @@ class TestGpsInstaller(InstallerTestBase):
         """2. Dry-run reports all planned symlinks."""
         res = self.run_cmd(["--dry-run"])
         self.assertEqual(res.returncode, 0)
-        self.assertIn("dots/hypr/hyprland.lua", res.stdout)
-        self.assertIn("dots/hypr/hypridle.conf", res.stdout)
+        self.assertIn("dots/hypr/gps/integration.lua", res.stdout)
+        self.assertIn("dots/hypr/gps/startup.lua", res.stdout)
         self.assertIn("dots/hypr/hyprlock.conf", res.stdout)
         self.assertIn("dots/hypr/lock-bg.conf", res.stdout)
         self.assertIn("dots/hypr/lock-colors.conf", res.stdout)
@@ -140,11 +140,11 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertEqual(res.returncode, 0, f"Apply failed: {res.stderr}")
 
         # Check Hyprland symlinks
-        hyprland_link = self.fake_config / "hypr" / "hyprland.lua"
+        hyprland_link = self.fake_config / "hypr" / "gps" / "integration.lua"
         self.assertTrue(hyprland_link.is_symlink())
-        self.assertEqual(hyprland_link.resolve(), (REPO_ROOT / "dots" / "hypr" / "hyprland.lua").resolve())
+        self.assertEqual(hyprland_link.resolve(), (REPO_ROOT / "dots" / "hypr" / "gps" / "integration.lua").resolve())
 
-        hypridle_link = self.fake_config / "hypr" / "hypridle.conf"
+        hypridle_link = self.fake_config / "hypr" / "gps" / "startup.lua"
         self.assertTrue(hypridle_link.is_symlink())
 
         hyprlock_link = self.fake_config / "hypr" / "hyprlock.conf"
@@ -253,16 +253,16 @@ class TestGpsInstaller(InstallerTestBase):
 
     def test_09_original_symlinks_are_restored_on_uninstall(self):
         """9. Original symlinks are restored on uninstall."""
-        hypr_cfg = self.fake_config / "hypr" / "hypridle.conf"
+        hypr_cfg = self.fake_config / "hypr" / "hyprlock.conf"
         hypr_cfg.parent.mkdir(parents=True, exist_ok=True)
 
-        other_target = self.test_root / "other_hypridle.conf"
-        other_target.write_text("# other idle config", encoding="utf-8")
+        other_target = self.test_root / "other_hyprlock.conf"
+        other_target.write_text("# other lock config", encoding="utf-8")
         hypr_cfg.symlink_to(other_target)
 
         # Apply backs up existing symlink and replaces with GPS
         self.run_cmd(["--apply"])
-        self.assertEqual(hypr_cfg.resolve(), (REPO_ROOT / "dots" / "hypr" / "hypridle.conf").resolve())
+        self.assertEqual(hypr_cfg.resolve(), (REPO_ROOT / "dots" / "hypr" / "hyprlock.conf").resolve())
 
         # Uninstall restores original symlink
         res = self.run_cmd(["--uninstall"])
@@ -320,8 +320,8 @@ class TestGpsInstaller(InstallerTestBase):
         """13. User changes after installation cause uninstall conflict detection."""
         self.run_cmd(["--apply"])
 
-        # User modifies hyprland.lua after GPS installation (replaces symlink with file)
-        hypr_lua = self.fake_config / "hypr" / "hyprland.lua"
+        # User modifies integration.lua after GPS installation (replaces symlink with file)
+        hypr_lua = self.fake_config / "hypr" / "gps" / "integration.lua"
         self.assertTrue(hypr_lua.is_symlink())
         hypr_lua.unlink()
         hypr_lua.write_text("-- user custom edit after GPS installed\n", encoding="utf-8")
@@ -375,8 +375,8 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertEqual(res.returncode, 0)
 
         # Symlink must point to alt_repo
-        hypr_link = self.fake_config / "hypr" / "hyprland.lua"
-        self.assertEqual(hypr_link.resolve(), (alt_repo / "dots" / "hypr" / "hyprland.lua").resolve())
+        hypr_link = self.fake_config / "hypr" / "gps" / "integration.lua"
+        self.assertEqual(hypr_link.resolve(), (alt_repo / "dots" / "hypr" / "gps" / "integration.lua").resolve())
 
     def test_17_gps_root_works_with_paths_containing_spaces(self):
         """17. GPS_ROOT works with paths containing spaces."""
@@ -394,9 +394,9 @@ class TestGpsInstaller(InstallerTestBase):
         res = subprocess.run(cmd, cwd=str(space_repo), capture_output=True, text=True, env=self.env)
         self.assertEqual(res.returncode, 0, f"Error: {res.stderr}")
 
-        installed_link = space_home / ".config" / "hypr" / "hyprland.lua"
+        installed_link = space_home / ".config" / "hypr" / "gps" / "integration.lua"
         self.assertTrue(installed_link.is_symlink())
-        self.assertEqual(installed_link.resolve(), (space_repo / "dots" / "hypr" / "hyprland.lua").resolve())
+        self.assertEqual(installed_link.resolve(), (space_repo / "dots" / "hypr" / "gps" / "integration.lua").resolve())
 
     def test_18_installation_does_not_require_sudo(self):
         """18. Installation does not require sudo."""
@@ -435,7 +435,7 @@ class TestGpsInstaller(InstallerTestBase):
             bin_dir=self.fake_bin,
         )
 
-        orig_file = self.fake_config / "hypr" / "hyprland.lua"
+        orig_file = self.fake_config / "hypr" / "gps" / "integration.lua"
         orig_file.parent.mkdir(parents=True, exist_ok=True)
         orig_file.write_text("-- original lua\n", encoding="utf-8")
 
@@ -543,7 +543,7 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertEqual(res.returncode, 0)
 
         # Config files must be in custom_config
-        self.assertTrue((custom_config / "hypr" / "hyprland.lua").is_symlink())
+        self.assertTrue((custom_config / "hypr" / "gps" / "integration.lua").is_symlink())
 
         # Binaries must be in custom_bin
         self.assertTrue((custom_bin / "gps-ipc").is_symlink())
@@ -688,7 +688,7 @@ class TestGpsInstaller(InstallerTestBase):
             no_color=True,
         )
 
-        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr = self.fake_config / "hypr" / "gps" / "integration.lua"
         orig_hypr.parent.mkdir(parents=True, exist_ok=True)
         orig_hypr.write_text("-- original user hyprland config\n", encoding="utf-8")
 
@@ -705,7 +705,7 @@ class TestGpsInstaller(InstallerTestBase):
         backup_dir = self.fake_state / "gps" / "backups" / "crash_sim"
         backup_files = backup_dir / "files" / "config"
         backup_files.mkdir(parents=True, exist_ok=True)
-        backed_up_file = backup_files / "hyprland.lua"
+        backed_up_file = backup_files / "integration.lua"
         backed_up_file.write_text("-- original backed up content\n", encoding="utf-8")
 
         # Destination file was removed/overwritten before crash
@@ -722,10 +722,10 @@ class TestGpsInstaller(InstallerTestBase):
                 {
                     "id": "hypr_config",
                     "dest": str(orig_hypr),
-                    "src": str(REPO_ROOT / "dots" / "hypr" / "hyprland.lua"),
+                    "src": str(REPO_ROOT / "dots" / "hypr" / "gps" / "integration.lua"),
                     "type": "symlink",
                     "original_type": "file",
-                    "backup_rel": "config/hyprland.lua",
+                    "backup_rel": "config/integration.lua",
                     "state": "applied",
                     "applied": True,
                 }
@@ -893,7 +893,7 @@ class TestGpsInstaller(InstallerTestBase):
                     "src": str(gps_hypr),
                     "dest": str(orig_hypr),
                     "original_type": "file",
-                    "backup_rel": "config/hyprland.lua",
+                    "backup_rel": "config/integration.lua",
                     "backup_sha256": orig_hash,
                     "expected_symlink_target": str(gps_hypr),
                     "state": "planned",
@@ -920,7 +920,7 @@ class TestGpsInstaller(InstallerTestBase):
         # Verify original file was restored byte-for-byte
         self.assertTrue(orig_hypr.is_file())
         self.assertFalse(orig_hypr.is_symlink())
-        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original user hyprland.lua\n")
+        self.assertEqual(orig_hypr.read_text(encoding="utf-8"), "-- original user integration.lua\n")
         self.assertEqual(compute_sha256(orig_hypr), orig_hash)
 
     def test_33_crash_injection_boundaries_and_temp_file_cleanup(self):
@@ -928,13 +928,13 @@ class TestGpsInstaller(InstallerTestBase):
         from scripts.installer import GpsInstaller, compute_sha256
 
         # 1. Abandoned temporary files are cleaned up safely
-        hypr_dir = self.fake_config / "hypr"
+        hypr_dir = self.fake_config / "hypr" / "gps"
         hypr_dir.mkdir(parents=True, exist_ok=True)
-        abandoned_tmp = hypr_dir / ".hyprland.lua.tmp.9999"
-        abandoned_tmp.symlink_to(REPO_ROOT / "dots" / "hypr" / "hyprland.lua")
+        abandoned_tmp = hypr_dir / ".integration.lua.tmp.9999"
+        abandoned_tmp.symlink_to(REPO_ROOT / "dots" / "hypr" / "gps" / "integration.lua")
 
         # Unrelated file with temp-like name must survive
-        unrelated_tmp = hypr_dir / ".hyprland.lua.tmp.user_backup"
+        unrelated_tmp = hypr_dir / ".integration.lua.tmp.user_backup"
         unrelated_tmp.write_text("user backup must survive", encoding="utf-8")
 
         unrelated_file = hypr_dir / "user_custom_note.txt"
@@ -978,7 +978,7 @@ class TestGpsInstaller(InstallerTestBase):
                     "id": "corrupt_test",
                     "action": "backup_and_link",
                     "type": "symlink",
-                    "src": str(REPO_ROOT / "dots" / "hypr" / "hyprland.lua"),
+                    "src": str(REPO_ROOT / "dots" / "hypr" / "gps" / "integration.lua"),
                     "dest": str(test_dest),
                     "original_type": "file",
                     "backup_rel": "config/corrupt_test.txt",

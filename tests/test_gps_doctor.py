@@ -182,6 +182,38 @@ class DoctorAuditReportTests(unittest.TestCase):
             self.assertEqual(rep["status"], "OK")
             self.assertEqual(rep["summary"]["missing"], 0)
 
+    def test_shell_log_path_uses_user_cache(self):
+        """Doctor reads the same user-owned cache log as run-gps.fish."""
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            rep = doc.audit_session(
+                repo_root=str(ROOT),
+                runner=MagicMock(return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=""
+                )),
+            )
+        self.assertEqual(
+            rep["logs"]["shell"]["path"],
+            str(Path(cache_dir) / "gps" / "logs" / "qs-gps.log"),
+        )
+
+    def test_shell_log_path_defaults_to_home_cache(self):
+        """Doctor uses ~/.cache when XDG_CACHE_HOME is unset or empty."""
+        with tempfile.TemporaryDirectory() as home_dir, patch.dict(
+            os.environ, {"HOME": home_dir, "XDG_CACHE_HOME": ""}
+        ):
+            rep = doc.audit_session(
+                repo_root=str(ROOT),
+                runner=MagicMock(return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=""
+                )),
+            )
+        self.assertEqual(
+            rep["logs"]["shell"]["path"],
+            str(Path(home_dir) / ".cache" / "gps" / "logs" / "qs-gps.log"),
+        )
+
     def test_audit_session_essential_missing_sets_ok_false(self):
         """When an essential service (e.g. pipewire or polkit) is missing, report.ok is False."""
         def mock_runner(cmd, **kwargs):

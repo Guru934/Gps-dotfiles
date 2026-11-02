@@ -53,6 +53,13 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertIn("qs-gps.log", RUN_GPS)
         self.assertIn("tail -n 3", RUN_GPS)
 
+    def test_run_gps_writes_runtime_logs_to_user_cache(self):
+        """Startup logs must be writable by the user and avoid shared /tmp files."""
+        self.assertIn('set -l gps_log_dir "$gps_cache_root/gps/logs"', RUN_GPS)
+        self.assertIn('set -l gps_shell_log "$gps_log_dir/qs-gps.log"', RUN_GPS)
+        for name in ("qs-gps", "awww-daemon", "cliphist-text", "cliphist-image", "awatcher"):
+            self.assertNotIn(f"/tmp/{name}.log", RUN_GPS)
+
     def test_switch_island_exact_stop_and_no_duplicate(self):
         """switch-island.fish must use exact stop pattern and --no-duplicate."""
         self.assertIn("function stop_exact", SWITCH_ISLAND)

@@ -243,26 +243,26 @@ class InstallerManifest:
     def get_entries(self) -> List[Dict[str, Any]]:
         """Return list of declared installation items."""
         return [
-            # Hyprland configurations
+            # Opt-in Hyprland integration: never manage the active root or idle file.
             {
-                "id": "hyprland_lua",
+                "id": "gps_hypr_integration",
                 "category": "config",
-                "src": self.repo_root / "dots" / "hypr" / "hyprland.lua",
-                "dest": self.config_dir / "hypr" / "hyprland.lua",
+                "src": self.repo_root / "dots" / "hypr" / "gps" / "integration.lua",
+                "dest": self.config_dir / "hypr" / "gps" / "integration.lua",
                 "type": "symlink",
-                "backup_on_conflict": True,
-                "preserve_on_conflict": False,
+                "backup_on_conflict": False,
+                "preserve_on_conflict": True,
                 "reversible": True,
                 "is_state": False,
             },
             {
-                "id": "hypridle_conf",
+                "id": "gps_hypr_startup",
                 "category": "config",
-                "src": self.repo_root / "dots" / "hypr" / "hypridle.conf",
-                "dest": self.config_dir / "hypr" / "hypridle.conf",
+                "src": self.repo_root / "dots" / "hypr" / "gps" / "startup.lua",
+                "dest": self.config_dir / "hypr" / "gps" / "startup.lua",
                 "type": "symlink",
-                "backup_on_conflict": True,
-                "preserve_on_conflict": False,
+                "backup_on_conflict": False,
+                "preserve_on_conflict": True,
                 "reversible": True,
                 "is_state": False,
             },
@@ -704,7 +704,10 @@ class GpsInstaller:
                 status = f"{self.C_YELLOW}[BACKUP & LINK]{self.C_RESET}"
             elif action == "preserve":
                 preserved += 1
-                status = f"{self.C_GREEN}[PRESERVE]{self.C_RESET}"
+                if r.get("is_conflict"):
+                    status = f"{self.C_YELLOW}[CONFLICT: PRESERVED]{self.C_RESET}"
+                else:
+                    status = f"{self.C_GREEN}[PRESERVE]{self.C_RESET}"
             else:
                 status = f"[{action}]"
 
@@ -736,6 +739,9 @@ class GpsInstaller:
 
         inspection = [self.inspect_destination(e) for e in self.manifest.get_entries()]
         self.print_plan(inspection, simulated_backup_dir)
+        print(
+            f"\n{self.C_GRAY}Safety: active hyprland.lua and hypridle.conf are not installer targets and are never replaced.{self.C_RESET}"
+        )
 
         # Inspect dependencies
         dep_data = self.query_dependencies()
@@ -871,6 +877,15 @@ class GpsInstaller:
             r["action"] in ("up_to_date", "preserve") for r in inspection
         )
         if all_up_to_date and not items_to_backup:
+            conflicts = [
+                r for r in inspection
+                if r.get("is_conflict") and r.get("action") == "preserve"
+            ]
+            for conflict in conflicts:
+                print(
+                    f"{self.C_YELLOW}Conflict detected; preserved without overwriting:{self.C_RESET} "
+                    f"{conflict['entry']['dest']}"
+                )
             print(f"\n{self.C_GREEN}{self.C_BOLD}GPS Desktop is already fully up to date.{self.C_RESET}")
             print("Zero files modified; 0 backups created (idempotent no-op).\n")
             return 0
@@ -1007,6 +1022,7 @@ class GpsInstaller:
                 "category": entry["category"],
                 "type": entry["type"],
                 "action": action,
+                "is_conflict": r.get("is_conflict", False),
                 "src": str(src),
                 "src_resolved": str(src.resolve()),
                 "dest": str(dest),
@@ -1095,7 +1111,10 @@ class GpsInstaller:
                 }
 
                 if action in ("up_to_date", "preserve"):
-                    print(f"  {self.C_GREEN}Preserved / Up to date:{self.C_RESET} {dest}")
+                    if action == "preserve" and step.get("is_conflict"):
+                        print(f"  {self.C_YELLOW}Conflict detected; preserved:{self.C_RESET} {dest}")
+                    else:
+                        print(f"  {self.C_GREEN}Preserved / Up to date:{self.C_RESET} {dest}")
                     entry_manifest["applied"] = True
                     entry_manifest["modified"] = False
                     step["state"] = "preserved"
