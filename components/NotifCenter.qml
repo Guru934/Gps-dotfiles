@@ -33,8 +33,8 @@ PanelWindow {
 
     readonly property string repoRoot: (root.hub && root.hub.repoRoot)
         ? root.hub.repoRoot
-        : (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice"))
-    readonly property string ipcScript: root.repoRoot + "/scripts/gps-ipc"
+        : (Quickshell.env("GPS_ROOT") || "")
+    readonly property string ipcScript: root.repoRoot ? (root.repoRoot + "/scripts/gps-ipc") : "gps-ipc"
 
     readonly property string notifHistoryPath: {
         const stateHome = Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")

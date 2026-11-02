@@ -20,9 +20,9 @@ Item {
     width: 0
     height: 0
 
-    readonly property string projectPath: Quickshell.env("GPS_DESKTOP_ROOT")
-        || (Quickshell.env("HOME") + "/Projects/my-rice")
-    readonly property string helperPath: root.projectPath + "/scripts/media-hub-downloads.py"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT")
+        || Quickshell.env("GPS_DESKTOP_ROOT") || ""
+    readonly property string helperPath: root.projectPath ? (root.projectPath + "/scripts/media-hub-downloads.py") : "media-hub-downloads.py"
     readonly property string soundBin: root.projectPath + "/scripts/gps-sound"
 
     property bool checkingStatus: false

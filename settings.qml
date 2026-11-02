@@ -2,7 +2,7 @@
 //  Settings Hub — single-file QuickShell settings window for Hyprland
 //  Target: QuickShell 0.3.x · Qt 6.x · Hyprland 0.5x (hyprlang AND Lua configs)
 //
-//  Run standalone :  qs -p ~/Projects/my-rice/settings.qml
+//  Run standalone :  qs -p <repo>/settings.qml
 //  Toggle via IPC :  qs -p <path> ipc call settings toggle      (or: open network)
 //  Embed in shell :  change `ShellRoot` to `Scope` and drop it into your shell.qml
 //
@@ -35,6 +35,7 @@ ShellRoot {
     readonly property string home: Quickshell.env("HOME")
     readonly property string storePath: home + "/.config/quickshell/rice-settings.json"
     readonly property string hyprFile: home + "/.config/hypr/rice-settings." + (luaMode ? "lua" : "conf")
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || ""
 
     property bool shown: true
     property int page: 0
@@ -333,7 +334,7 @@ echo "gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total
 command -v envycontrol >/dev/null && echo "gpumode=$(envycontrol --query 2>/dev/null)"
 command -v supergfxctl >/dev/null && echo "gpumode=$(supergfxctl -g 2>/dev/null)"
 for t in hyprctl nvidia-smi brightnessctl nmcli powerprofilesctl curl ollama hypridle hyprsunset sensors wl-copy notify-send jq; do command -v $t >/dev/null && echo "has_$t=1"; done
-{ [ -x "$HOME/Projects/my-rice/scripts/gps-idle" ] && "$HOME/Projects/my-rice/scripts/gps-idle" is-running || pgrep -x hypridle >/dev/null; } && echo "run_hypridle=1"; pgrep -x hyprsunset >/dev/null && echo "run_hyprsunset=1"
+{ command -v gps-idle >/dev/null 2>&1 && gps-idle is-running || { [ -n "$GPS_ROOT" ] && [ -x "$GPS_ROOT/scripts/gps-idle" ] && "$GPS_ROOT/scripts/gps-idle" is-running; } || pgrep -x hypridle >/dev/null; } && echo "run_hypridle=1"; pgrep -x hyprsunset >/dev/null && echo "run_hyprsunset=1"
 [ -f "$HOME/.config/hypr/hyprland.lua" ] && echo "lua=1"
 [ -n "$ANTHROPIC_API_KEY" ] && echo "key_anthropic=1"; [ -n "$OPENAI_API_KEY" ] && echo "key_openai=1"; [ -n "$OPENROUTER_API_KEY" ] && echo "key_openrouter=1"
 `
@@ -459,7 +460,7 @@ nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null | sed 's/^/net
 
     // ───────────────────── AI / local inference ─────────────────────
     readonly property string aiEndpoint: store.ai.endpoint || "http://127.0.0.1:11434"
-    readonly property string shellPath: home + "/Projects/my-rice/shell.qml"
+    readonly property string shellPath: root.repoRoot ? (root.repoRoot + "/shell.qml") : ""
     readonly property string modelsDir: home + "/.ollama/models"
     property string pullReq: ""
     property string aiMsg: ""
@@ -1445,13 +1446,13 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
     // saved settings win over config defaults, with a timestamped backup.
     function addInclude() {
         const f = luaMode ? home + "/.config/hypr/hyprland.lua" : home + "/.config/hypr/hyprland.conf"
-        sh('f="$1"; [ -f "$f" ] || touch "$f"; cp -a "$f" "$f.bak-include-$(date +%Y%m%d-%H%M%S)" && printf "\\n# my-rice settings (added by Settings Hub)\\n%s\\n" "$2" >> "$f"', [f, includeLine])
+        sh('f="$1"; [ -f "$f" ] || touch "$f"; cp -a "$f" "$f.bak-include-$(date +%Y%m%d-%H%M%S)" && printf "\\n# GPS settings (added by Settings Hub)\\n%s\\n" "$2" >> "$f"', [f, includeLine])
         after(700, cmdSys.go)
     }
     function daemon(name, on) {
         const s = Object.assign({}, sys); s["run_" + name] = on ? "1" : "0"; sys = s
         if (name === "hypridle") {
-            sh(on ? 'command -v gps-idle >/dev/null && gps-idle start || "$HOME/Projects/my-rice/scripts/gps-idle" start' : 'command -v gps-idle >/dev/null && gps-idle stop || "$HOME/Projects/my-rice/scripts/gps-idle" stop')
+            sh(on ? 'command -v gps-idle >/dev/null 2>&1 && gps-idle start || { [ -n "$GPS_ROOT" ] && "$GPS_ROOT/scripts/gps-idle" start; }' : 'command -v gps-idle >/dev/null 2>&1 && gps-idle stop || { [ -n "$GPS_ROOT" ] && "$GPS_ROOT/scripts/gps-idle" stop; }')
         } else {
             sh(on ? 'setsid "$1" >/dev/null 2>&1 &' : 'pkill -x "$1"', [name])
         }

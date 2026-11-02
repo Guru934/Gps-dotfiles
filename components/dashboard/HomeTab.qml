@@ -20,7 +20,7 @@ Item {
     property bool isOpen: false
     property var hub: null
 
-    readonly property string projectPath: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
 
     // ----------------------------------------------------------------
     // Night Light state (synchronized with Island via IPC)

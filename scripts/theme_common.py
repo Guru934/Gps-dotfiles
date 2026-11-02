@@ -41,20 +41,75 @@ REQUIRED_PALETTE_KEYS = [
 ]
 
 
+def is_path_in_repo(path: Path | str) -> bool:
+    """Determine whether path or its resolved target resides within the GPS repository."""
+    try:
+        p = Path(path).expanduser()
+        roots = [Path(__file__).resolve().parent.parent]
+        gps_root = os.environ.get("GPS_ROOT")
+        if gps_root and os.path.isdir(gps_root):
+            roots.append(Path(gps_root).resolve())
+
+        # Check path itself
+        try:
+            abs_p = p.absolute()
+            for r in roots:
+                try:
+                    abs_p.relative_to(r)
+                    return True
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+
+        # Check resolved target
+        try:
+            resolved = p.resolve()
+            for r in roots:
+                try:
+                    resolved.relative_to(r)
+                    return True
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return False
+
+
 def atomic_write(target_path: Path | str, content: str) -> None:
-    """Atomically write text content to target_path using a temporary file and atomic replace."""
-    target = Path(target_path).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
+    """Atomically write text content to target_path using a temporary file and atomic replace.
+
+    Guarantees that repository files are never modified: if target_path is a symlink
+    resolving into the repository, the write replaces the symlink in-place in user-space
+    so Git-tracked repository files remain immutable.
+    """
+    target = Path(target_path).expanduser()
+    if not target.is_absolute():
+        target = target.absolute()
+
+    # If target resolves into the repository, write to target itself in user space,
+    # breaking the symlink and leaving the repository file unmodified.
+    try:
+        if is_path_in_repo(target) or is_path_in_repo(target.resolve()):
+            write_target = target
+        else:
+            write_target = target.resolve()
+    except Exception:
+        write_target = target
+
+    write_target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_file = tempfile.mkstemp(
-        dir=str(target.parent),
-        prefix=f".{target.name}.tmp-",
+        dir=str(write_target.parent),
+        prefix=f".{write_target.name}.tmp-",
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_file, target)
+        os.replace(tmp_file, write_target)
     except Exception:
         if os.path.exists(tmp_file):
             try:
@@ -65,10 +120,26 @@ def atomic_write(target_path: Path | str, content: str) -> None:
 
 
 def backup_file_once(target_path: Path | str) -> Path | None:
-    """Create a .bak copy of target_path if it exists and backup doesn't already exist."""
-    path = Path(target_path).expanduser().resolve()
-    if not path.is_file():
+    """Create a .bak copy of target_path if it exists and backup doesn't already exist.
+
+    Never creates .bak files inside the repository.
+    """
+    path = Path(target_path).expanduser()
+    if not path.is_absolute():
+        path = path.absolute()
+
+    if not path.is_file() and not path.is_symlink():
         return None
+
+    # Never create backup files inside the repository
+    if is_path_in_repo(path):
+        return None
+    try:
+        if is_path_in_repo(path.resolve()):
+            return None
+    except Exception:
+        pass
+
     backup = path.with_name(f"{path.name}.bak")
     if not backup.exists():
         shutil.copy2(path, backup)

@@ -20,8 +20,8 @@ PanelWindow {
     property var hub: null
     property bool isOpen: false
 
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
-    readonly property string bridgePath: projectPath + "/scripts/ai-chat.py"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
+    readonly property string bridgePath: projectPath ? (projectPath + "/scripts/ai-chat.py") : "ai-chat.py"
     readonly property string storePath: Quickshell.env("HOME") + "/.config/quickshell/rice-settings.json"
     readonly property int maxHistoryChars: 20000
     readonly property string defaultPersona: "You are Aetheric Neural Chat, the local assistant built into the user's Linux desktop shell. Be concise, technical and honest. Never pretend to run commands."

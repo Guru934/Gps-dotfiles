@@ -18,8 +18,8 @@ Singleton {
         const cache = Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")
         return cache + "/gps/media/media-hub-nowplaying.json"
     }
-    readonly property string projectPath: Quickshell.env("GPS_DESKTOP_ROOT")
-        || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string projectPath: Quickshell.env("GPS_ROOT")
+        || Quickshell.env("GPS_DESKTOP_ROOT") || ""
     readonly property var localCandidate: root.localPlayer && root.localPlayer.trackTitle
         ? root.localPlayer
         : (root.sharedLocalState ? sharedLocalPlayer : null)

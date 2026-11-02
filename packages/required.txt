@@ -1,0 +1,40 @@
+# ==============================================================================
+# GPS Package Manifest — Core Required Dependencies
+# ==============================================================================
+#
+# Manifest Syntax:
+#   <package-name> [# <explanation>]
+#   <package-name> [<category>] [# <explanation>]
+#
+# Comments & Blank Lines:
+#   - Lines starting with '#' (with optional leading whitespace) are ignored.
+#   - Inline comments start with '#' and extend to the end of the line.
+#   - Blank lines and whitespace-only lines are ignored.
+#
+# Source Classification:
+#   - Official repository packages (Arch Linux core/extra or CachyOS repos).
+#   - Verified via 'pacman -Si <package>'.
+#
+# Dependency Category:
+#   - Core required: Without these dependencies, the primary GPS desktop
+#     session (Hyprland compositor + Quickshell shell + core IPC) cannot
+#     function correctly.
+#
+# Verification:
+#   - Installed check: 'pacman -Q <package>'
+#   - Availability check: 'pacman -Si <package>'
+# ==============================================================================
+
+hyprland # Core Wayland compositor and window manager orchestrating the desktop session
+quickshell # Primary desktop shell framework executing QML/C++ UI (shell.qml, island, settings)
+qt6-wayland # Qt6 Wayland platform plugin required for Quickshell GUI surfaces
+pipewire # Core multimedia server and pw-play audio output for the sound engine
+wireplumber # Modular PipeWire session manager providing wpctl volume and sink routing
+xdg-desktop-portal # Core desktop portal service for screen sharing, open URI, and file dialogs
+xdg-desktop-portal-hyprland # Hyprland portal backend for screen capture and display management
+xdg-desktop-portal-gtk # GTK portal backend providing file dialogs and desktop picker fallback
+python # Execution runtime for wallpaper dynamic theming, audio IPC, sounds, and watchers
+fish # Shell interpreter for run-gps.fish startup orchestrator and wallpaper scripts
+bash # POSIX shell runtime for session scripts (gps-idle, gps-lock, gps-shot, gps-ipc)
+nodejs # JavaScript runtime engine for gps-clipboard and ClipboardService backend
+noto-fonts # Standard high-legibility UI sans-serif fallback font

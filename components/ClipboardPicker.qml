@@ -21,9 +21,9 @@ PanelWindow {
 
     readonly property string repoRoot: (root.hub && root.hub.repoRoot)
         ? root.hub.repoRoot
-        : (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice"))
-    readonly property string clipScript: root.repoRoot + "/scripts/gps-clipboard"
-    readonly property string ipcScript: root.repoRoot + "/scripts/gps-ipc"
+        : (Quickshell.env("GPS_ROOT") || "")
+    readonly property string clipScript: root.repoRoot ? (root.repoRoot + "/scripts/gps-clipboard") : "gps-clipboard"
+    readonly property string ipcScript: root.repoRoot ? (root.repoRoot + "/scripts/gps-ipc") : "gps-ipc"
 
     function open() {
         root.confirmWipe = false

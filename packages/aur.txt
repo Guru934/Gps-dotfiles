@@ -1,0 +1,29 @@
+# ==============================================================================
+# GPS Package Manifest — Arch User Repository (AUR) Dependencies
+# ==============================================================================
+#
+# Manifest Syntax:
+#   <package-name> [<requirement>] [# <explanation>]
+#
+# Comments & Blank Lines:
+#   - Lines starting with '#' (with optional leading whitespace) are ignored.
+#   - Inline comments start with '#' and extend to the end of the line.
+#   - Blank lines and whitespace-only lines are ignored.
+#
+# Source Classification:
+#   - Arch User Repository (AUR) packages.
+#   - Queried and verified via 'paru -Si <package>' when paru is available.
+#
+# Requirement Level:
+#   - [required]: AUR dependency essential for core GPS functionality.
+#   - [optional]: AUR dependency that provides optional enhancements.
+#
+# Verification:
+#   - Installed check: 'pacman -Q <package>'
+#   - Availability check: 'paru -Si <package>'
+# ==============================================================================
+
+ttf-plus-jakarta-sans [optional] # Preferred brand typeface for GPS UI typography (Noto Sans fallback)
+awatcher-bundle [optional] # Screen-time tracking daemon with bundled web UI for ScreenTime card
+ani-cli [optional] # Interactive anime streaming CLI for Media Hub Tools
+tide-island [optional] # Alternative dynamic island implementation for Quickshell

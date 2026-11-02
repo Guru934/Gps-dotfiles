@@ -71,3 +71,9 @@
     - Zero duplicate processes or orphan layers verified with Hyprland 0.57
     - 100% pass across Python test suite (340 tests), Node test suite (74 tests), qmllint, luac, shell/fish checks, git diff --check
     - Real-session verification, panel toggle soak tests, automated regression runs
+
+- [x] **PK1 — GPS Packaging, Installation & Recovery**
+  - [x] **K1 — Location-Independent Architecture**: Replaced hardcoded repository paths with dynamic resolution (`$GPS_ROOT`), relative imports, and symlink derivation (`tests/test_location_independence.py`).
+  - [x] **K2 — Declarative Package Manifests & Inspector**: Formalized `packages/required.txt`, `packages/optional.txt`, `packages/aur.txt`, and implemented read-only `scripts/gps-deps` (`tests/test_gps_deps.py`).
+  - [x] **K3 — Safe Idempotent Installer & Recovery**: Built `install.sh` and `scripts/installer.py` featuring advisory file lock, durable transaction journal, pre-apply backup with SHA-256 verification, atomic symlinks, template preservation, signal interception rollback, and safe restartable uninstaller (`tests/test_installer.py`).
+  - [x] **K4 — Packaging Documentation**: Comprehensive canonical manual (`docs/installation.md`), expanded manifest guide (`packages/README.md`), navigable root reference (`README.md`), troubleshooting matrix, and clean-account trial instructions.

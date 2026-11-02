@@ -5,6 +5,10 @@
 # ============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export GPS_ROOT="${GPS_ROOT:-$REPO_DIR}"
+
 # 1. Prevent duplicate lock instances safely
 if pidof hyprlock >/dev/null 2>&1; then
     exit 0

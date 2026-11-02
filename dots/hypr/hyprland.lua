@@ -35,7 +35,22 @@ hl.monitor({
 ---------------------
 
 local home = os.getenv("HOME")
-local repo = os.getenv("GPS_ROOT") or (home .. "/Projects/my-rice")
+local repo = os.getenv("GPS_ROOT")
+if not repo or repo == "" then
+    -- Derive root from the canonical target of ~/.config/hypr/hyprland.lua symlink
+    local handle = io.popen("readlink -f " .. home .. "/.config/hypr/hyprland.lua 2>/dev/null")
+    if handle then
+        local target = handle:read("*l")
+        handle:close()
+        if target and target ~= "" and target:find("/dots/hypr/hyprland%.lua$") then
+            repo = target:gsub("/dots/hypr/hyprland%.lua$", "")
+        end
+    end
+end
+if not repo or repo == "" then
+    io.stderr:write("[GPS ERROR] GPS_ROOT is not set and could not be resolved from symlink.\n")
+    repo = ""
+end
 
 -- Set programs that you use
 local terminal    = "kitty"

@@ -7,8 +7,8 @@ import Quickshell.Io
 Singleton {
     id: root
 
-    readonly property string projectPath: Quickshell.env("GPS_DESKTOP_ROOT")
-        || (Quickshell.env("HOME") + "/Projects/my-rice")
+    readonly property string projectPath: Quickshell.env("GPS_ROOT")
+        || Quickshell.env("GPS_DESKTOP_ROOT") || ""
     readonly property string scriptsPath: root.projectPath + "/scripts"
 
     property bool loading: false

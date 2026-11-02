@@ -8,8 +8,8 @@ Item {
     width: 0
     height: 0
 
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
-    readonly property string helperPath: root.projectPath + "/scripts/media-hub-tools.py"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
+    readonly property string helperPath: root.projectPath ? (root.projectPath + "/scripts/media-hub-tools.py") : "media-hub-tools.py"
 
     property bool checkingStatus: false
     property bool busy: false

@@ -28,6 +28,7 @@ Item {
         core.register(key, st)
         triggerProbe()
     }
+    readonly property string repoRoot: Quickshell.env("GPS_ROOT") || (core && core.repoRoot ? core.repoRoot : "")
 
     // ───────────── live state (populated only while active) ─────────────
     property bool localExpanded: false
@@ -303,9 +304,9 @@ Item {
             "command -v hyprsunset >/dev/null 2>&1 && echo 'has_sunset=1' || echo 'has_sunset=0'; " +
             "pgrep -x hyprsunset >/dev/null 2>&1 && echo 'sunset_run=1' || echo 'sunset_run=0'; " +
             "echo \"sunset_k=$(ps -C hyprsunset -o args= 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"-t\" && $(i+1)~ /^[0-9]+$/){print $(i+1); exit}}')\"; " +
-            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-idle\" ]; then \"$HOME/Projects/my-rice/scripts/gps-idle\" env-status; elif command -v gps-idle >/dev/null 2>&1; then gps-idle env-status; else echo 'has_idle=0'; echo 'idle_run=0'; echo 'idle_t=300'; fi; " +
+            "if command -v gps-idle >/dev/null 2>&1; then gps-idle env-status; elif [ -n \"$GPS_ROOT\" ] && [ -x \"$GPS_ROOT/scripts/gps-idle\" ]; then \"$GPS_ROOT/scripts/gps-idle\" env-status; else echo 'has_idle=0'; echo 'idle_run=0'; echo 'idle_t=300'; fi; " +
             "pgrep -f \"systemd-inhibit.*sleep infinity\" >/dev/null 2>&1 && echo 'keepawake_run=1' || echo 'keepawake_run=0'; " +
-            "if [ -x \"$HOME/Projects/my-rice/scripts/gps-gamemode\" ]; then \"$HOME/Projects/my-rice/scripts/gps-gamemode\" status 2>/dev/null; else echo 'active=0'; fi; " +
+            "if command -v gps-gamemode >/dev/null 2>&1; then gps-gamemode status 2>/dev/null; elif [ -n \"$GPS_ROOT\" ] && [ -x \"$GPS_ROOT/scripts/gps-gamemode\" ]; then \"$GPS_ROOT/scripts/gps-gamemode\" status 2>/dev/null; else echo 'active=0'; fi; " +
             "prof=''; ppd_ok=0; if command -v powerprofilesctl >/dev/null 2>&1; then prof=$(powerprofilesctl get 2>/dev/null); [ -n \"$prof\" ] && ppd_ok=1; fi; echo \"has_ppd=$ppd_ok\"; " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null); " +
             "[ -z \"$prof\" ] && prof=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null); " +
@@ -317,7 +318,7 @@ Item {
             "command -v wlogout >/dev/null 2>&1 && echo 'has_wlogout=1' || echo 'has_wlogout=0'; " +
             "command -v systemctl >/dev/null 2>&1 && echo 'has_systemctl=1' || echo 'has_systemctl=0'; " +
             "if [ -f \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" ]; then grep -q '\"recording\": *true' \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" && echo 'is_recording=1' || echo 'is_recording=0'; else echo 'is_recording=0'; fi; " +
-            "if command -v gps-lock >/dev/null 2>&1 || [ -x \"$HOME/Projects/my-rice/scripts/gps-lock\" ] || command -v hyprlock >/dev/null 2>&1 || command -v loginctl >/dev/null 2>&1; then echo 'has_locker=1'; else echo 'has_locker=0'; fi"
+            "if command -v gps-lock >/dev/null 2>&1 || { [ -n \"$GPS_ROOT\" ] && [ -x \"$GPS_ROOT/scripts/gps-lock\" ]; } || command -v hyprlock >/dev/null 2>&1 || command -v loginctl >/dev/null 2>&1; then echo 'has_locker=1'; else echo 'has_locker=0'; fi"
         ]
         stdout: StdioCollector {
             onStreamFinished: {
@@ -367,7 +368,7 @@ Item {
 
     Process {
         id: sinksProc
-        command: ["python3", (Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")) + "/scripts/audio-sinks.py"]
+        command: ["python3", (st.repoRoot ? (st.repoRoot + "/scripts/audio-sinks.py") : "audio-sinks.py")]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -394,8 +395,8 @@ Item {
 
     function selectSink(id) {
         if (!id || sinkSwitchProc.running) return
-        const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-        sinkSwitchProc.command = ["python3", rootPath + "/scripts/audio-sinks.py", "--switch", String(id)]
+        const rootPath = st.repoRoot
+        sinkSwitchProc.command = ["python3", (rootPath ? (rootPath + "/scripts/audio-sinks.py") : "audio-sinks.py"), "--switch", String(id)]
         sinkSwitchProc.running = true
     }
 
@@ -558,9 +559,9 @@ Item {
         const next = !idleDaemonOn
         idleDaemonOn = next
         if (next)
-            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle start || "$HOME/Projects/my-rice/scripts/gps-idle" start', [], 400)
+            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle start || { [ -n "$GPS_ROOT" ] && "$GPS_ROOT/scripts/gps-idle" start; }', [], 400)
         else
-            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle stop || "$HOME/Projects/my-rice/scripts/gps-idle" stop', [], 350)
+            runCmd('command -v gps-idle >/dev/null 2>&1 && gps-idle stop || { [ -n "$GPS_ROOT" ] && "$GPS_ROOT/scripts/gps-idle" stop; }', [], 350)
     }
 
     function toggleKeepAwake() {
@@ -592,7 +593,7 @@ Item {
     function toggleGameMode() {
         const next = !gameModeOn
         gameModeOn = next
-        runCmd('"$HOME/Projects/my-rice/scripts/gps-gamemode" toggle', [], 400)
+        runCmd('command -v gps-gamemode >/dev/null 2>&1 && gps-gamemode toggle || { [ -n "$GPS_ROOT" ] && "$GPS_ROOT/scripts/gps-gamemode" toggle; }', [], 400)
     }
 
     function cyclePowerProfile() {
@@ -607,7 +608,7 @@ Item {
     }
 
     function openSettings(section) {
-        const settingsPath = Quickshell.env("HOME") + "/Projects/my-rice/settings.qml"
+        const settingsPath = st.repoRoot ? (st.repoRoot + "/settings.qml") : "settings.qml"
         if (section && section !== "") {
             runCmd('quickshell ipc -p "$1" call settings open "$2" >/dev/null 2>&1 || setsid quickshell -p "$1" >/dev/null 2>&1 &', [settingsPath, section], 200)
         } else {
@@ -621,8 +622,8 @@ Item {
         if (core && typeof core.openMediaHub === "function") {
             core.openMediaHub()
         } else {
-            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "mediahub", "toggle"])
+            const rootPath = st.repoRoot
+            Quickshell.execDetached([(rootPath ? (rootPath + "/scripts/gps-ipc") : "gps-ipc"), "mediahub", "toggle"])
         }
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")
@@ -632,8 +633,8 @@ Item {
         if (core && typeof core.openToolbox === "function") {
             core.openToolbox()
         } else {
-            const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-            Quickshell.execDetached([rootPath + "/scripts/gps-ipc", "toolbox", "toggle"])
+            const rootPath = st.repoRoot
+            Quickshell.execDetached([(rootPath ? (rootPath + "/scripts/gps-ipc") : "gps-ipc"), "toolbox", "toggle"])
         }
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")
@@ -657,7 +658,7 @@ Item {
         if (!hasLocker) return
         localExpanded = false
         if (typeof core.setControl === "function") core.setControl("close")
-        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null 2>&1 && exec gps-lock || exec \"$HOME/Projects/my-rice/scripts/gps-lock\""])
+        Quickshell.execDetached(["sh", "-c", "command -v gps-lock >/dev/null 2>&1 && exec gps-lock || { [ -n \"$GPS_ROOT\" ] && exec \"$GPS_ROOT/scripts/gps-lock\"; }"])
     }
 
     function suspendSystem() {
@@ -1192,8 +1193,8 @@ Item {
             tileInteractable: true
             tooltipText: "Take region screenshot (Print)"
             onToggled: {
-                const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-                Quickshell.execDetached([rootPath + "/scripts/gps-shot", "region"])
+                const rootPath = st.repoRoot
+                Quickshell.execDetached([(rootPath ? (rootPath + "/scripts/gps-shot") : "gps-shot"), "region"])
                 localExpanded = false
                 if (typeof core.setControl === "function") core.setControl("close")
             }
@@ -1212,8 +1213,8 @@ Item {
             tileInteractable: true
             tooltipText: st.isRecording ? "Stop screen recording" : "Start screen recording"
             onToggled: {
-                const rootPath = Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
-                Quickshell.execDetached([rootPath + "/scripts/gps-record", "toggle"])
+                const rootPath = st.repoRoot
+                Quickshell.execDetached([(rootPath ? (rootPath + "/scripts/gps-record") : "gps-record"), "toggle"])
                 st.scheduleProbe(350)
             }
         }

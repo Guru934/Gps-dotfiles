@@ -11,9 +11,9 @@ Item {
     width: 0
     height: 0
 
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
-    readonly property string helperPath: root.projectPath + "/scripts/media-hub-wallhaven.py"
-    readonly property string themeScriptPath: root.projectPath + "/scripts/extract-theme.py"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
+    readonly property string helperPath: root.projectPath ? (root.projectPath + "/scripts/media-hub-wallhaven.py") : "media-hub-wallhaven.py"
+    readonly property string themeScriptPath: root.projectPath ? (root.projectPath + "/scripts/extract-theme.py") : "extract-theme.py"
 
     property bool searching: false
     property bool applying: false

@@ -12,8 +12,8 @@ Item {
     width: 0
     height: 0
 
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
-    readonly property string helperPath: root.projectPath + "/scripts/media-hub-anilist.py"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
+    readonly property string helperPath: root.projectPath ? (root.projectPath + "/scripts/media-hub-anilist.py") : "media-hub-anilist.py"
 
     property bool searching: false
     property var pendingRequest: null
