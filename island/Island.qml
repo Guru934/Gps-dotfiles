@@ -1335,11 +1335,11 @@ Scope {
             return JSON.stringify({ ok: true, externalInteraction: root.externalInteraction })
         }
         function copied(kind: string, preview: string): string {
-            root.flashCopied(kind, preview)
+            root.queueClipIpcCheck(kind, preview)
             return JSON.stringify({ ok: true })
         }
         function clip() {
-            root.flashCopied("text", root.clipText)
+            root.queueClipIpcCheck("text", root.clipText)
         }
         function clipboard(action: string) {
             if (action === "close" || action === "off") {
@@ -1347,7 +1347,53 @@ Scope {
                 root.clipOn = false
                 if (root.debugMode === "clip") root.debugMode = ""
             } else {
-                root.flashCopied("text", root.clipText)
+                root.queueClipIpcCheck("text", root.clipText)
+            }
+        }
+    }
+
+    property var clipIpcQueue: []
+    function queueClipIpcCheck(kind, preview) {
+        if (!kind && !preview) return
+        if (clipIpcQueue.length >= 5) clipIpcQueue.shift()
+        clipIpcQueue.push({ kind: kind || "text", preview: preview || "" })
+        if (!clipIpcPrivacyProc.running) runNextClipIpcCheck()
+    }
+    function runNextClipIpcCheck() {
+        if (clipIpcQueue.length === 0) return
+        const req = clipIpcQueue.shift()
+        clipIpcPrivacyProc.currentKind = req.kind
+        clipIpcPrivacyProc.currentPreview = req.preview
+        clipIpcPrivacyProc.outputLine = ""
+        clipIpcPrivacyProc.command = [
+            "sh", "-c",
+            'r="${GPS_ROOT:-$HOME/Projects/my-rice}"; priv="$r/scripts/gps-clip-privacy"; ' +
+            'if [ -x "$priv" ]; then exec "$priv" check-ipc "$1" "$2"; elif command -v gps-clip-privacy >/dev/null 2>&1; then exec gps-clip-privacy check-ipc "$1" "$2"; fi; exit 1',
+            "sh", req.kind, req.preview
+        ]
+        clipIpcPrivacyProc.running = true
+    }
+
+    Process {
+        id: clipIpcPrivacyProc
+        running: false
+        property string currentKind: ""
+        property string currentPreview: ""
+        property string outputLine: ""
+        stdout: SplitParser {
+            onRead: line => {
+                clipIpcPrivacyProc.outputLine = line
+            }
+        }
+        onExited: exitCode => {
+            if (exitCode === 0 && outputLine.startsWith("OK\t")) {
+                const parts = outputLine.split("\t")
+                root.flashCopied(parts[1] || currentKind, parts.slice(2).join("\t"))
+            } else {
+                console.warn("[island] Clipboard IPC dropped by privacy policy (sensitive, mismatched, or unavailable)")
+            }
+            if (clipIpcQueue.length > 0) {
+                runNextClipIpcCheck()
             }
         }
     }
@@ -1425,7 +1471,8 @@ Scope {
         if (alertResponseIds.indexOf(a.id) >= 0) return false
         AgentAlertLogic.cancelPermissionReminder(root.agentReminders, a.id)
         if (decision === "deny") root.playSound("agent-error")
-        Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/pet-alert", "respond",
+        const petBin = root.repoRoot ? root.repoRoot + "/scripts/pet-alert" : (Quickshell.env("HOME") + "/.local/bin/pet-alert")
+        Quickshell.execDetached([petBin, "respond",
                                  a.token, decision])
         alertResponseIds = alertResponseIds.concat([a.id])
         return true
@@ -1554,8 +1601,10 @@ Scope {
         id: clipFeed
         running: true
         command: ["wl-paste", "--type", "text", "--watch", "sh", "-c",
-                  't=$(cat); if wl-paste --list-types 2>/dev/null | grep -q "^image/"; then exit 0; fi; ' +
-                  'n=$(printf %s "$t" | wc -m); p=$(printf %s "$t" | tr "\\n\\t" "  " | head -c 300); printf "%s\\t%s\\n" "$n" "$p"']
+                  'r="${GPS_ROOT:-$HOME/Projects/my-rice}"; priv="$r/scripts/gps-clip-privacy"; ' +
+                  'if [ -x "$priv" ]; then "$priv" check-watch || exit 0; elif command -v gps-clip-privacy >/dev/null 2>&1; then gps-clip-privacy check-watch || exit 0; else exit 0; fi; ' +
+                  't=$(cat); ' +
+                  'n=$(printf %s "$t" | wc -m); [ "$n" -gt 0 ] || exit 0; p=$(printf %s "$t" | tr "\\n\\t" "  " | head -c 300); printf "%s\\t%s\\n" "$n" "$p"']
         stdout: SplitParser {
             onRead: line => {
                 if (!root.ready || Date.now() - root.clipStart < 2500) return
@@ -1582,16 +1631,15 @@ Scope {
     Process {
         id: clipImgFeed
         running: true
-        command: ["wl-paste", "--watch", "sh", "-c",
-                  'cat >/dev/null; d="${XDG_RUNTIME_DIR:-/tmp}"; umask 077; ' +
-                  'imgm=$(wl-paste --list-types 2>/dev/null | grep -m1 "^image/"); ' +
-                  '[ -n "$imgm" ] || exit 0; ' +
+        command: ["wl-paste", "--type", "image", "--watch", "sh", "-c",
+                  'r="${GPS_ROOT:-$HOME/Projects/my-rice}"; priv="$r/scripts/gps-clip-privacy"; ' +
+                  'if [ -x "$priv" ]; then "$priv" check-watch || exit 0; elif command -v gps-clip-privacy >/dev/null 2>&1; then gps-clip-privacy check-watch || exit 0; else exit 0; fi; ' +
+                  'd="${XDG_RUNTIME_DIR:-/tmp}"; umask 077; ' +
                   'imgp="$d/island-clip-image"; ' +
                   'tmp=$(mktemp "$d/island-clip-image.XXXXXX") || exit 1; ' +
-                  'if wl-paste --type "$imgm" > "$tmp" 2>/dev/null; then ' +
-                  '  sz=$(wc -c < "$tmp" 2>/dev/null || echo 0); ' +
-                  '  if [ "${sz:-0}" -gt 0 ]; then mv -f "$tmp" "$imgp" && printf "IMG\\t%s\\t%s\\t%s\\n" "$imgm" "$sz" "$imgp"; else rm -f "$tmp"; fi; ' +
-                  'else rm -f "$tmp"; fi']
+                  'cat > "$tmp"; ' +
+                  'sz=$(wc -c < "$tmp" 2>/dev/null || echo 0); ' +
+                  'if [ "${sz:-0}" -gt 0 ]; then mv -f "$tmp" "$imgp" && printf "IMG\\timage/png\\t%s\\t%s\\n" "$sz" "$imgp"; else rm -f "$tmp"; fi']
         stdout: SplitParser {
             onRead: line => {
                 if (!root.ready || Date.now() - root.clipImgStart < 2500) return

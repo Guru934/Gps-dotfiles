@@ -102,6 +102,30 @@ class PetAlertHelperTests(HermeticTestCase):
             self.assertEqual([r["type"] for r in records], ["ask", "ask", "clear"])
             self.assertEqual(records[-1]["id"], "a")
 
+    def test_response_atomic_write_and_stale_cleanup(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            env = dict(os.environ, XDG_RUNTIME_DIR=runtime)
+            resp_dir = Path(runtime) / "pet" / "responses"
+            resp_dir.mkdir(parents=True, exist_ok=True)
+            # Create a stale response file (> 120s old)
+            stale_file = resp_dir / "stale_old.json"
+            stale_file.write_text('{"token":"dummy","decision":"allow"}')
+            old_time = time.time() - 300
+            os.utime(stale_file, (old_time, old_time))
+
+            token = "T" * 32
+            # Write response
+            result = subprocess.run([str(HELPER), "respond", token, "allow"],
+                                    env=env, check=True, capture_output=True, text=True)
+            self.assertEqual(result.stdout, "")
+            # Verify stale file was cleaned up
+            self.assertFalse(stale_file.exists())
+
+            # Read response via wait
+            wait_proc = subprocess.run([str(HELPER), "wait", token, "2"],
+                                       env=env, check=True, capture_output=True, text=True)
+            self.assertEqual(wait_proc.stdout.strip(), "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

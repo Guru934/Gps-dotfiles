@@ -112,8 +112,22 @@ case "$cmd" in
         action="${1:-}"
         shift || true
         if [[ -z "$action" ]]; then
-            echo "Usage: gps-ipc island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
+            echo "Usage: gps-ipc island <show|hide|pin|unpin|status|control|history|focusToggle|nightlight|action> [args...]" >&2
             exit 1
+        fi
+        if [[ "$action" == "copied" ]]; then
+            priv="${REPO_DIR}/scripts/gps-clip-privacy"
+            if [[ -x "$priv" ]]; then
+                if ! "$priv" check-ipc "${1:-text}" "${2:-}"; then
+                    exit 0
+                fi
+            elif command -v gps-clip-privacy >/dev/null 2>&1; then
+                if ! gps-clip-privacy check-ipc "${1:-text}" "${2:-}"; then
+                    exit 0
+                fi
+            else
+                exit 0
+            fi
         fi
         ipath="$(island_target_path)"
         call_qs "$ipath" island "$action" "$@"

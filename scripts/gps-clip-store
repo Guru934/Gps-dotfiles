@@ -21,11 +21,20 @@ if [[ -f "$STATE_DIR/clipboard_settings.json" ]]; then
 fi
 
 # 3. Privacy filter: exclude password manager clipboard entries
-# Standard MIME type used by 1Password, KeepassXC, Bitwarden, etc.
-if command -v wl-paste >/dev/null 2>&1; then
-    if wl-paste --list-types 2>/dev/null | grep -qi "passwordManagerHint"; then
+# Uses shared privacy policy (scripts/gps-clip-privacy check-watch) - fails closed
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GPS_PRIVACY="${SCRIPT_DIR}/gps-clip-privacy"
+if [[ -x "$GPS_PRIVACY" ]]; then
+    if ! "$GPS_PRIVACY" check-watch; then
         exit 0
     fi
+elif command -v gps-clip-privacy >/dev/null 2>&1; then
+    if ! gps-clip-privacy check-watch; then
+        exit 0
+    fi
+else
+    # Fail closed if privacy validator is missing
+    exit 0
 fi
 
 # 4. Enforce 1 MB max entry size (1048576 bytes) & avoid partial/corrupt entries

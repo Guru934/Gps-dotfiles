@@ -517,11 +517,7 @@ PanelWindow {
 
                                 Text {
                                     text: {
-                                        if (modelData.kind === "image") {
-                                            return modelData.imageInfo
-                                                ? modelData.imageInfo.format + " Image (" + modelData.imageInfo.sizeStr + ")"
-                                                : "Image"
-                                        }
+                                        if (modelData.kind === "image") return "Image"
                                         if (modelData.kind === "url") return "Link"
                                         if (modelData.kind === "color") return "Color: " + modelData.preview
                                         if (modelData.kind === "path") return "File Path"
@@ -547,7 +543,15 @@ PanelWindow {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: modelData.preview
+                                text: {
+                                    if (modelData.isImage) {
+                                        if (modelData.imageInfo) {
+                                            return modelData.imageInfo.format + " Image (" + modelData.imageInfo.sizeStr + (modelData.imageInfo.dims ? " · " + modelData.imageInfo.dims : "") + ")"
+                                        }
+                                        return "Image"
+                                    }
+                                    return modelData.preview
+                                }
                                 color: Theme.textMain
                                 font.family: Theme.fontUi
                                 font.pixelSize: 11

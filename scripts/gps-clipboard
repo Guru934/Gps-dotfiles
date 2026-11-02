@@ -95,9 +95,16 @@ function cmdList() {
     const paused = isPaused();
 
     // Check thumbnail presence for image entries
+    ensureDirs();
     merged.forEach(item => {
         if (item.isImage && item.id > 0) {
             const thumbPath = path.join(THUMBS_DIR, `${item.id}.png`);
+            if (!fs.existsSync(thumbPath)) {
+                try {
+                    const out = execFileSync("cliphist", ["decode", String(item.id)], { maxBuffer: 10 * 1024 * 1024 });
+                    fs.writeFileSync(thumbPath, out, { mode: 0o600 });
+                } catch (e) {}
+            }
             if (fs.existsSync(thumbPath)) {
                 item.thumbPath = thumbPath;
             }
@@ -131,7 +138,9 @@ function cmdCopy(idArg) {
         decode.on("close", (code) => {
             if (code === 0 && chunks.length > 0) {
                 const buffer = Buffer.concat(chunks);
-                const copy = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"], detached: true });
+                const isPng = buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+                const copyArgs = isPng ? ["--type", "image/png"] : [];
+                const copy = spawn("wl-copy", copyArgs, { stdio: ["pipe", "ignore", "ignore"], detached: true });
                 copy.stdin.end(buffer, () => {
                     copy.unref();
                     console.log(JSON.stringify({ ok: true, copied: id }));

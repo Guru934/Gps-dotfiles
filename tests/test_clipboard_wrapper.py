@@ -49,6 +49,7 @@ exit 0
         self.mock_wl_paste.chmod(0o755)
 
         self.env = os.environ.copy()
+        self.env["CLIPBOARD_STATE"] = "data"
         self.env["HOME"] = str(self.temp_dir)
         self.env["XDG_STATE_HOME"] = str(self.temp_dir / ".local/state")
         self.env["XDG_RUNTIME_DIR"] = str(self.temp_dir / "run")

@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# gps-clip-privacy — Shared clipboard privacy policy validator for GPS.
+# Reusable across gps-clip-store, Island clipboard watchers, and IPC entry points.
+#
+# Standard MIME type hints used by KeePassXC, 1Password, Bitwarden, etc.
+# Exits 0 if clipboard content is ALLOWED / SAFE.
+# Exits 1 if clipboard content is SENSITIVE / BLOCKED / FAILS VALIDATION.
+set -euo pipefail
+
+CMD="${1:-check}"
+
+is_sensitive_types() {
+    # Match any MIME type containing passwordManagerHint case-insensitively
+    # e.g., x-kde-passwordManagerHint, application/x-passwordManagerHint
+    grep -qi "passwordManagerHint"
+}
+
+is_sensitive_text() {
+    local text="$1"
+    # Reject private keys, tokens, hashes, and hint strings
+    if [[ "$text" =~ (gh[pousr]_[A-Za-z0-9_]{20,}|sk_[a-zA-Z0-9_]{20,}|ey[A-Za-z0-9_-]{20,}\.ey[A-Za-z0-9_-]{20,}|\$2[aby]\$[0-9]{2}\$|-----BEGIN[[:space:]]+[A-Z[:space:]]+PRIVATE[[:space:]]+KEY-----) ]]; then
+        return 0
+    fi
+    if printf '%s\n' "$text" | grep -qi "passwordManagerHint"; then
+        return 0
+    fi
+    return 1
+}
+
+# Watcher CLIPBOARD_STATE evaluation (provided by wl-paste --watch)
+check_watch() {
+    local state="${CLIPBOARD_STATE:-}"
+    case "$state" in
+        data)
+            check_live_mime
+            ;;
+        sensitive|nil|clear|*)
+            return 1
+            ;;
+    esac
+}
+
+# Live MIME inspection (fails closed)
+check_live_mime() {
+    # Missing wl-paste: reject (exit 1)
+    if ! command -v wl-paste >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Nonzero wl-paste --list-types exit: reject (exit 1)
+    local types
+    if ! types=$(wl-paste --list-types </dev/null 2>/dev/null); then
+        return 1
+    fi
+
+    # Empty or unavailable MIME metadata: reject (exit 1)
+    if [[ -z "${types//[[:space:]]/}" ]]; then
+        return 1
+    fi
+
+    # Password manager hint: reject (exit 1)
+    if printf '%s\n' "$types" | is_sensitive_types; then
+        return 1
+    fi
+
+    return 0
+}
+
+check_allowed() {
+    # If explicit types are passed as arguments, check them
+    if [[ "$#" -gt 0 ]]; then
+        if printf '%s\n' "$@" | is_sensitive_types; then
+            return 1
+        fi
+        return 0
+    fi
+
+    check_live_mime
+}
+
+check_types() {
+    if [[ "$#" -gt 0 ]]; then
+        if printf '%s\n' "$@" | is_sensitive_types; then
+            return 1
+        fi
+        return 0
+    else
+        local input
+        input=$(cat)
+        if [[ -z "${input//[[:space:]]/}" ]]; then
+            return 1
+        fi
+        if printf '%s\n' "$input" | is_sensitive_types; then
+            return 1
+        fi
+        return 0
+    fi
+}
+
+check_ipc() {
+    local kind="${1:-text}"
+    local preview="${2:-}"
+    local max_len=300
+
+    # 1. Preview payload must not exceed validator inspection limit
+    if [[ ${#preview} -gt $max_len ]]; then
+        return 1
+    fi
+
+    # 2. Payload itself must not contain sensitive tokens/keys
+    if is_sensitive_text "$preview"; then
+        return 1
+    fi
+
+    # 3. Live clipboard MIME inspection must succeed and be non-sensitive
+    if ! check_live_mime; then
+        return 1
+    fi
+
+    # 4. Payload must not be unrelated to active clipboard content
+    if [[ "$kind" == "image" ]]; then
+        local types
+        types=$(wl-paste --list-types </dev/null 2>/dev/null || true)
+        if ! printf '%s\n' "$types" | grep -q "^image/"; then
+            return 1
+        fi
+    else
+        # For text payloads: if preview is provided, verify it against actual clipboard text
+        if [[ -n "$preview" ]]; then
+            local clip_head
+            clip_head=$(wl-paste --type text </dev/null 2>/dev/null | head -c 500 || true)
+            # Normalize whitespace for comparison
+            local norm_preview
+            norm_preview=$(printf '%s' "$preview" | tr '\n\t' '  ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            local norm_clip
+            norm_clip=$(printf '%s' "$clip_head" | tr '\n\t' '  ')
+            if [[ -n "$norm_preview" && "$norm_clip" != *"$norm_preview"* ]]; then
+                return 1
+            fi
+        fi
+    fi
+
+    printf "OK\t%s\t%s\n" "$kind" "$preview"
+    return 0
+}
+
+case "$CMD" in
+    check-watch)
+        shift || true
+        if check_watch; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    check|is-allowed)
+        shift || true
+        if check_allowed "$@"; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    is-sensitive)
+        shift || true
+        if check_allowed "$@"; then
+            exit 1
+        else
+            exit 0
+        fi
+        ;;
+    check-types)
+        shift || true
+        if check_types "$@"; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    check-ipc)
+        shift || true
+        if check_ipc "$@"; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+    check-payload)
+        shift || true
+        if is_sensitive_text "${1:-}"; then
+            exit 1
+        else
+            exit 0
+        fi
+        ;;
+    *)
+        if check_allowed "$@"; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+esac
