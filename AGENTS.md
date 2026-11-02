@@ -44,14 +44,15 @@ This document provides the authoritative instruction system for all AI coding ag
 
 ## Mandatory Safety Rules
 
-1. **Account Isolation**: Never modify the `guru` account or system configuration. Keep GPS development inside the `rice` account.
+1. **Account Isolation**: Never modify the `guru` account or system configuration without explicit migration authorization. Keep GPS development inside the `rice` account.
 
 2. **Worktree Management**: Use a dedicated Git worktree for independent tasks. Never let two agents edit the same worktree simultaneously.
 
 3. **Git Operations**: 
    - Never overwrite uncommitted changes
    - Never run destructive Git operations on changes you did not create
-   - Never push to GitHub
+   - Never push to GitHub by default; an explicit owner authorization for a named release permits that release
+   - Never force-push
 
 4. **Process Management**: Never kill processes you did not start. Never automatically restart the real desktop session.
 
