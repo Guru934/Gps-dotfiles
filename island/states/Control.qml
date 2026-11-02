@@ -22,7 +22,10 @@ Item {
     opacity: core.mode === key ? 1 : 0
     visible: opacity > 0.01
     Behavior on opacity { NumberAnimation { duration: 160 } }
-    Component.onCompleted: core.register(key, st)
+    Component.onCompleted: {
+        core.register(key, st)
+        triggerProbe()
+    }
 
     // ───────────── live state (populated only while active) ─────────────
     property bool localExpanded: false
@@ -272,15 +275,13 @@ Item {
 
     // ───────────── active-only polling & commands ─────────────
     function triggerProbe() {
-        if (active && !sysProbe.running) sysProbe.running = true
+        if (!sysProbe.running) sysProbe.running = true
     }
     function scheduleProbe(ms) {
-        if (!active) return
         probeDelay.interval = ms || 350
         probeDelay.restart()
     }
     function runCmd(script, args, delayMs) {
-        if (!active) return
         Quickshell.execDetached(["sh", "-c", script, "sh"].concat(args || []))
         scheduleProbe(delayMs || 350)
     }
@@ -325,7 +326,6 @@ Item {
         ]
         stdout: StdioCollector {
             onStreamFinished: {
-                if (!st.active) return
                 const map = {}
                 for (const line of text.split("\n")) {
                     const idx = line.indexOf("=")
@@ -502,7 +502,7 @@ Item {
         interval: 350
         repeat: false
         running: false
-        onTriggered: if (st.active) st.triggerProbe()
+        onTriggered: st.triggerProbe()
     }
 
     Timer {
@@ -536,7 +536,7 @@ Item {
     }
 
     function toggleNightLight() {
-        if (!hasSunset) return
+        if (!hasSunset) return false
         const next = !nightLightOn
         nightLightOn = next
         if (next) {
@@ -546,16 +546,18 @@ Item {
             nightKelvin = 0
             runCmd('pkill -x hyprsunset >/dev/null 2>&1', [], 350)
         }
+        return true
     }
 
     function cycleNightKelvin() {
-        if (!hasSunset) return
+        if (!hasSunset) return false
         const idx = kelvinSteps.indexOf(targetKelvin)
         const nextK = kelvinSteps[(idx + 1) % kelvinSteps.length]
         targetKelvin = nextK
         nightLightOn = true
         nightKelvin = nextK
         runCmd('pkill -x hyprsunset >/dev/null 2>&1; setsid hyprsunset -t "$1" >/dev/null 2>&1 &', [String(nextK)], 400)
+        return true
     }
 
     function toggleIdleLock() {

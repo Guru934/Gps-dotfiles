@@ -303,11 +303,19 @@ case "$cmd" in
         exec "$REPO_DIR/scripts/gps-doctor" "$@"
         ;;
 
+    nightlight|night-light|sunset)
+        action="${1:-status}"
+        shift || true
+        ipath="$(island_target_path)"
+        call_qs "$ipath" island nightlight "$action" "$@"
+        ;;
+
     *)
-        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|record|shot|picker|check|status|doctor|health> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|clipboard|mediahub|toolbox|pet|rail|notify|record|shot|picker|nightlight|check|status|doctor|health> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
-        echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|action> [args...]" >&2
+        echo "  island <show|hide|pin|unpin|status|control|history|focusToggle|nightlight|action> [args...]" >&2
         echo "  notify <history|clear|dismiss <id>|markread [id]|dnd [on|off|toggle]|status>" >&2
+        echo "  nightlight [status|toggle|cycle]" >&2
         echo "  settings [action] [args...]" >&2
         echo "  clipboard [action]" >&2
         echo "  mediahub [action]" >&2

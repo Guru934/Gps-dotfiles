@@ -1326,6 +1326,12 @@ Scope {
         function privacy(action: string) {
             if (["toggle", "expand", "off"].indexOf(action) >= 0) root.setPrivacy(action)
         }
+        function nightlight(action: string): string {
+            return root.handleNightLightIpc(action)
+        }
+        function nightLight(action: string): string {
+            return root.handleNightLightIpc(action)
+        }
         function externalInteraction(active: string): string {
             root.externalInteraction = (active === "true" || active === "1" || active === "on")
             if (!root.externalInteraction) {
@@ -1407,6 +1413,118 @@ Scope {
         root.clipHistoryOn = false
         root.postEvent("clip", IslandVisibility.PRIORITY.TRANSIENT, root.durations.clipboard)
         root.updateVisibility()
+    }
+
+    function handleNightLightIpc(action) {
+        const ctrl = root.registry["control"]
+        if (!ctrl) {
+            return JSON.stringify({
+                ok: false,
+                error: "Control state unavailable",
+                available: false,
+                enabled: false,
+                kelvin: 0,
+                targetKelvin: 4000
+            })
+        }
+        const act = (action || "status").toLowerCase()
+        if (act === "status" || act === "get") {
+            if (!ctrl.hasSunset && typeof ctrl.triggerProbe === "function") {
+                ctrl.triggerProbe()
+            }
+            return JSON.stringify({
+                ok: true,
+                available: Boolean(ctrl.hasSunset),
+                enabled: Boolean(ctrl.nightLightOn),
+                kelvin: Number(ctrl.nightKelvin) || 0,
+                targetKelvin: Number(ctrl.targetKelvin) || 4000
+            })
+        }
+        if (act === "toggle") {
+            if (!ctrl.hasSunset) {
+                return JSON.stringify({
+                    ok: false,
+                    error: "hyprsunset unavailable",
+                    available: false,
+                    enabled: false,
+                    kelvin: 0,
+                    targetKelvin: Number(ctrl.targetKelvin) || 4000
+                })
+            }
+            ctrl.toggleNightLight()
+            return JSON.stringify({
+                ok: true,
+                available: true,
+                enabled: Boolean(ctrl.nightLightOn),
+                kelvin: Number(ctrl.nightKelvin) || 0,
+                targetKelvin: Number(ctrl.targetKelvin) || 4000
+            })
+        }
+        if (act === "cycle") {
+            if (!ctrl.hasSunset) {
+                return JSON.stringify({
+                    ok: false,
+                    error: "hyprsunset unavailable",
+                    available: false,
+                    enabled: false,
+                    kelvin: 0,
+                    targetKelvin: Number(ctrl.targetKelvin) || 4000
+                })
+            }
+            ctrl.cycleNightKelvin()
+            return JSON.stringify({
+                ok: true,
+                available: true,
+                enabled: Boolean(ctrl.nightLightOn),
+                kelvin: Number(ctrl.nightKelvin) || 0,
+                targetKelvin: Number(ctrl.targetKelvin) || 4000
+            })
+        }
+        if (act === "on" || act === "enable") {
+            if (!ctrl.hasSunset) {
+                return JSON.stringify({
+                    ok: false,
+                    error: "hyprsunset unavailable",
+                    available: false,
+                    enabled: false,
+                    kelvin: 0,
+                    targetKelvin: Number(ctrl.targetKelvin) || 4000
+                })
+            }
+            if (!ctrl.nightLightOn) {
+                ctrl.toggleNightLight()
+            }
+            return JSON.stringify({
+                ok: true,
+                available: true,
+                enabled: Boolean(ctrl.nightLightOn),
+                kelvin: Number(ctrl.nightKelvin) || 0,
+                targetKelvin: Number(ctrl.targetKelvin) || 4000
+            })
+        }
+        if (act === "off" || act === "disable") {
+            if (!ctrl.hasSunset) {
+                return JSON.stringify({
+                    ok: false,
+                    error: "hyprsunset unavailable",
+                    available: false,
+                    enabled: false,
+                    kelvin: 0,
+                    targetKelvin: Number(ctrl.targetKelvin) || 4000
+                })
+            }
+            if (ctrl.nightLightOn) {
+                ctrl.toggleNightLight()
+            }
+            return JSON.stringify({
+                ok: true,
+                available: true,
+                enabled: Boolean(ctrl.nightLightOn),
+                kelvin: Number(ctrl.nightKelvin) || 0,
+                targetKelvin: Number(ctrl.targetKelvin) || 4000
+            })
+        }
+        return JSON.stringify({ ok: false, error: "invalid action: " + action })
     }
 
     // PipeWire is event-driven; the helper polls direct V4L2 file descriptors every 1.5s.

@@ -24,7 +24,7 @@ Item {
     readonly property color cardFill: Theme.surfaceBase
     readonly property color tileFill: Qt.rgba(Theme.surfaceDeep.r, Theme.surfaceDeep.g, Theme.surfaceDeep.b, 0.55)
     readonly property color chipFill: Qt.rgba(Theme.surfaceHigh.r, Theme.surfaceHigh.g, Theme.surfaceHigh.b, 0.7)
-    readonly property string projectPath: Quickshell.env("HOME") + "/Projects/my-rice"
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
     readonly property string tidePath: Quickshell.env("HOME") + "/.local/share/tide-island"
 
     // ----------------------------------------------------------------
@@ -187,11 +187,102 @@ Item {
         onTriggered: if (!wineCountProc.running) wineCountProc.running = true
     }
 
+    // ----------------------------------------------------------------
+    // Night Light state (synchronized with Island via IPC)
+    // ----------------------------------------------------------------
+    property bool nightLightAvailable: false
+    property bool nightLightOn: false
+    property int nightLightKelvin: 0
+    property int nightLightTargetKelvin: 4000
+    property bool nightLightIpcError: false
+    property bool nightLightLoaded: false
+
+    function refreshNightLight() {
+        if (!nightLightStatusProc.running) {
+            nightLightStatusProc.running = true
+        }
+    }
+
+    function toggleNightLight() {
+        if (!nightLightAvailable || nightLightIpcError || nightLightToggleProc.running) return
+        nightLightToggleProc.running = true
+    }
+
+    function parseNightLightStatus(raw) {
+        if (!raw || raw.trim() === "") return
+        try {
+            const data = JSON.parse(raw.trim())
+            if (data && (data.ok === true || typeof data.available !== "undefined")) {
+                root.nightLightIpcError = false
+                root.nightLightLoaded = true
+                root.nightLightAvailable = (data.available === true)
+                root.nightLightOn = (data.enabled === true)
+                root.nightLightKelvin = Number(data.kelvin) || 0
+                root.nightLightTargetKelvin = Number(data.targetKelvin) || 4000
+                return
+            }
+        } catch (e) {}
+        root.nightLightIpcError = true
+        root.nightLightLoaded = true
+    }
+
+    Process {
+        id: nightLightStatusProc
+        running: false
+        command: [
+            root.projectPath + "/scripts/gps-ipc",
+            "nightlight",
+            "status"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.parseNightLightStatus(text)
+            }
+        }
+        onExited: (code, status) => {
+            if (code !== 0) {
+                root.nightLightIpcError = true
+                root.nightLightLoaded = true
+            }
+        }
+    }
+
+    Process {
+        id: nightLightToggleProc
+        running: false
+        command: [
+            root.projectPath + "/scripts/gps-ipc",
+            "nightlight",
+            "toggle"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.parseNightLightStatus(text)
+            }
+        }
+        onExited: (code, status) => {
+            if (code !== 0) {
+                root.nightLightIpcError = true
+                root.say("ERR :: night light toggle failed (island unreachable)", "err")
+            } else {
+                nightLightReconcileTimer.restart()
+            }
+        }
+    }
+
+    Timer {
+        id: nightLightReconcileTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.refreshNightLight()
+    }
+
     function refreshReads() {
         if (!statusReadProc.running) statusReadProc.running = true
         if (!verProc.running) verProc.running = true
         if (!histCountProc.running) histCountProc.running = true
         if (!wineCountProc.running) wineCountProc.running = true
+        root.refreshNightLight()
     }
 
     onIsOpenChanged: {
@@ -765,14 +856,51 @@ Item {
                         ToolTile {
                             Layout.fillWidth: true
                             modelData: {
+                                if (root.nightLightIpcError) {
+                                    return {
+                                        icon: "nightlight",
+                                        tint: Theme.textDim,
+                                        title: "NIGHT WARMTH",
+                                        sub: "unavailable \u00b7 island offline",
+                                        disabled: true
+                                    }
+                                }
+                                if (!root.nightLightLoaded) {
+                                    return {
+                                        icon: "nightlight",
+                                        tint: Theme.textMuted,
+                                        title: "NIGHT WARMTH",
+                                        sub: "probing\u2026",
+                                        disabled: true
+                                    }
+                                }
+                                if (!root.nightLightAvailable) {
+                                    return {
+                                        icon: "nightlight",
+                                        tint: Theme.textDim,
+                                        title: "NIGHT WARMTH",
+                                        sub: "unavailable \u00b7 no hyprsunset",
+                                        disabled: true
+                                    }
+                                }
+                                if (root.nightLightOn) {
+                                    return {
+                                        icon: "nightlight",
+                                        tint: Theme.accentTertiary,
+                                        title: "NIGHT WARMTH",
+                                        sub: root.nightLightKelvin > 0 ? ("ON \u00b7 " + root.nightLightKelvin + "K") : "ON",
+                                        disabled: false
+                                    }
+                                }
                                 return {
                                     icon: "nightlight",
-                                    tint: Theme.accentTertiary,
+                                    tint: Theme.textMuted,
                                     title: "NIGHT WARMTH",
-                                    sub: "unavailable \u00b7 no hyprsunset",
-                                    disabled: true
+                                    sub: "OFF",
+                                    disabled: false
                                 }
                             }
+                            onTapped: root.toggleNightLight()
                         }
 
                         ToolTile {

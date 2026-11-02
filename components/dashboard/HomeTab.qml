@@ -17,6 +17,105 @@ Item {
     property bool isOpen: false
     property var hub: null
 
+    readonly property string projectPath: Quickshell.env("GPS_ROOT") || (Quickshell.env("HOME") + "/Projects/my-rice")
+
+    // ----------------------------------------------------------------
+    // Night Light state (synchronized with Island via IPC)
+    // ----------------------------------------------------------------
+    property bool nightLightAvailable: false
+    property bool nightLightOn: false
+    property int nightLightKelvin: 0
+    property int nightLightTargetKelvin: 4000
+    property bool nightLightIpcError: false
+    property bool nightLightLoaded: false
+
+    function refreshNightLight() {
+        if (!nightLightStatusProc.running) {
+            nightLightStatusProc.running = true
+        }
+    }
+
+    function toggleNightLight() {
+        if (!nightLightAvailable || nightLightIpcError || nightLightToggleProc.running) return
+        nightLightToggleProc.running = true
+    }
+
+    function parseNightLightStatus(raw) {
+        if (!raw || raw.trim() === "") return
+        try {
+            const data = JSON.parse(raw.trim())
+            if (data && (data.ok === true || typeof data.available !== "undefined")) {
+                root.nightLightIpcError = false
+                root.nightLightLoaded = true
+                root.nightLightAvailable = (data.available === true)
+                root.nightLightOn = (data.enabled === true)
+                root.nightLightKelvin = Number(data.kelvin) || 0
+                root.nightLightTargetKelvin = Number(data.targetKelvin) || 4000
+                return
+            }
+        } catch (e) {}
+        root.nightLightIpcError = true
+        root.nightLightLoaded = true
+    }
+
+    Process {
+        id: nightLightStatusProc
+        running: false
+        command: [
+            root.projectPath + "/scripts/gps-ipc",
+            "nightlight",
+            "status"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.parseNightLightStatus(text)
+            }
+        }
+        onExited: (code, status) => {
+            if (code !== 0) {
+                root.nightLightIpcError = true
+                root.nightLightLoaded = true
+            }
+        }
+    }
+
+    Process {
+        id: nightLightToggleProc
+        running: false
+        command: [
+            root.projectPath + "/scripts/gps-ipc",
+            "nightlight",
+            "toggle"
+        ]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.parseNightLightStatus(text)
+            }
+        }
+        onExited: (code, status) => {
+            if (code !== 0) {
+                root.nightLightIpcError = true
+            } else {
+                nightLightReconcileTimer.restart()
+            }
+        }
+    }
+
+    Timer {
+        id: nightLightReconcileTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.refreshNightLight()
+    }
+
+    onIsOpenChanged: {
+        if (root.isOpen) root.refreshNightLight()
+    }
+
+    Component.onCompleted: {
+        root.refreshNightLight()
+    }
+
     SystemClock {
         id: clock
         enabled: root.isOpen
@@ -481,12 +580,28 @@ Item {
 
                 QuickToggleCard {
                     Layout.fillWidth: true
-                    icon: "bedtime"
-                    title: "Circadian"
-                    subtitle: "unavailable \u00b7 no backend"
+                    icon: "nightlight"
+                    title: "Night Light"
+                    subtitle: {
+                        if (root.nightLightIpcError) return "unavailable \u00b7 island offline"
+                        if (!root.nightLightLoaded) return "probing\u2026"
+                        if (!root.nightLightAvailable) return "unavailable \u00b7 no hyprsunset"
+                        if (root.nightLightOn) {
+                            return root.nightLightKelvin > 0
+                                ? ("on \u00b7 " + root.nightLightKelvin + "K")
+                                : "on"
+                        }
+                        return "off"
+                    }
                     accent: Theme.accentTertiary
-                    dimmed: true
-                    interactive: false
+                    dotColor: {
+                        if (root.nightLightIpcError) return Theme.statusDanger
+                        if (!root.nightLightAvailable) return Theme.textDim
+                        return root.nightLightOn ? Theme.accentTertiary : Theme.textDim
+                    }
+                    dimmed: !root.nightLightAvailable || root.nightLightIpcError
+                    interactive: root.nightLightAvailable && !root.nightLightIpcError
+                    onActivated: root.toggleNightLight()
                 }
             }
 
