@@ -7,10 +7,11 @@ Rectangle {
     id: root
 
     property var hub: null
+    property var rail: null
     property int workspaceCount: 5
 
-    width: 28
-    height: wsCol.implicitHeight + 10
+    width: Theme.railControlSize
+    height: wsCol.implicitHeight + Theme.spacingMd
     radius: 14
     color: Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.40)
     border.width: 1
@@ -70,7 +71,7 @@ Rectangle {
     Column {
         id: wsCol
         anchors.centerIn: parent
-        spacing: 5
+        spacing: Theme.spacingXs
 
         Repeater {
             model: root.workspaceCount
@@ -82,8 +83,18 @@ Rectangle {
                 readonly property bool isActive: root.currentWs === dotItem.wsId
                 readonly property bool isOccupied: root.isWorkspaceOccupied(dotItem.wsId)
 
-                width: 20
-                height: dotPill.height
+
+                width: Theme.railControlSize
+                height: Theme.railControlSize
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radiusSm
+                    color: dotItem.isActive
+                        ? Qt.rgba(Theme.brandAccent.r, Theme.brandAccent.g, Theme.brandAccent.b, 0.16)
+                        : (workspaceHover.containsMouse ? Theme.surfaceVariant : "transparent")
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                }
 
                 Rectangle {
                     id: dotPill
@@ -109,16 +120,18 @@ Rectangle {
                 }
 
                 MouseArea {
+                    id: workspaceHover
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onEntered: {
                         if (root.hub) {
                             const name = root.workspaceName(dotItem.wsId)
-                            root.hub.setTooltip("Workspace " + dotItem.wsId + (name !== ("" + dotItem.wsId) ? (" · " + name) : ""))
+                            const text = "Workspace " + dotItem.wsId + (name !== ("" + dotItem.wsId) ? (" · " + name) : "")
+                            if (root.rail && root.rail.showRailTooltip) root.rail.showRailTooltip(text, dotItem)
                         }
                     }
-                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onExited: if (root.rail && root.rail.hideRailTooltip) root.rail.hideRailTooltip()
                     onClicked: root.switchTo(dotItem.wsId)
                     onWheel: event => root.handleWheel(event.angleDelta.y)
                 }

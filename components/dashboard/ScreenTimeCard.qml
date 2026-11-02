@@ -110,17 +110,17 @@ DashSurface {
         id: body
         anchors.fill: parent
         anchors.margins: 12
-        spacing: 6
+        spacing: Theme.dashboardSpacingSm
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.dashboardSpacingSm
 
             DashIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: "schedule"
                 color: Theme.accentPrimary
-                font.pixelSize: 14
+                font.pixelSize: Theme.dashboardText(14)
             }
 
             Text {
@@ -128,7 +128,7 @@ DashSurface {
                 text: "SCREEN TIME // TODAY"
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
                 font.letterSpacing: 0.8
             }
@@ -139,7 +139,7 @@ DashSurface {
                 text: root.lastGoodAt > 0 ? Qt.formatTime(new Date(root.lastGoodAt), "HH:mm") : ""
                 color: Theme.textMuted
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
             }
 
             Text {
@@ -147,7 +147,7 @@ DashSurface {
                 text: root.statusText
                 color: root.statusColor
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
             }
         }
@@ -161,14 +161,14 @@ DashSurface {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.dashboardSpacingSm
 
                     Text {
                         Layout.fillWidth: true
                         text: modelData.label
                         color: Theme.textMain
                         font.family: Theme.fontUi
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.dashboardText(11)
                         elide: Text.ElideRight
                     }
 
@@ -177,7 +177,7 @@ DashSurface {
                         text: root.fmtTime(modelData.seconds)
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardText(9)
                     }
                 }
 
@@ -213,7 +213,7 @@ DashSurface {
                 text: "TOTAL ACTIVE"
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
                 font.letterSpacing: 0.6
             }
@@ -223,7 +223,7 @@ DashSurface {
                 text: root.report !== null ? root.fmtTime(root.report.total_seconds) : ""
                 color: Theme.accentPrimary
                 font.family: Theme.fontMono
-                font.pixelSize: 12
+                font.pixelSize: Theme.dashboardText(12)
                 font.bold: true
             }
         }
@@ -238,7 +238,7 @@ DashSurface {
             }
             color: Theme.textMuted
             font.family: Theme.fontMono
-            font.pixelSize: 9
+            font.pixelSize: Theme.dashboardText(9)
         }
     }
 }

@@ -85,6 +85,7 @@ class ThemeContractTests(unittest.TestCase):
                 THEME_QML,
             )
         )
+        theme_props.update(re.findall(r"function\s+([a-zA-Z0-9_]+)", THEME_QML))
         self.assertTrue(len(theme_props) > 0, "Failed to parse properties from Theme.qml")
 
         island_files = list(island_dir.rglob("*.qml"))

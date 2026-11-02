@@ -36,7 +36,7 @@ Item {
                 text: root.label.toUpperCase()
                 color: Theme.textDim
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.dashboardText(8)
                 font.bold: true
                 font.letterSpacing: 0.6
             }
@@ -54,7 +54,7 @@ Item {
                     text: root.pill
                     color: root.accent
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                     font.bold: true
                 }
             }
@@ -65,7 +65,7 @@ Item {
             text: root.value
             color: Theme.textMain
             font.family: Theme.fontMono
-            font.pixelSize: 13
+            font.pixelSize: Theme.dashboardText(13)
             font.bold: true
             elide: Text.ElideRight
         }

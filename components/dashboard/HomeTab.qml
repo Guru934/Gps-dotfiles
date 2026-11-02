@@ -208,12 +208,12 @@ Item {
         ColumnLayout {
             id: content
             width: parent.width
-            spacing: 10
+            spacing: Theme.dashboardSpacingMd
 
             // Clock and battery strip.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.dashboardSpacingSm
 
                 ColumnLayout {
                     Layout.alignment: Qt.AlignVCenter
@@ -223,7 +223,7 @@ Item {
                         text: Qt.formatTime(clock.date, "HH:mm:ss")
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 21
+                        font.pixelSize: Theme.dashboardText(21)
                         font.bold: true
                     }
 
@@ -231,7 +231,7 @@ Item {
                         text: (Qt.formatDate(clock.date, "dddd") + " \u00b7 " + Qt.formatDate(clock.date, "MMM d")).toUpperCase()
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: Theme.dashboardText(8)
                         font.letterSpacing: 1
                     }
                 }
@@ -263,7 +263,7 @@ Item {
                             color: root.batPresent && root.bat.state === UPowerDeviceState.Charging
                                 ? Theme.accentPrimary
                                 : (root.batPresent && root.bat.percentage <= 0.15 ? Theme.statusDanger : Theme.textMain)
-                            font.pixelSize: 17
+                            font.pixelSize: Theme.dashboardText(17)
                         }
 
                         ColumnLayout {
@@ -274,7 +274,7 @@ Item {
                                 text: root.batPresent ? Math.round(root.bat.percentage * 100) + "%" : "\u2014"
                                 color: Theme.textMain
                                 font.family: Theme.fontMono
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.dashboardText(11)
                                 font.bold: true
                             }
 
@@ -289,7 +289,7 @@ Item {
                                 }
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.letterSpacing: 0.5
                             }
                         }
@@ -312,8 +312,8 @@ Item {
                 ColumnLayout {
                     id: telemetry
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -322,7 +322,7 @@ Item {
                             text: "SYSTEM TELEMETRY"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 1
                         }
@@ -333,14 +333,14 @@ Item {
                             text: "POLLING " + Math.round(probe.tickMs / 1000) + "S"
                             color: Theme.accentPrimaryDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
 
                         StatCard {
                             Layout.fillWidth: true
@@ -385,18 +385,18 @@ Item {
                 ColumnLayout {
                     id: session
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         DashIcon {
                             Layout.alignment: Qt.AlignVCenter
                             name: "schedule"
                             color: Theme.accentPrimary
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.dashboardText(14)
                         }
 
                         Text {
@@ -404,7 +404,7 @@ Item {
                             text: "ACTIVE SESSION & UPTIME"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -422,7 +422,7 @@ Item {
                                 text: probe.kernel.length > 0 ? probe.kernel : "\u2014"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
                         }
                     }
@@ -437,7 +437,7 @@ Item {
                             anchors.fill: parent
                             anchors.leftMargin: 10
                             anchors.rightMargin: 10
-                            spacing: 10
+                            spacing: Theme.dashboardSpacingMd
 
                             ColumnLayout {
                                 Layout.alignment: Qt.AlignVCenter
@@ -447,7 +447,7 @@ Item {
                                     text: "SYSTEM UPTIME"
                                     color: Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                     font.letterSpacing: 0.5
                                 }
 
@@ -455,7 +455,7 @@ Item {
                                     text: root.fmtUptime(probe.uptimeSec)
                                     color: Theme.accentPrimary
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 14
+                                    font.pixelSize: Theme.dashboardText(14)
                                     font.bold: true
                                 }
                             }
@@ -478,7 +478,7 @@ Item {
                                     text: "ACTIVE CLIENT"
                                     color: Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                     font.letterSpacing: 0.5
                                 }
 
@@ -490,7 +490,7 @@ Item {
                                         text: root.activeClient
                                         color: Theme.textMain
                                         font.family: Theme.fontUi
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.dashboardText(11)
                                         font.bold: true
                                         elide: Text.ElideRight
                                         Layout.maximumWidth: 120
@@ -509,7 +509,7 @@ Item {
                                             text: Hyprland.focusedWorkspace ? ("ws: " + Hyprland.focusedWorkspace.id) : ""
                                             color: Theme.accentSecondary
                                             font.family: Theme.fontMono
-                                            font.pixelSize: 8
+                                            font.pixelSize: Theme.dashboardText(8)
                                             font.bold: true
                                         }
                                     }
@@ -646,13 +646,13 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
-                    spacing: 8
+                    spacing: Theme.dashboardSpacingSm
 
                     DashIcon {
                         Layout.alignment: Qt.AlignVCenter
                         name: probe.volumeMuted ? "volume_off" : "volume_down"
                         color: Theme.textDim
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.dashboardText(15)
                     }
 
                     DashSlider {
@@ -671,7 +671,7 @@ Item {
                         text: Math.round(root.volUi * 100) + "%"
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardText(9)
                         font.bold: true
                         horizontalAlignment: Text.AlignRight
                     }

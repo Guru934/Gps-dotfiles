@@ -15,11 +15,27 @@ PanelWindow {
     property var wallpaperCarousel: null
 
     // Dimensional & Placement Properties (Top-level configurable contract)
-    property int railWidth: 40
+    property int railWidth: Theme.sidebarRailWidth
     property int railMarginLeft: 0
-    property int railMarginTop: 6
-    property int railMarginBottom: 6
+    property int railMarginTop: 8
+    property int railMarginBottom: 8
     property int railRadius: 18
+    property string railTooltipText: ""
+    property int railTooltipY: 0
+    property bool railTooltipVisible: false
+
+    function showRailTooltip(text, item) {
+        if (!text || !item) return
+        const point = item.mapToGlobal(0, item.height / 2)
+        root.railTooltipText = text
+        root.railTooltipY = Math.round(point.y - (root.screen ? root.screen.y : 0))
+        railTooltipTimer.restart()
+    }
+
+    function hideRailTooltip() {
+        railTooltipTimer.stop()
+        root.railTooltipVisible = false
+    }
 
     // Rail Layout Mode: "split" (default: 3 floating capsules) | "full" (legacy full-slab)
     property string railLayout: "split"
@@ -347,7 +363,7 @@ PanelWindow {
         Rectangle {
             id: topCapsule
             width: root.railWidth
-            height: topSection.implicitHeight + 16
+            height: topSection.implicitHeight + Theme.spacingLg
             anchors {
                 top: parent.top
                 horizontalCenter: parent.horizontalCenter
@@ -364,18 +380,20 @@ PanelWindow {
                 id: topSection
                 anchors {
                     top: parent.top
-                    topMargin: 8
+                topMargin: Theme.spacingSm
                     horizontalCenter: parent.horizontalCenter
                 }
-                spacing: 6
+                spacing: Theme.spacingSm
 
                 BrandMark {
                     hub: root.hub
+                    rail: root
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
                 WorkspaceIndicator {
                     hub: root.hub
+                    rail: root
                     workspaceCount: 5
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
@@ -388,7 +406,7 @@ PanelWindow {
         Rectangle {
             id: midCapsule
             width: root.railWidth
-            height: midPodCol.implicitHeight + 16
+            height: midPodCol.implicitHeight + Theme.spacingLg
             anchors.horizontalCenter: parent.horizontalCenter
             radius: root.railRadius
             color: root.isSplit
@@ -415,8 +433,8 @@ PanelWindow {
 
             Rectangle {
                 id: middlePod
-                width: 32
-                height: midPodCol.implicitHeight + 10
+                width: Theme.railControlSize
+                height: midPodCol.implicitHeight + Theme.spacingMd
                 anchors.centerIn: parent
                 radius: 10
                 visible: !root.isSplit
@@ -441,9 +459,11 @@ PanelWindow {
 
                     // 5-Bar Media Equalizer (Animates when mediaPlaying === true)
                     Item {
-                        width: 24
-                        height: 18
+                        id: mediaControl
+                        width: Theme.railControlSize - Theme.spacingXs
+                        height: Theme.controlHeightSm
                         anchors.horizontalCenter: parent.horizontalCenter
+
 
                         Row {
                             anchors.centerIn: parent
@@ -496,6 +516,7 @@ PanelWindow {
                         }
 
                         MouseArea {
+                            id: mediaHover
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
@@ -504,9 +525,9 @@ PanelWindow {
                                 const st = root.mediaPlaying
                                     ? ("Playing: " + (root.mediaTitle || "Media"))
                                     : (root.mediaPaused ? ("Paused: " + (root.mediaTitle || "Media")) : "No Media Playing (Click to Play)")
-                                root.hub.setTooltip(st + " · Scroll: Next/Prev")
+                                root.showRailTooltip(st + " · Scroll: Next/Prev", mediaControl)
                             }
-                            onExited: if (root.hub) root.hub.clearTooltip()
+                            onExited: root.hideRailTooltip()
                             onClicked: {
                                 Quickshell.execDetached(["playerctl", "play-pause"])
                                 fastRefreshTimer.restart()
@@ -527,7 +548,7 @@ PanelWindow {
                         text: root.mediaPlaying ? "PLAY" : (root.mediaPaused ? "PAUSE" : "IDLE")
                         color: root.mediaPlaying ? Theme.brandAccent : Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.scaled(7)
                         font.bold: true
                     }
 
@@ -550,13 +571,14 @@ PanelWindow {
                     Rectangle {
                         id: recPill
                         visible: root.isRecording
-                        width: 24
-                        height: 24
-                        radius: 12
+                        width: Theme.railControlSize
+                        height: Theme.railControlSize
+                        radius: Theme.radiusPill
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Qt.rgba(Theme.statusDangerBorder.r, Theme.statusDangerBorder.g, Theme.statusDangerBorder.b, 0.20)
                         border.width: 1.5
                         border.color: Theme.statusDangerBorder
+
 
                         Rectangle {
                             anchors.centerIn: parent
@@ -574,12 +596,13 @@ PanelWindow {
                         }
 
                         MouseArea {
+                            id: recorderHover
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: Quickshell.execDetached([(root.repoRoot ? (root.repoRoot + "/scripts/gps-record") : "gps-record"), "stop"])
-                            onEntered: if (root.hub) root.hub.setTooltip("Recording active · Click to stop")
-                            onExited: if (root.hub) root.hub.clearTooltip()
+                            onEntered: root.showRailTooltip("Recording active · Click to stop", recPill)
+                            onExited: root.hideRailTooltip()
                         }
                     }
                 }
@@ -591,7 +614,7 @@ PanelWindow {
         Rectangle {
             id: btmCapsule
             width: root.railWidth
-            height: lowerSection.implicitHeight + 16
+            height: lowerSection.implicitHeight + Theme.spacingLg
             anchors {
                 bottom: parent.bottom
                 horizontalCenter: parent.horizontalCenter
@@ -608,15 +631,15 @@ PanelWindow {
                 id: lowerSection
                 anchors {
                     bottom: parent.bottom
-                    bottomMargin: 8
+                    bottomMargin: Theme.spacingSm
                     horizontalCenter: parent.horizontalCenter
                 }
-                spacing: 5
+                spacing: Theme.spacingXs
 
                 // Unified Lower Control Island
                 Rectangle {
-                    width: 32
-                    height: sysCol.implicitHeight + 8
+                    width: Theme.railControlSize
+                    height: sysCol.implicitHeight + Theme.spacingSm
                     radius: 10
                     color: root.isSplit ? "transparent" : Qt.rgba(Theme.card.r, Theme.card.g, Theme.card.b, 0.45)
                     border.width: root.isSplit ? 0 : 1
@@ -794,8 +817,8 @@ PanelWindow {
             // Live Digital Clock Pill (compact stacked)
             Rectangle {
                 id: clockPill
-                width: 32
-                height: clockInner.implicitHeight + 6
+                width: Theme.railControlSize
+                height: clockInner.implicitHeight + Theme.spacingSm
                 radius: 8
                 color: clockMouse.containsMouse
                     ? Qt.rgba(Theme.cardHover.r, Theme.cardHover.g, Theme.cardHover.b, 0.55)
@@ -805,6 +828,7 @@ PanelWindow {
                     ? Theme.brandAccent
                     : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
                 anchors.horizontalCenter: parent.horizontalCenter
+
 
                 Behavior on color { ColorAnimation { duration: Theme.animDuration } }
                 Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
@@ -819,7 +843,7 @@ PanelWindow {
                         text: root.hoursText
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
 
@@ -838,7 +862,7 @@ PanelWindow {
                         text: root.minutesText
                         color: Theme.brandAccent
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.scaled(9)
                         font.bold: true
                     }
                 }
@@ -848,8 +872,8 @@ PanelWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onEntered: if (root.hub) root.hub.setTooltip(root.dateTooltip)
-                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onEntered: root.showRailTooltip(root.dateTooltip + " · Click for calendar", clockPill)
+                    onExited: root.hideRailTooltip()
                     onClicked: {
                         if (root.hub && root.hub.openPopup) {
                             root.hub.openPopup("clock", clockPill.mapToItem(railBg, 16, 12).y)
@@ -862,8 +886,8 @@ PanelWindow {
             Rectangle {
                 id: battPill
                 visible: root.batPresent
-                width: 32
-                height: 28
+                width: Theme.railControlSize
+                height: Theme.railControlSize
                 radius: 8
                 anchors.horizontalCenter: parent.horizontalCenter
                 color: battMouse.containsMouse
@@ -873,6 +897,7 @@ PanelWindow {
                 border.color: battMouse.containsMouse
                     ? root.batteryColor()
                     : Qt.rgba(Theme.border.r, Theme.border.g, Theme.border.b, 0.50)
+
 
                 Behavior on color { ColorAnimation { duration: Theme.animDuration } }
                 Behavior on border.color { ColorAnimation { duration: Theme.animDuration } }
@@ -886,7 +911,7 @@ PanelWindow {
                         text: root.batteryGlyph()
                         color: root.batteryColor()
                         font.family: Theme.fontMono
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.scaled(10)
                     }
 
                     Text {
@@ -894,7 +919,7 @@ PanelWindow {
                         text: root.battPct + "%"
                         color: Theme.textMain
                         font.family: Theme.fontMono
-                        font.pixelSize: 7
+                        font.pixelSize: Theme.scaled(7)
                         font.bold: true
                     }
                 }
@@ -904,8 +929,8 @@ PanelWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onEntered: if (root.hub) root.hub.setTooltip("Battery: " + root.battPct + "% · " + root.battStatusText + " — Click: power profiles")
-                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onEntered: root.showRailTooltip("Battery: " + root.battPct + "% · " + root.battStatusText + " · Click for power profiles", battPill)
+                    onExited: root.hideRailTooltip()
                     onClicked: {
                         if (root.hub && root.hub.openPopup) {
                             root.hub.openPopup("battery", battPill.mapToItem(railBg, 16, 12).y)
@@ -917,8 +942,8 @@ PanelWindow {
             // Crimson Power Button
             Rectangle {
                 id: powerBtn
-                width: 32
-                height: 28
+                width: Theme.railControlSize
+                height: Theme.railControlSize
                 radius: Theme.radiusSm
                 anchors.horizontalCenter: parent.horizontalCenter
                 color: root.powerPopupOpen
@@ -926,6 +951,7 @@ PanelWindow {
                     : (pwrBtnMouse.containsMouse ? Theme.statusDangerBg : Qt.alpha(Theme.statusDangerBg, 0.45))
                 border.width: Theme.borderWidth
                 border.color: (root.powerPopupOpen || pwrBtnMouse.containsMouse) ? Theme.statusDangerBorder : Qt.alpha(Theme.statusDangerBorder, 0.45)
+
 
                 scale: pwrBtnMouse.pressed ? 0.90 : (pwrBtnMouse.containsMouse ? 1.06 : 1.0)
                 Behavior on scale {
@@ -949,8 +975,8 @@ PanelWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onEntered: if (root.hub) root.hub.setTooltip("Power Menu")
-                    onExited: if (root.hub) root.hub.clearTooltip()
+                    onEntered: root.showRailTooltip("Power menu", powerBtn)
+                    onExited: root.hideRailTooltip()
                     onClicked: {
                         if (root.hub && root.hub.closePopup) root.hub.closePopup()
                         root.pendingPowerLabel = ""
@@ -981,7 +1007,7 @@ PanelWindow {
             left: root.railWidth + root.railMarginLeft + 6
         }
 
-        implicitWidth: 240
+        implicitWidth: Theme.powerPopupWidth
         implicitHeight: pwrCol.implicitHeight + 24
         color: "transparent"
 
@@ -1217,15 +1243,16 @@ PanelWindow {
         signal scrolledUp()
         signal scrolledDown()
 
-        width: 28
-        height: button.sublabel !== "" ? 30 : 24
-        radius: 6
+        width: Theme.railControlSize
+        height: Theme.railControlSize
+        radius: Theme.radiusSm
         anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
         color: mouse.containsMouse
             ? Qt.rgba(button.accentColor.r, button.accentColor.g, button.accentColor.b, 0.18)
             : "transparent"
         border.width: mouse.containsMouse ? 1 : 0
         border.color: button.accentColor
+
 
         scale: mouse.pressed ? 0.90 : (mouse.containsMouse ? 1.08 : 1.0)
 
@@ -1245,7 +1272,7 @@ PanelWindow {
                 color: mouse.containsMouse ? button.accentColor : button.iconColor
                 opacity: mouse.containsMouse ? 1.0 : 0.92
                 font.family: Theme.fontMono
-                font.pixelSize: button.sublabel !== "" ? 11 : 13
+                font.pixelSize: button.sublabel !== "" ? Theme.iconSm : Theme.railIconSize
                 Behavior on color { ColorAnimation { duration: Theme.animDuration } }
             }
 
@@ -1255,7 +1282,7 @@ PanelWindow {
                 text: button.sublabel
                 color: mouse.containsMouse ? button.accentColor : button.sublabelColor
                 font.family: Theme.fontMono
-                font.pixelSize: 8
+                font.pixelSize: Theme.fontSizeCaption
                 font.bold: true
                 Behavior on color { ColorAnimation { duration: Theme.animDuration } }
             }
@@ -1266,12 +1293,59 @@ PanelWindow {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: if (root.hub) root.hub.setTooltip(button.tooltip)
-            onExited: if (root.hub) root.hub.clearTooltip()
+            onEntered: root.showRailTooltip(button.tooltip, button)
+            onExited: root.hideRailTooltip()
             onClicked: button.clicked()
             onWheel: event => {
                 if (event.angleDelta.y > 0) button.scrolledUp()
                 else if (event.angleDelta.y < 0) button.scrolledDown()
+            }
+        }
+    }
+
+    Timer {
+        id: railTooltipTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.railTooltipVisible = root.railTooltipText !== ""
+    }
+
+    PanelWindow {
+        id: railTooltipWindow
+        screen: root.screen
+        visible: root.railTooltipVisible
+        anchors { top: true; left: true }
+        margins {
+            top: root.screen
+                ? Math.max(8, Math.min(root.railTooltipY - Math.round(height / 2), root.screen.height - height - 8))
+                : 8
+            left: root.railWidth + root.railMarginLeft + Theme.spacingSm
+        }
+        implicitWidth: Theme.scaled(220)
+        implicitHeight: tooltipText.implicitHeight + Theme.paddingMd * 2
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "gps-rail-tooltip"
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        Rectangle {
+            anchors.fill: parent
+            radius: Theme.radiusSm
+            color: Theme.surfaceDeep
+            border.width: Theme.borderWidth
+            border.color: Theme.outlineSoft
+
+            Text {
+                id: tooltipText
+                anchors.fill: parent
+                anchors.margins: Theme.paddingMd
+                text: root.railTooltipText
+                color: Theme.textMain
+                font.family: Theme.fontUi
+                font.pixelSize: Theme.fontSizeSecondary
+                wrapMode: Text.WordWrap
+                verticalAlignment: Text.AlignVCenter
             }
         }
     }

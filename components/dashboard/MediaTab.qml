@@ -553,12 +553,12 @@ Item {
         ColumnLayout {
             id: content
             width: parent.width
-            spacing: 10
+            spacing: Theme.dashboardSpacingMd
 
             // 1. Player / source status row.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.dashboardSpacingSm
 
                 Rectangle {
                     Layout.alignment: Qt.AlignVCenter
@@ -570,20 +570,20 @@ Item {
                     RowLayout {
                         id: srcRow
                         anchors.centerIn: parent
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         DashIcon {
                             Layout.alignment: Qt.AlignVCenter
                             name: "graphic_eq"
                             color: Theme.accentPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.dashboardText(13)
                         }
 
                         Text {
                             text: "PIPEWIRE"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -601,7 +601,7 @@ Item {
                                 : "no player"
                             color: root.hasPlayer ? Theme.textMuted : Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             elide: Text.ElideRight
                         }
                     }
@@ -619,7 +619,7 @@ Item {
                     RowLayout {
                         id: stRow
                         anchors.centerIn: parent
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         Rectangle {
                             id: stateDot
@@ -647,7 +647,7 @@ Item {
                             text: root.stateLabel
                             color: root.stateColor
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -659,7 +659,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 2
-                spacing: 12
+                spacing: Theme.dashboardSpacingMd
 
                 Item {
                     Layout.alignment: Qt.AlignHCenter
@@ -734,7 +734,7 @@ Item {
                     }
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.dashboardText(9)
                     elide: Text.ElideRight
                 }
 
@@ -745,7 +745,7 @@ Item {
                     text: "playback details appear here when a player connects"
                     color: Theme.textDim
                     font.family: Theme.fontMono
-                    font.pixelSize: 8
+                    font.pixelSize: Theme.dashboardText(8)
                 }
             }
 
@@ -833,7 +833,7 @@ Item {
                             : root.displayPos)
                         color: Theme.accentPrimary
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardText(9)
                         font.bold: true
                     }
 
@@ -843,7 +843,7 @@ Item {
                         text: root.fmt(root.hasPlayer ? root.player.length * 1000 : 0)
                         color: Theme.textMuted
                         font.family: Theme.fontMono
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.dashboardText(9)
                     }
                 }
             }
@@ -852,7 +852,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 2
-                spacing: 6
+                spacing: Theme.dashboardSpacingSm
                 visible: root.hasPlayer
 
                 TransportButton {
@@ -919,7 +919,7 @@ Item {
                     text: root.volReady ? Math.round(root.volUi * 100) + "%" : "\u2014"
                     color: root.volMuted ? Theme.statusDanger : Theme.textMain
                     font.family: Theme.fontMono
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.dashboardText(9)
                     font.bold: true
                 }
             }
@@ -963,7 +963,7 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
-                    spacing: 10
+                    spacing: Theme.dashboardSpacingMd
 
                     Rectangle {
                         Layout.alignment: Qt.AlignVCenter
@@ -976,7 +976,7 @@ Item {
                             anchors.centerIn: parent
                             name: "hub"
                             color: Theme.accentPrimary
-                            font.pixelSize: 16
+                            font.pixelSize: Theme.dashboardText(16)
                         }
                     }
 
@@ -990,7 +990,7 @@ Item {
                             text: "MEDIA HUB"
                             color: Theme.textMain
                             font.family: Theme.fontMono
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             font.bold: true
                             font.letterSpacing: 1
                         }
@@ -1000,7 +1000,7 @@ Item {
                             text: "Wallpapers, anime, manga and music"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             elide: Text.ElideRight
                         }
                     }
@@ -1019,7 +1019,7 @@ Item {
                             text: "OPEN"
                             color: Theme.accentSecondary
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             font.bold: true
                             font.letterSpacing: 0.7
                         }
@@ -1029,7 +1029,7 @@ Item {
                         Layout.alignment: Qt.AlignVCenter
                         name: "arrow_forward"
                         color: mediaHubHover.hovered ? Theme.accentPrimary : Theme.textDim
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.dashboardText(15)
                     }
                 }
 
@@ -1054,8 +1054,8 @@ Item {
                 ColumnLayout {
                     id: sinkCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     Rectangle {
                         id: sinkHeader
@@ -1092,13 +1092,13 @@ Item {
                             anchors.fill: parent
                             anchors.leftMargin: 4
                             anchors.rightMargin: 6
-                            spacing: 6
+                            spacing: Theme.dashboardSpacingSm
 
                             DashIcon {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "headphones"
                                 color: Theme.accentSecondary
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.dashboardText(14)
                             }
 
                             Text {
@@ -1106,7 +1106,7 @@ Item {
                                 text: "AUDIO OUTPUT"
                                 color: Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 font.bold: true
                                 font.letterSpacing: 0.8
                             }
@@ -1117,7 +1117,7 @@ Item {
                                 text: root.outputSummary
                                 color: root.defaultSink ? Theme.textMuted : Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 elide: Text.ElideRight
                             }
 
@@ -1134,7 +1134,7 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 name: "expand_more"
                                 color: sinkHeaderHover.hovered ? Theme.textMain : Theme.textDim
-                                font.pixelSize: 16
+                                font.pixelSize: Theme.dashboardText(16)
                                 rotation: root.sinkExpanded ? 180 : 0
                                 Behavior on rotation { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                             }
@@ -1165,7 +1165,7 @@ Item {
                         ColumnLayout {
                             id: sinkBodyCol
                             width: sinkCol.width
-                            spacing: 6
+                            spacing: Theme.dashboardSpacingSm
 
                             Text {
                                 Layout.fillWidth: true
@@ -1173,7 +1173,7 @@ Item {
                                 text: root.engineLabel + (root.sinkError === "" ? " \u00b7 active" : "")
                                 color: root.sinkError === "" ? Theme.accentPrimary : Theme.statusDanger
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                             }
 
                             Repeater {
@@ -1238,7 +1238,7 @@ Item {
                                             color: !sinkRow.available
                                                 ? Theme.textDim
                                                 : (sinkRow.isDefault ? Theme.accentPrimary : Theme.textDim)
-                                            font.pixelSize: 14
+                                            font.pixelSize: Theme.dashboardText(14)
                                         }
 
                                         Text {
@@ -1248,7 +1248,7 @@ Item {
                                                 ? Theme.textDim
                                                 : (sinkRow.isDefault ? Theme.textMain : Theme.textMuted)
                                             font.family: Theme.fontUi
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.dashboardText(10)
                                             elide: Text.ElideRight
                                         }
 
@@ -1258,7 +1258,7 @@ Item {
                                             text: "UNAVAILABLE"
                                             color: Theme.textDim
                                             font.family: Theme.fontMono
-                                            font.pixelSize: 7
+                                            font.pixelSize: Theme.dashboardText(7)
                                             font.bold: true
                                             font.letterSpacing: 0.8
                                         }
@@ -1269,7 +1269,7 @@ Item {
                                             text: "DEFAULT"
                                             color: Theme.accentPrimary
                                             font.family: Theme.fontMono
-                                            font.pixelSize: 7
+                                            font.pixelSize: Theme.dashboardText(7)
                                             font.bold: true
                                             font.letterSpacing: 0.8
                                         }
@@ -1296,7 +1296,7 @@ Item {
                                     : (sinksProc.running ? "querying devices\u2026" : "no output devices found")
                                 color: root.sinkError !== "" ? Theme.statusDanger : Theme.textDim
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 wrapMode: Text.WordWrap
                             }
 
@@ -1306,7 +1306,7 @@ Item {
                                 text: root.sinkActionError
                                 color: Theme.statusDanger
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 wrapMode: Text.WordWrap
                             }
 
@@ -1316,7 +1316,7 @@ Item {
                                 text: root.sinkNotice
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 8
+                                font.pixelSize: Theme.dashboardText(8)
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -1334,18 +1334,18 @@ Item {
                 ColumnLayout {
                     id: lyrCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.dashboardCardPadding
+                    spacing: Theme.dashboardSpacingSm
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         DashIcon {
                             Layout.alignment: Qt.AlignVCenter
                             name: "subtitles"
                             color: Theme.accentSecondary
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.dashboardText(14)
                         }
 
                         Text {
@@ -1353,7 +1353,7 @@ Item {
                             text: "LYRICS"
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                             font.bold: true
                             font.letterSpacing: 0.8
                         }
@@ -1370,7 +1370,7 @@ Item {
                                 text: "LRCLIB"
                                 color: Theme.textMuted
                                 font.family: Theme.fontMono
-                                font.pixelSize: 7
+                                font.pixelSize: Theme.dashboardText(7)
                                 font.bold: true
                                 font.letterSpacing: 0.6
                             }
@@ -1383,7 +1383,7 @@ Item {
                         text: "No active player \u2014 lyrics can be looked up once a track is loaded."
                         color: Theme.textDim
                         font.family: Theme.fontMono
-                        font.pixelSize: 8
+                        font.pixelSize: Theme.dashboardText(8)
                         wrapMode: Text.WordWrap
                     }
 
@@ -1399,7 +1399,7 @@ Item {
                                 : "This track has no title to look up."
                             color: Theme.textMuted
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             wrapMode: Text.WordWrap
                         }
 
@@ -1409,14 +1409,14 @@ Item {
                             text: "Lookup is manual: the button sends the title, artist, album and duration to lrclib.net."
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             wrapMode: Text.WordWrap
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.dashboardSpacingSm
                         visible: root.lyricsState === "loading"
 
                         Rectangle {
@@ -1437,7 +1437,7 @@ Item {
                             text: "Searching lrclib.net\u2026"
                             color: Theme.textMuted
                             font.family: Theme.fontMono
-                            font.pixelSize: 8
+                            font.pixelSize: Theme.dashboardText(8)
                         }
                     }
 
@@ -1488,7 +1488,7 @@ Item {
                                     text: root.fmtLyricTime(lineItem.modelData.t)
                                     color: lineItem.current ? Theme.accentPrimary : Theme.textDim
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 8
+                                    font.pixelSize: Theme.dashboardText(8)
                                     font.bold: lineItem.current
                                 }
 
@@ -1497,7 +1497,7 @@ Item {
                                     text: lineItem.modelData.s
                                     color: lineItem.current ? Theme.accentPrimary : Theme.textMuted
                                     font.family: Theme.fontUi
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.dashboardText(11)
                                     font.bold: lineItem.current
                                     wrapMode: Text.WordWrap
                                 }
@@ -1539,7 +1539,7 @@ Item {
                             text: root.lyricsPlain
                             color: Theme.textMuted
                             font.family: Theme.fontUi
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.dashboardText(11)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -1554,7 +1554,7 @@ Item {
                             text: "No lyrics found on LRCLIB for this track."
                             color: Theme.textMuted
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             wrapMode: Text.WordWrap
                         }
 
@@ -1563,7 +1563,7 @@ Item {
                             text: "The lookup searched by title, artist and album."
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                         }
                     }
 
@@ -1577,7 +1577,7 @@ Item {
                             text: "Lyrics lookup failed."
                             color: Theme.statusDanger
                             font.family: Theme.fontUi
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.dashboardText(10)
                             font.bold: true
                         }
 
@@ -1586,14 +1586,14 @@ Item {
                             text: root.lyricsMessage
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                             wrapMode: Text.WordWrap
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.dashboardSpacingSm
 
                         Text {
                             Layout.fillWidth: true
@@ -1608,7 +1608,7 @@ Item {
                             }
                             color: Theme.textDim
                             font.family: Theme.fontMono
-                            font.pixelSize: 7
+                            font.pixelSize: Theme.dashboardText(7)
                         }
 
                         Rectangle {
@@ -1640,7 +1640,7 @@ Item {
                                     name: (root.lyricsState === "ok" || root.lyricsState === "none" || root.lyricsState === "error")
                                         ? "refresh" : "search"
                                     color: Theme.accentPrimary
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.dashboardText(12)
                                 }
 
                                 Text {
@@ -1648,7 +1648,7 @@ Item {
                                         ? "AGAIN" : "LOOK UP"
                                     color: Theme.accentPrimary
                                     font.family: Theme.fontMono
-                                    font.pixelSize: 7
+                                    font.pixelSize: Theme.dashboardText(7)
                                     font.bold: true
                                     font.letterSpacing: 0.6
                                 }
