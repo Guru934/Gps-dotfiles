@@ -45,6 +45,9 @@ for _, key in ipairs({
     "SUPER + SUPER_L", "SUPER + SUPER_R", "SUPER + SPACE", "SUPER + R",
     "SUPER + Return", "SUPER + E", "SUPER + C", "SUPER + F",
     "SUPER + SHIFT + V", "SUPER + D", "SUPER + N", "SUPER + L",
+    "SUPER + W", "SUPER + Q", "SUPER + Z", "SUPER + comma", "SUPER + V",
+    "SUPER + ALT + C", "SUPER + SHIFT + R", "SUPER + SHIFT + P",
+    "SUPER + SHIFT + Space", "Print", "SHIFT + Print", "ALT + Print",
 }) do
     hl.unbind(key)
 end
@@ -53,13 +56,27 @@ local gps_binds = {
     { "SUPER + Super_L", hl.dsp.exec_cmd(ipc_command("island launcher toggle")), { release = true } },
     { "SUPER + Super_R", hl.dsp.exec_cmd(ipc_command("island launcher toggle")), { release = true } },
     { "SUPER + R", hl.dsp.exec_cmd(ipc_command("island launcher toggle")) },
+    { "SUPER + Space", hl.dsp.exec_cmd(ipc_command("island launcher toggle")) },
+    { "SUPER + SHIFT + Space", hl.dsp.exec_cmd("fuzzel") },
     { "SUPER + Return", hl.dsp.exec_cmd("kitty") },
+    { "SUPER + Z", hl.dsp.exec_cmd("kitty") },
+    { "SUPER + Q", hl.dsp.exec_cmd("brave") },
     { "SUPER + E", hl.dsp.exec_cmd("thunar") },
     { "SUPER + C", hl.dsp.window.close() },
     { "SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }) },
     { "SUPER + SHIFT + V", hl.dsp.window.float() },
     { "SUPER + D", hl.dsp.exec_cmd(ipc_command("shell dashboard toggle")) },
     { "SUPER + N", hl.dsp.exec_cmd(ipc_command("shell notifcenter toggle")) },
+    { "SUPER + W", hl.dsp.exec_cmd(ipc_command("shell wallpaper toggle")) },
+    { "SUPER + comma", hl.dsp.exec_cmd(ipc_command("settings toggle")) },
+    { "SUPER + V", hl.dsp.exec_cmd(ipc_command("shell clipboard toggle")) },
+    { "SUPER + ALT + C", hl.dsp.exec_cmd(ipc_command("island control toggle")) },
+    { "SUPER + L", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-lock")) },
+    { "SUPER + SHIFT + R", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-record") .. " toggle") },
+    { "SUPER + SHIFT + P", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-picker")) },
+    { "Print", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-shot") .. " region") },
+    { "SHIFT + Print", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-shot") .. " monitor") },
+    { "ALT + Print", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-shot") .. " window") },
 }
 
 for _, binding in ipairs(gps_binds) do

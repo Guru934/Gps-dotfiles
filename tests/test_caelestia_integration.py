@@ -109,12 +109,17 @@ class CaelestiaIntegrationTests(unittest.TestCase):
         self.assertIn('"SUPER + SHIFT + V"', module)
         self.assertIn('"SUPER + D"', module)
         self.assertIn('"SUPER + N"', module)
-        self.assertIn('"SUPER + L"', module)  # remove Caelestia's unverified lock binding
-        self.assertNotIn('"SUPER + L", hl.dsp.exec_cmd', module)
+        self.assertIn('"SUPER + L"', module)  # unbind Caelestia's unverified lock binding
+        self.assertIn('"SUPER + L", hl.dsp.exec_cmd', module)  # rebind to verified GPS lock wrapper
         self.assertIn("hl.unbind(key)", module)
+        self.assertIn('"SUPER + W"', module)
+        self.assertIn('"SUPER + Q"', module)
+        self.assertIn('"SUPER + V"', module)
+        self.assertIn('"SUPER + comma"', module)
+        self.assertIn('"SUPER + Z"', module)
+        self.assertIn('"SUPER + ALT + C"', module)
         for conflicting_key in (
-            "SUPER + Q", "SUPER + M", "SUPER + W",
-            "SUPER + V", "SUPER + comma",
+            "SUPER + M",
             "SUPER + S", "SUPER + SHIFT + S", "XF86MonBrightnessUp",
             "XF86MonBrightnessDown", "XF86AudioNext", "XF86AudioPause",
         ):
