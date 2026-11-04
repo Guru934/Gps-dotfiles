@@ -748,6 +748,202 @@ class LockExtraArtworkHardeningTests(unittest.TestCase):
         temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
         self.assertEqual(temp_files, [])
 
+    def test_python_present_pillow_absent_identify_available(self):
+        """When Python is present but Pillow is absent, ImageMagick identify validates images."""
+        import base64
+        # Mock python3 that exits 2 on PIL import
+        mock_py = self.mock_bin_dir / "python3"
+        mock_py.write_text(
+            "#!/bin/sh\n"
+            "if printf '%s' \"$*\" | grep -q 'from PIL import Image'; then\n"
+            "    exit 2\n"
+            "fi\n"
+            "exec /usr/bin/python3 \"$@\"\n"
+        )
+        mock_py.chmod(mock_py.stat().st_mode | stat.S_IEXEC)
+
+        # 1. Valid JPEG should be accepted by identify
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        valid_jpg = self.tmp_path / "valid_id.jpg"
+        valid_jpg.write_bytes(base64.b64decode(jpeg_b64))
+
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{valid_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover_id.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res_valid = self._run_lock_extra("media-art")
+        self.assertEqual(res_valid.returncode, 0)
+        self.assertFalse(res_valid.stdout.strip().endswith("art-default.png"))
+        self.assertTrue(Path(res_valid.stdout.strip()).is_file())
+
+        # 2. Corrupt JPEG must be explicitly rejected by identify
+        bad_jpg = self.tmp_path / "bad_id.jpg"
+        bad_jpg.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 30)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/bad_id.jpg")
+        res_bad = self._run_lock_extra("media-art")
+        self.assertEqual(res_bad.returncode, 0)
+        self.assertTrue(res_bad.stdout.strip().endswith("art-default.png"))
+
+    def test_python_present_pillow_absent_identify_unavailable(self):
+        """When neither Pillow nor identify is available, structural fallback validates or rejects."""
+        import base64
+        # Mock python3 that exits 2 on PIL import
+        mock_py = self.mock_bin_dir / "python3"
+        mock_py.write_text(
+            "#!/bin/sh\n"
+            "if printf '%s' \"$*\" | grep -q 'from PIL import Image'; then\n"
+            "    exit 2\n"
+            "fi\n"
+            "exit 2\n"
+        )
+        mock_py.chmod(mock_py.stat().st_mode | stat.S_IEXEC)
+
+        # Isolated environment that lacks identify
+        isolated_core = self.tmp_path / "isolated_core_bin"
+        isolated_core.mkdir(parents=True, exist_ok=True)
+        for tool in ["bash", "sh", "od", "head", "tail", "grep", "wc", "rm", "mv", "mkdir", "md5sum", "find", "cat", "cut", "awk", "tr", "cp"]:
+            p = Path(f"/usr/bin/{tool}")
+            if p.exists():
+                (isolated_core / tool).symlink_to(p)
+
+        isolated_env = {
+            **self.env,
+            "PATH": f"{self.mock_bin_dir}:{isolated_core}",
+        }
+
+        # 1. Valid JPEG should pass structural fallback (ends with ffd9)
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        valid_jpg = self.tmp_path / "valid_struct.jpg"
+        valid_jpg.write_bytes(base64.b64decode(jpeg_b64))
+
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{valid_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover_struct.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res_valid = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_valid.returncode, 0)
+        self.assertFalse(res_valid.stdout.strip().endswith("art-default.png"))
+        self.assertTrue(Path(res_valid.stdout.strip()).is_file())
+
+        # 2. Corrupt JPEG must fail structural fallback (missing ffd9 EOI)
+        bad_jpg = self.tmp_path / "bad_struct.jpg"
+        bad_jpg.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 30)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/bad_struct.jpg")
+        res_bad = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_bad.returncode, 0)
+        self.assertTrue(res_bad.stdout.strip().endswith("art-default.png"))
+
+        # 3. Unverified WebP must be rejected in structural fallback
+        webp_file = self.tmp_path / "dummy.webp"
+        webp_file.write_bytes(b"RIFF\x10\x00\x00\x00WEBPVP8 \x04\x00\x00\x00\x00\x00\x00\x00")
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{webp_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/unverified.webp")
+        res_webp = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_webp.returncode, 0)
+        self.assertTrue(res_webp.stdout.strip().endswith("art-default.png"))
+
 
 if __name__ == "__main__":
     unittest.main()

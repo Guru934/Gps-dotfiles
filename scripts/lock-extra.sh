@@ -60,38 +60,63 @@ validate_image_file() {
         *) return 1 ;;
     esac
 
-    # 3. Reliable lightweight image integrity verification
+    # 3. Image integrity verification
+    # Try Python + Pillow first
     if have python3; then
+        local py_status=0
         python3 -c '
 import sys
 try:
     from PIL import Image
+except (ImportError, ModuleNotFoundError):
+    sys.exit(2)
+
+try:
     with Image.open(sys.argv[1]) as im:
         im.verify()
     sys.exit(0)
 except Exception:
     sys.exit(1)
-' "$f" 2>/dev/null && return 0
-        return 1
-    elif have identify; then
-        identify -ping -quiet "$f" >/dev/null 2>&1 && return 0
-        return 1
+' "$f" 2>/dev/null || py_status=$?
+
+        if [ "$py_status" -eq 0 ]; then
+            return 0
+        elif [ "$py_status" -eq 1 ]; then
+            # Pillow is available and explicitly rejected the image as corrupt/invalid
+            return 1
+        fi
+        # py_status is 2 (Pillow unavailable) or invocation failed; proceed to identify
     fi
 
-    # Fallback container boundary checks if dedicated image analyzers are absent
+    # Try ImageMagick identify if Python/Pillow was unavailable
+    if have identify; then
+        if identify -ping -quiet "$f" >/dev/null 2>&1; then
+            return 0
+        else
+            # identify is installed and explicitly rejected the image
+            return 1
+        fi
+    fi
+
+    # Fallback when neither Pillow nor identify is installed:
+    # Only accept formats with meaningful structural verification (JPEG, PNG).
+    # Reject WebP, GIF, and other formats because magic bytes alone do not guarantee integrity.
     case "$hdr" in
         ffd8ff*)
             # Valid JPEG must end with EOI marker FF D9
             local eoi
             eoi="$(tail -c 2 "$f" 2>/dev/null | od -An -tx1 -N2 | tr -d ' ')"
             [ "$eoi" = "ffd9" ] || return 1
+            return 0
             ;;
         89504e47)
             # Valid PNG must end with IEND chunk
             tail -c 12 "$f" 2>/dev/null | grep -q "IEND" || return 1
+            return 0
             ;;
     esac
-    return 0
+
+    return 1
 }
 
 case "${1:-}" in
