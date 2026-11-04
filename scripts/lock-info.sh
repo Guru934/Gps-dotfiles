@@ -153,9 +153,13 @@ howdy-status)
     wired=no
     grep -q pam_howdy /etc/pam.d/hyprlock 2>/dev/null && wired=yes
     if [ -f "$model" ] && [ "$wired" = yes ]; then
-        echo 'Armed // /dev/video0'
+        dev=$(sed -n 's/^device_path[[:space:]]*=[[:space:]]*//p' /etc/howdy/config.ini 2>/dev/null | head -1)
+        [ -n "$dev" ] || dev="/dev/video0"
+        echo "Armed // $(basename "$dev")"
     elif [ "$wired" = yes ]; then
         echo 'Ready — enroll: sudo howdy add'
+    elif [ -f "$model" ]; then
+        echo 'Enrolled // PAM unconfigured'
     else
         echo 'Not configured // see README'
     fi

@@ -1,49 +1,197 @@
-// Island state: facelock — visual-only Face Lock preview for the GPS dynamic island.
-// Five local subviews: armed (150×34) · inspect (380×122) · scanning (260×60) · ok (260×60) · reject (300×70).
-// This file has no camera, PAM, Howdy, hyprlock, Process, Timer or command path. The stage
-// switcher is a local design preview and must never be read as authentication state.
+// Island state: facelock — Live Howdy biometric status and diagnostic interface for GPS dynamic island.
+// Displays honest system state (Howdy presence, PAM wiring, model enrollment, camera device).
+// Provides user-triggered safe test verification and lock trigger.
+// PAM remains authoritative for real authentication; this component does not grant authentication.
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
+import Quickshell.Io
 
 Item {
     id: st
     required property var core
     readonly property string key: "facelock"
 
-    // Local, non-persistent preview selection. Never written to core or disk.
-    property string previewStage: "armed"
-    property string previewNote: "Visual prototype · authentication backend not connected"
+    // System probe values (populated safely via non-root inspection)
+    property bool howdyInstalled: false
+    property bool pamWired: false
+    property bool sddmWired: false
+    property bool modelEnrolled: false
+    property int modelCount: 0
+    property string configuredDevice: "/dev/video0"
+    property bool cameraAvailable: false
+    property bool probeDone: false
+
+    // Diagnostic test state: "idle" | "scanning" | "ok" | "reject"
+    property string testState: "idle"
+    property string testOutcome: ""
 
     readonly property bool active: core.mode === key
-    readonly property bool inspectView: previewStage === "inspect"
-        || (previewStage === "armed" && Boolean(core.hovered))
-    readonly property bool scanningView: previewStage === "scanning"
-    readonly property bool okView: previewStage === "ok"
-    readonly property bool rejectView: previewStage === "reject"
-    readonly property bool armedView: previewStage === "armed" && !inspectView
+    readonly property bool testing: testState === "scanning"
+    readonly property bool testOk: testState === "ok"
+    readonly property bool testReject: testState === "reject"
+    readonly property bool inspectView: testState === "idle" && (Boolean(core.hovered) || forceInspect)
+    readonly property bool armedView: testState === "idle" && !inspectView
+    property bool forceInspect: false
 
-    readonly property real w: inspectView ? 380 : rejectView ? 300 : (scanningView || okView) ? 260 : 150
-    readonly property real h: inspectView ? 122 : rejectView ? 70 : (scanningView || okView) ? 60 : 34
-    readonly property color accent: rejectView ? core.coral : core.teal
+    readonly property string overallStatus: !howdyInstalled ? "unavailable"
+        : !cameraAvailable ? "no_camera"
+        : !modelEnrolled ? "not_enrolled"
+        : !pamWired ? "unwired"
+        : "ready"
+
+    readonly property string statusLabel: overallStatus === "ready" ? "READY"
+        : overallStatus === "unwired" ? "PAM SETUP NEEDED"
+        : overallStatus === "not_enrolled" ? "NOT ENROLLED"
+        : overallStatus === "no_camera" ? "CAMERA MISSING"
+        : "UNAVAILABLE"
+
+    readonly property color statusColor: overallStatus === "ready" ? core.teal
+        : overallStatus === "unwired" ? core.amber
+        : overallStatus === "not_enrolled" ? core.amber
+        : core.coral
+
+    readonly property real w: inspectView ? 380 : testReject ? 300 : (testing || testOk) ? 260 : 150
+    readonly property real h: inspectView ? 142 : testReject ? 70 : (testing || testOk) ? 60 : 34
+    readonly property color accent: testReject ? core.coral : statusColor
 
     anchors.fill: parent
     opacity: core.mode === key ? 1 : 0
     visible: opacity > 0.01
     Behavior on opacity { NumberAnimation { duration: 160 } }
-    Component.onCompleted: core.register(key, st)
+    Component.onCompleted: {
+        core.register(key, st)
+        refreshStatus()
+    }
 
-    onActiveChanged: if (!active) previewStage = "armed"
+    onActiveChanged: {
+        if (active) {
+            refreshStatus()
+        } else {
+            forceInspect = false
+            cancelTest()
+        }
+    }
 
     function tint(base, alpha) {
         return Qt.rgba(base.r, base.g, base.b, alpha)
     }
 
-    function selectStage(value) {
-        if (["armed", "inspect", "scanning", "ok", "reject"].indexOf(value) < 0) return
-        previewStage = value
+    function refreshStatus() {
+        if (!probeProc.running) {
+            probeProc.running = true
+        }
     }
 
-    // ── small local widgets; each island state stays self-contained ──
+    function startTest() {
+        if (testing) return
+        testOutcome = ""
+        testState = "scanning"
+        testTimer.stop()
+        testProc.running = true
+    }
+
+    function cancelTest() {
+        if (testProc.running) {
+            testProc.running = false
+        }
+        testState = "idle"
+        testOutcome = ""
+        testTimer.stop()
+    }
+
+    function lockSession() {
+        Quickshell.execDetached(["gps-lock"])
+    }
+
+    // ── Non-root telemetry probe (reads standard files and configuration) ──
+    Process {
+        id: probeProc
+        command: ["sh", "-c", '
+            user="${USER:-$(whoami)}"
+            howdy_bin=""
+            command -v howdy >/dev/null 2>&1 && howdy_bin="1"
+            pam_mod="0"
+            { [ -f /usr/lib/security/pam_howdy.so ] || [ -f /lib/security/pam_howdy.so ]; } && pam_mod="1"
+
+            pam_wired="0"
+            grep -q pam_howdy /etc/pam.d/hyprlock 2>/dev/null && pam_wired="1"
+
+            sddm_wired="0"
+            grep -q pam_howdy /etc/pam.d/sddm 2>/dev/null && sddm_wired="1"
+
+            model_file="/etc/howdy/models/${user}.dat"
+            model_count="0"
+            if [ -f "$model_file" ]; then
+                model_count=$(grep -c \'"id":\' "$model_file" 2>/dev/null || echo "1")
+            fi
+
+            cam_dev=$(sed -n "s/^[[:space:]]*device_path[[:space:]]*=[[:space:]]*//p" /etc/howdy/config.ini 2>/dev/null | head -1 | tr -d " \r\n")
+            [ -n "$cam_dev" ] || cam_dev="/dev/video0"
+
+            cam_ok="0"
+            [ -e "$cam_dev" ] && cam_ok="1"
+
+            printf "HOWDY_OK=%s\nPAM_MOD=%s\nPAM_WIRED=%s\nSDDM_WIRED=%s\nMODELS=%s\nCAM_DEV=%s\nCAM_OK=%s\n" \
+                "$howdy_bin" "$pam_mod" "$pam_wired" "$sddm_wired" "$model_count" "$cam_dev" "$cam_ok"
+        ']
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var lines = text.split("\n")
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim()
+                    if (line.indexOf("HOWDY_OK=") === 0) {
+                        st.howdyInstalled = line.substring(9) === "1"
+                    } else if (line.indexOf("PAM_WIRED=") === 0) {
+                        st.pamWired = line.substring(10) === "1"
+                    } else if (line.indexOf("SDDM_WIRED=") === 0) {
+                        st.sddmWired = line.substring(11) === "1"
+                    } else if (line.indexOf("MODELS=") === 0) {
+                        var cnt = parseInt(line.substring(7), 10) || 0
+                        st.modelCount = cnt
+                        st.modelEnrolled = cnt > 0
+                    } else if (line.indexOf("CAM_DEV=") === 0) {
+                        st.configuredDevice = line.substring(8)
+                    } else if (line.indexOf("CAM_OK=") === 0) {
+                        st.cameraAvailable = line.substring(7) === "1"
+                    }
+                }
+                st.probeDone = true
+            }
+        }
+    }
+
+    // ── Safe user-level recognition test runner ──
+    Process {
+        id: testProc
+        command: ["python3", "/usr/lib/howdy/compare.py", ("" + (Quickshell.env("USER") || "guru"))]
+        onExited: (code, status) => {
+            if (st.testState !== "scanning") return
+            if (code === 0) {
+                st.testState = "ok"
+                st.testOutcome = "Face verified (diagnostic test)"
+            } else if (code === 13) {
+                st.testState = "reject"
+                st.testOutcome = "Lighting too dark"
+            } else {
+                st.testState = "reject"
+                st.testOutcome = "Not recognized / timed out"
+            }
+            testTimer.restart()
+        }
+    }
+
+    Timer {
+        id: testTimer
+        interval: 3500
+        repeat: false
+        onTriggered: {
+            st.testState = "idle"
+            st.testOutcome = ""
+        }
+    }
+
+    // ── Small local primitives ──
     component Txt: Text {
         color: st.core.text
         font.family: st.core.uiFont
@@ -71,121 +219,7 @@ Item {
         verticalAlignment: Text.AlignVCenter
     }
 
-    // Amber, clickable preview indicator. Opens the inspector where all stages live.
-    component PreviewTag: Rectangle {
-        id: pt
-        implicitWidth: ptRow.implicitWidth + 14
-        implicitHeight: 18
-        radius: 9
-        color: ptMouse.containsMouse ? st.tint(st.core.amber, 0.20)
-                                     : st.tint(st.core.amber, 0.08)
-        border.width: 1
-        border.color: st.tint(st.core.amber, 0.32)
-        signal picked()
-
-        RowLayout {
-            id: ptRow
-            anchors.centerIn: parent
-            spacing: 2
-
-            Text {
-                Layout.alignment: Qt.AlignVCenter
-                text: "PREVIEW"
-                color: st.core.amber
-                font.family: st.core.monoFont
-                font.pixelSize: 8
-                font.bold: true
-                font.letterSpacing: 0.4
-            }
-
-            Ico {
-                Layout.alignment: Qt.AlignVCenter
-                name: "keyboard_arrow_up"
-                alt: "^"
-                font.pixelSize: 11
-                color: st.core.amber
-            }
-        }
-
-        MouseArea {
-            id: ptMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: pt.picked()
-        }
-    }
-
-    // Explicit stage button used only by the development preview selector.
-    component StageChip: Rectangle {
-        id: sc
-        property string label: ""
-        property bool selected: false
-        property color tone: st.core.teal
-        implicitWidth: scText.implicitWidth + 14
-        implicitHeight: 18
-        radius: 9
-        color: selected ? st.tint(tone, 0.18)
-                        : scMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.10)
-                                                : Qt.rgba(1, 1, 1, 0.05)
-        border.width: 1
-        border.color: selected ? st.tint(tone, 0.45) : Qt.rgba(1, 1, 1, 0.10)
-        signal picked()
-
-        Text {
-            id: scText
-            anchors.centerIn: parent
-            text: sc.label
-            color: sc.selected ? sc.tone : st.core.dim
-            font.family: st.core.monoFont
-            font.pixelSize: 8
-            font.bold: sc.selected
-            font.letterSpacing: 0.4
-        }
-
-        MouseArea {
-            id: scMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: sc.picked()
-        }
-    }
-
-    // The only looping animation in this file. Both entries stop with the stage
-    // or the state, so nothing keeps ticking behind another island mode.
-    component PulseDot: Item {
-        id: pd
-        property bool run: false
-        property color tone: st.core.teal
-        implicitWidth: 10
-        implicitHeight: 10
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: 8
-            height: 8
-            radius: 4
-            color: pd.tone
-            opacity: 0.22
-            SequentialAnimation on scale {
-                loops: Animation.Infinite
-                running: pd.run && st.active && st.visible
-                NumberAnimation { from: 0.7; to: 1.6; duration: 800; easing.type: Easing.OutCubic }
-                NumberAnimation { from: 1.6; to: 0.7; duration: 0 }
-            }
-        }
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: 5
-            height: 5
-            radius: 2.5
-            color: pd.tone
-        }
-    }
-
-    // Wireframe face tile with the Stitch-style laser sweep.
+    // Wireframe face tile with the laser sweep
     component ScanGlyph: Item {
         id: sg
         implicitWidth: 32
@@ -225,7 +259,7 @@ Item {
             y: 5
             width: sg.width - 8
             height: 4
-            visible: st.active && st.visible && st.scanningView
+            visible: st.testing
 
             Rectangle {
                 anchors.centerIn: parent
@@ -247,14 +281,14 @@ Item {
 
             SequentialAnimation on y {
                 loops: Animation.Infinite
-                running: st.active && st.visible && st.scanningView
+                running: st.testing
                 NumberAnimation { from: 5; to: 23; duration: 750; easing.type: Easing.InOutQuad }
                 NumberAnimation { from: 23; to: 5; duration: 750; easing.type: Easing.InOutQuad }
             }
         }
     }
 
-    // ═══════════ A · IDLE ARMED PREVIEW (150×34) ═══════════
+    // ═══════════ A · IDLE ARMED PILL (150×34) ═══════════
     Item {
         anchors.fill: parent
         opacity: st.armedView ? 1 : 0
@@ -264,7 +298,10 @@ Item {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: st.selectStage("inspect")
+            onClicked: {
+                st.forceInspect = !st.forceInspect
+                st.refreshStatus()
+            }
         }
 
         RowLayout {
@@ -278,7 +315,7 @@ Item {
                 name: "face"
                 alt: "◉"
                 font.pixelSize: 15
-                color: st.core.teal
+                color: st.statusColor
             }
 
             Rectangle {
@@ -286,13 +323,13 @@ Item {
                 Layout.preferredWidth: 5
                 Layout.preferredHeight: 5
                 radius: 2.5
-                color: st.core.teal
+                color: st.statusColor
             }
 
             Text {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: "FACE LOCK"
+                text: "FACE"
                 color: st.core.text
                 font.family: st.core.monoFont
                 font.pixelSize: 8
@@ -306,15 +343,15 @@ Item {
                 Layout.preferredWidth: armedBadgeText.implicitWidth + 8
                 Layout.preferredHeight: 14
                 radius: 7
-                color: st.tint(st.core.amber, 0.08)
+                color: st.tint(st.statusColor, 0.12)
                 border.width: 1
-                border.color: st.tint(st.core.amber, 0.28)
+                border.color: st.tint(st.statusColor, 0.35)
 
                 Text {
                     id: armedBadgeText
                     anchors.centerIn: parent
-                    text: "PREVIEW"
-                    color: st.core.amber
+                    text: st.overallStatus === "ready" ? "ARMED" : (st.overallStatus === "unwired" ? "PAM" : "INFO")
+                    color: st.statusColor
                     font.family: st.core.monoFont
                     font.pixelSize: 8
                     font.bold: true
@@ -324,8 +361,7 @@ Item {
         }
     }
 
-    // ═══════════ B · INSPECT PANEL PREVIEW (380×122) ═══════════
-    // Opens on hover from the compact view, or stays open via the INSPECT chip.
+    // ═══════════ B · INSPECTION & CONTROL CARD (380×142) ═══════════
     Item {
         anchors.fill: parent
         opacity: st.inspectView ? 1 : 0
@@ -336,21 +372,21 @@ Item {
             anchors.fill: parent
             anchors.leftMargin: 12
             anchors.rightMargin: 12
-            anchors.topMargin: 11
-            anchors.bottomMargin: 11
-            spacing: 6
+            anchors.topMargin: 10
+            anchors.bottomMargin: 10
+            spacing: 5
 
-            // Top row: identity, honest preview badge.
+            // Top row: Identity and honest live status badge
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 24
+                Layout.preferredHeight: 22
                 spacing: 8
 
                 Rectangle {
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: 24
-                    Layout.preferredHeight: 24
-                    radius: 12
+                    Layout.preferredWidth: 22
+                    Layout.preferredHeight: 22
+                    radius: 11
                     color: Qt.rgba(1, 1, 1, 0.06)
                     border.width: 1
                     border.color: Qt.rgba(1, 1, 1, 0.08)
@@ -359,33 +395,33 @@ Item {
                         anchors.centerIn: parent
                         name: "face"
                         alt: "◉"
-                        font.pixelSize: 14
-                        color: st.core.teal
+                        font.pixelSize: 13
+                        color: st.statusColor
                     }
                 }
 
                 Txt {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
-                    text: "Face lock"
-                    font.pixelSize: 13
+                    text: "Howdy Face Authentication"
+                    font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
 
                 Rectangle {
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: inspectBadgeText.implicitWidth + 12
+                    Layout.preferredWidth: inspectBadgeText.implicitWidth + 10
                     Layout.preferredHeight: 18
                     radius: 9
-                    color: st.tint(st.core.amber, 0.10)
+                    color: st.tint(st.statusColor, 0.12)
                     border.width: 1
-                    border.color: st.tint(st.core.amber, 0.32)
+                    border.color: st.tint(st.statusColor, 0.35)
 
                     Text {
                         id: inspectBadgeText
                         anchors.centerIn: parent
-                        text: "PREVIEW"
-                        color: st.core.amber
+                        text: st.statusLabel
+                        color: st.statusColor
                         font.family: st.core.monoFont
                         font.pixelSize: 8
                         font.bold: true
@@ -394,7 +430,7 @@ Item {
                 }
             }
 
-            // Middle row: the only status statement available in this milestone.
+            // Telemetry line 1: Camera & Hardware
             RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 14
@@ -402,142 +438,169 @@ Item {
 
                 Ico {
                     Layout.alignment: Qt.AlignVCenter
-                    name: "info"
-                    alt: "i"
+                    name: "videocam"
+                    alt: "C"
                     font.pixelSize: 11
-                    color: st.core.dim
+                    color: st.cameraAvailable ? st.core.teal : st.core.coral
                 }
 
                 Mono {
                     Layout.fillWidth: true
-                    text: st.previewNote
+                    text: "Camera: " + (st.configuredDevice ? st.configuredDevice.split("/").pop() : "None")
+                          + (st.cameraAvailable ? " (online)" : " (offline)")
+                          + " · RGB webcam (no hardware IR)"
+                    font.pixelSize: 9
+                    color: st.cameraAvailable ? st.core.text : st.core.coral
+                }
+            }
+
+            // Telemetry line 2: Models & PAM integration status
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 14
+                spacing: 6
+
+                Ico {
+                    Layout.alignment: Qt.AlignVCenter
+                    name: "verified_user"
+                    alt: "V"
+                    font.pixelSize: 11
+                    color: st.pamWired ? st.core.teal : st.core.amber
+                }
+
+                Mono {
+                    Layout.fillWidth: true
+                    text: "Models: " + st.modelCount + " enrolled · Lockscreen PAM: "
+                          + (st.pamWired ? "wired" : "not wired")
+                          + " · Login: " + (st.sddmWired ? "SDDM wired" : "unwired")
                     font.pixelSize: 9
                 }
             }
 
-            // Bottom row: visual-only primary action; no MouseArea is attached.
+            // Real Action Row: Safe test action & Lock screen trigger
             RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 26
                 spacing: 8
 
+                // Button 1: Safe Diagnostic Scan
                 Rectangle {
-                    Layout.preferredWidth: 146
-                    Layout.preferredHeight: 26
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 24
                     Layout.alignment: Qt.AlignVCenter
-                    radius: 13
-                    color: Qt.rgba(1, 1, 1, 0.10)
+                    radius: 12
+                    color: testBtnMouse.containsMouse ? st.tint(st.core.teal, 0.22) : st.tint(st.core.teal, 0.12)
                     border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.12)
+                    border.color: st.tint(st.core.teal, 0.40)
 
                     RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 8
+                        anchors.centerIn: parent
                         spacing: 4
 
                         Ico {
-                            Layout.alignment: Qt.AlignVCenter
-                            name: "lock"
-                            alt: "L"
-                            font.pixelSize: 13
+                            name: "center_focus_weak"
+                            alt: "◎"
+                            font.pixelSize: 12
                             color: st.core.teal
                         }
 
                         Text {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            text: "LOCK NOW"
+                            text: "TEST SCAN"
                             color: st.core.text
                             font.family: st.core.monoFont
-                            font.pixelSize: 9
+                            font.pixelSize: 8
                             font.bold: true
-                            font.letterSpacing: 0.5
-                            elide: Text.ElideRight
+                            font.letterSpacing: 0.4
+                        }
+                    }
+
+                    MouseArea {
+                        id: testBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: st.startTest()
+                    }
+                }
+
+                // Button 2: Real Lock Screen trigger
+                Rectangle {
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 24
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: 12
+                    color: lockBtnMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : Qt.rgba(1, 1, 1, 0.08)
+                    border.width: 1
+                    border.color: Qt.rgba(1, 1, 1, 0.14)
+
+                    RowLayout {
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        Ico {
+                            name: "lock"
+                            alt: "L"
+                            font.pixelSize: 12
+                            color: st.core.text
                         }
 
                         Text {
-                            Layout.alignment: Qt.AlignVCenter
-                            text: "UI ONLY"
-                            color: st.core.amber
+                            text: "LOCK NOW"
+                            color: st.core.text
                             font.family: st.core.monoFont
-                            font.pixelSize: 7
+                            font.pixelSize: 8
                             font.bold: true
+                            font.letterSpacing: 0.4
                         }
+                    }
+
+                    MouseArea {
+                        id: lockBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: st.lockSession()
                     }
                 }
 
                 Mono {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
-                    text: "NO SYSTEM ACTION"
+                    text: "PAM authoritative"
                     horizontalAlignment: Text.AlignRight
                     font.pixelSize: 8
+                    color: st.core.dim
                 }
             }
 
-            // Development-only stage selector. Local state only.
+            // Security note footer
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 18
+                Layout.preferredHeight: 12
                 spacing: 4
 
-                Text {
+                Ico {
                     Layout.alignment: Qt.AlignVCenter
-                    text: "DEV PREVIEW"
-                    color: st.core.amber
-                    font.family: st.core.monoFont
+                    name: "info"
+                    alt: "i"
+                    font.pixelSize: 9
+                    color: st.core.dim
+                }
+
+                Mono {
+                    Layout.fillWidth: true
+                    text: "Password authentication is always preserved as primary fallback"
                     font.pixelSize: 8
-                    font.bold: true
-                    font.letterSpacing: 0.4
+                    color: st.core.dim
                 }
-
-                StageChip {
-                    Layout.alignment: Qt.AlignVCenter
-                    label: "ARMED"
-                    selected: st.previewStage === "armed" && !st.inspectView
-                    onPicked: st.selectStage("armed")
-                }
-
-                StageChip {
-                    Layout.alignment: Qt.AlignVCenter
-                    label: "INSPECT"
-                    selected: st.inspectView
-                    tone: st.core.lav
-                    onPicked: st.selectStage("inspect")
-                }
-
-                StageChip {
-                    Layout.alignment: Qt.AlignVCenter
-                    label: "SCANNING"
-                    selected: st.previewStage === "scanning"
-                    onPicked: st.selectStage("scanning")
-                }
-
-                StageChip {
-                    Layout.alignment: Qt.AlignVCenter
-                    label: "SUCCESS"
-                    selected: st.previewStage === "ok"
-                    onPicked: st.selectStage("ok")
-                }
-
-                StageChip {
-                    Layout.alignment: Qt.AlignVCenter
-                    label: "REJECT"
-                    selected: st.previewStage === "reject"
-                    tone: st.core.coral
-                    onPicked: st.selectStage("reject")
-                }
-
-                Item { Layout.fillWidth: true }
             }
         }
     }
 
-    // ═══════════ C · SCANNING PREVIEW (260×60) ═══════════
+    // ═══════════ C · LIVE TEST SCANNING VIEW (260×60) ═══════════
     Item {
         anchors.fill: parent
-        opacity: st.scanningView ? 1 : 0
+        opacity: st.testing ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 140 } }
 
@@ -563,38 +626,56 @@ Item {
                     spacing: 6
 
                     Txt {
-                        text: "SCANNING"
-                        font.pixelSize: 12
+                        text: "SCANNING FACE"
+                        font.pixelSize: 11
                         font.weight: Font.DemiBold
                     }
 
-                    PulseDot {
+                    Rectangle {
                         Layout.alignment: Qt.AlignVCenter
-                        run: st.scanningView
+                        width: 6
+                        height: 6
+                        radius: 3
+                        color: st.core.teal
                     }
-
-                    Item { Layout.fillWidth: true }
                 }
 
                 Mono {
                     Layout.fillWidth: true
-                    text: "PREVIEW · DESIGN ONLY"
+                    text: "Look at camera · Test only"
                     font.pixelSize: 8
-                    color: st.core.amber
+                    color: st.core.dim
                 }
             }
 
-            PreviewTag {
+            Rectangle {
                 Layout.alignment: Qt.AlignVCenter
-                onPicked: st.selectStage("inspect")
+                width: 22
+                height: 22
+                radius: 11
+                color: Qt.rgba(1, 1, 1, 0.10)
+
+                Ico {
+                    anchors.centerIn: parent
+                    name: "close"
+                    alt: "×"
+                    font.pixelSize: 12
+                    color: st.core.text
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: st.cancelTest()
+                }
             }
         }
     }
 
-    // ═══════════ D · SUCCESS PREVIEW (260×60) ═══════════
+    // ═══════════ D · TEST SUCCESS VIEW (260×60) ═══════════
     Item {
         anchors.fill: parent
-        opacity: st.okView ? 1 : 0
+        opacity: st.testOk ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 140 } }
 
@@ -627,30 +708,26 @@ Item {
 
                 Txt {
                     Layout.fillWidth: true
-                    text: "SUCCESS"
-                    font.pixelSize: 12
+                    text: "FACE RECOGNIZED"
+                    font.pixelSize: 11
                     font.weight: Font.DemiBold
+                    color: st.core.teal
                 }
 
                 Mono {
                     Layout.fillWidth: true
-                    text: "PREVIEW · NO UNLOCK"
+                    text: "Diagnostic match · Ready"
                     font.pixelSize: 8
-                    color: st.core.amber
+                    color: st.core.dim
                 }
-            }
-
-            PreviewTag {
-                Layout.alignment: Qt.AlignVCenter
-                onPicked: st.selectStage("inspect")
             }
         }
     }
 
-    // ═══════════ E · REJECT PREVIEW (300×70) ═══════════
+    // ═══════════ E · TEST REJECT VIEW (300×70) ═══════════
     Item {
         anchors.fill: parent
-        opacity: st.rejectView ? 1 : 0
+        opacity: st.testReject ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 140 } }
 
@@ -665,9 +742,9 @@ Item {
                 Layout.preferredWidth: 32
                 Layout.preferredHeight: 32
                 radius: 9
-                color: st.tint(st.core.coral, 0.14)
+                color: st.tint(st.core.coral, 0.16)
                 border.width: 1
-                border.color: st.tint(st.core.coral, 0.30)
+                border.color: st.tint(st.core.coral, 0.35)
 
                 Ico {
                     anchors.centerIn: parent
@@ -685,22 +762,25 @@ Item {
 
                 Txt {
                     Layout.fillWidth: true
-                    text: "REJECTED"
-                    font.pixelSize: 12
+                    text: "RECOGNITION FAILED"
+                    font.pixelSize: 11
                     font.weight: Font.DemiBold
+                    color: st.core.coral
                 }
 
                 Mono {
                     Layout.fillWidth: true
-                    text: "PREVIEW · MOCK STATE"
+                    text: st.testOutcome || "Face not matched or timed out"
                     font.pixelSize: 8
-                    color: st.core.coral
+                    color: st.core.text
                 }
-            }
 
-            PreviewTag {
-                Layout.alignment: Qt.AlignVCenter
-                onPicked: st.selectStage("inspect")
+                Mono {
+                    Layout.fillWidth: true
+                    text: "Password fallback remains available"
+                    font.pixelSize: 8
+                    color: st.core.dim
+                }
             }
         }
     }

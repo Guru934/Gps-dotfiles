@@ -63,6 +63,8 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 STACK_ACTION=""
 STACK_BACKUP=""
 
+DRY_RUN=false
+
 say() { printf '%s\n' "$*"; }
 err() { printf 'ERROR: %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
@@ -210,9 +212,11 @@ install_stack() { # <target> <content-file> <pam.d-dir>
 }
 
 main() {
-    ((EUID == 0)) || die "installs a package and writes $PAM_FILE - run: sudo $0"
+    if [[ $DRY_RUN == false ]]; then
+        ((EUID == 0)) || die "installs a package and writes $PAM_FILE - run: sudo $0 (or $0 --dry-run)"
+    fi
 
-    local user_name="${SUDO_USER:-rice}"
+    local user_name="${SUDO_USER:-${USER:-guru}}"
     local user_home
     user_home="$(getent passwd "$user_name" | cut -d: -f6)" || true
     [[ -n $user_home ]] || die "could not resolve home directory for '$user_name'"
@@ -229,6 +233,56 @@ main() {
     trap "rm -f '$content'" EXIT
     render_stack "$howdy" "$include_target" >"$content"
     verify_stack "$content" /etc/pam.d || die "generated stack failed pre-flight verification (nothing written)"
+
+    if [[ $DRY_RUN == true ]]; then
+        say "== setup-lockscreen.sh DRY-RUN (0 changes made) =="
+        say "==> [1/4] Current $PAM_FILE"
+        if [[ -f $PAM_FILE ]]; then
+            sed 's/^/      | /' "$PAM_FILE" | head -n 12
+        else
+            say "    no existing file"
+        fi
+        say "==> [2/4] Proposed lockscreen PAM stack ($PAM_FILE)"
+        sed 's/^/      | /' "$content"
+        say "==> [3/4] Howdy enrollment & camera device status"
+        if [[ -f /etc/howdy/config.ini ]]; then
+            local cur_cam
+            cur_cam="$(sed -n 's/^[[:space:]]*device_path[[:space:]]*=[[:space:]]*//p' /etc/howdy/config.ini | head -1 | tr -d ' \r\n')"
+            say "    configured camera: ${cur_cam:-none}"
+            local stable_cam=""
+            for cand in /dev/v4l/by-path/*video-index0; do
+                if [[ -e $cand ]]; then
+                    stable_cam="$cand"
+                    break
+                fi
+            done
+            if [[ -n $stable_cam && "$cur_cam" != "$stable_cam" ]]; then
+                say "    proposed camera update -> $stable_cam"
+            elif [[ -n $stable_cam ]]; then
+                say "    camera path already stable ($stable_cam)"
+            fi
+            if [[ -f "/etc/howdy/models/${user_name}.dat" ]]; then
+                local mcnt
+                mcnt=$(grep -c '"id":' "/etc/howdy/models/${user_name}.dat" 2>/dev/null || echo "1")
+                say "    model for '$user_name': present ($mcnt model(s))"
+            else
+                say "    model for '$user_name': MISSING"
+            fi
+        fi
+        say "==> [4/4] Graphical login (SDDM) PAM stack"
+        if [[ -f /etc/pam.d/sddm ]]; then
+            if grep -q "pam_howdy" /etc/pam.d/sddm; then
+                say "    SDDM face unlock: present in /etc/pam.d/sddm"
+            else
+                say "    SDDM face unlock: missing from /etc/pam.d/sddm"
+            fi
+            if grep -q "system-login" /etc/pam.d/sddm; then
+                say "    SDDM password fallback: preserved (system-login present)"
+            fi
+        fi
+        say "DRY-RUN completed: verified configuration, 0 changes made."
+        return 0
+    fi
 
     say "==> [1/6] Installing hyprlock from the official repositories"
     pacman -S --needed --noconfirm hyprlock
@@ -262,10 +316,32 @@ main() {
         unchanged) say "    $PAM_FILE already matches this script - no write, no backup" ;;
     esac
 
-    say "==> [4/6] Howdy enrollment status"
+    say "==> [4/6] Howdy enrollment & camera configuration status"
     if [[ -f /etc/howdy/config.ini ]]; then
+        local cur_cam
+        cur_cam="$(sed -n 's/^[[:space:]]*device_path[[:space:]]*=[[:space:]]*//p' /etc/howdy/config.ini | head -1 | tr -d ' \r\n')"
+        say "    configured camera: ${cur_cam:-none}"
+        local stable_cam=""
+        for cand in /dev/v4l/by-path/*video-index0; do
+            if [[ -e $cand ]]; then
+                stable_cam="$cand"
+                break
+            fi
+        done
+        if [[ -n $stable_cam && "$cur_cam" != "$stable_cam" && -w /etc/howdy/config.ini ]]; then
+            local howdy_bak
+            howdy_bak="$(make_backup "/etc/howdy/config.ini" "/etc/howdy/config.ini.bak-$STAMP")"
+            sed -i -E "s|^([[:space:]]*device_path[[:space:]]*=).*|\1 $stable_cam|" /etc/howdy/config.ini
+            say "    updated /etc/howdy/config.ini device_path -> $stable_cam"
+            say "    backup saved: $howdy_bak"
+        elif [[ -n $stable_cam ]]; then
+            say "    stable by-path camera: active ($stable_cam)"
+        fi
+
         if [[ -f "/etc/howdy/models/${user_name}.dat" ]]; then
-            say "    model for '$user_name': present"
+            local mcnt
+            mcnt=$(grep -c '"id":' "/etc/howdy/models/${user_name}.dat" 2>/dev/null || echo "1")
+            say "    model for '$user_name': present ($mcnt model(s) enrolled)"
         else
             say "    model for '$user_name': MISSING - face unlock inactive"
             say "    enroll manually when ready (interactive, done by you):  sudo howdy add"
@@ -274,7 +350,19 @@ main() {
         say "    WARNING: /etc/howdy/config.ini not found - Howdy will decline face auth"
     fi
 
-    say "==> [5/6] Removing user-local staged hyprlock"
+    say "==> [5/6] Inspecting graphical login (SDDM) PAM stack"
+    if [[ -f /etc/pam.d/sddm ]]; then
+        if grep -q "pam_howdy" /etc/pam.d/sddm; then
+            say "    SDDM face unlock: present in /etc/pam.d/sddm"
+        else
+            say "    SDDM face unlock: not configured in /etc/pam.d/sddm"
+        fi
+        if grep -q "system-login" /etc/pam.d/sddm; then
+            say "    SDDM password fallback: preserved (system-login present)"
+        fi
+    fi
+
+    say "==> [6/6] Removing user-local staged hyprlock & verifying"
     local staged_dir="$user_home/.local/opt/hyprlock"
     local staged_link="$user_home/.local/bin/hyprlock"
     if [[ -L $staged_link && $(readlink -f -- "$staged_link") == "$staged_dir/bin/hyprlock" ]]; then
@@ -286,7 +374,6 @@ main() {
         say "    removed: $staged_dir"
     fi
 
-    say "==> [6/6] Verifying"
     bash -n "$0"
     verify_stack "$PAM_FILE" /etc/pam.d
     say "    PAM stack: valid ($(grep -c -v '^#' "$PAM_FILE") active rule(s) in $PAM_FILE)"
@@ -427,6 +514,10 @@ run_self_test() {
 
 case "${1:-}" in
     "") main ;;
+    --dry-run)
+        DRY_RUN=true
+        main
+        ;;
     --self-test) run_self_test ;;
     --help | -h) awk 'NR > 1 { if ($0 == "") exit; sub(/^# ?/, ""); print }' "$0" ;;
     *)
