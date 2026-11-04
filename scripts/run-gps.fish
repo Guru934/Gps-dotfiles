@@ -13,7 +13,7 @@ set -l gps_startup_lock "$gps_lock_dir/startup.lock"
 if not set -q _GPS_STARTUP_LOCKED
     if command -v flock >/dev/null 2>&1
         set -gx _GPS_STARTUP_LOCKED 1
-        flock -n "$gps_startup_lock" fish (status filename) $argv
+        flock -o -n "$gps_startup_lock" fish (status filename) $argv
         set -l flock_rc $status
         if test $flock_rc -eq 1
             # Lock contention: another startup pass is already in progress
@@ -361,6 +361,34 @@ end
 if not pgrep -x awatcher >/dev/null 2>&1
     nohup "$HOME/.local/opt/awatcher/awatcher" --no-tray >"$gps_log_dir/awatcher.log" 2>&1 &
     disown
+end
+
+# 8. Start external GPS watchdog in observation mode.
+# Starts only after Island and main shell are confirmed ready.
+# Explicitly uses --mode observe. Never blocks startup.
+if test -n "$island_pid" -a -n "$shell_pid" -a -d "/proc/$island_pid" -a -d "/proc/$shell_pid"
+    set -l watchdog_pid_file "$gps_lock_dir/watchdog.pid"
+    set -l watchdog_running 0
+    if test -f "$watchdog_pid_file"
+        set -l w_pid (cat "$watchdog_pid_file" 2>/dev/null | string trim)
+        if test -n "$w_pid" -a -d "/proc/$w_pid"
+            set -l w_uid (stat -c '%u' "/proc/$w_pid" 2>/dev/null)
+            if test "$w_uid" = (id -u)
+                set -l w_cmd (tr '\0' ' ' <"/proc/$w_pid/cmdline" 2>/dev/null)
+                if string match -q "*gps-watchdog*" "$w_cmd"
+                    set watchdog_running 1
+                    log "GPS watchdog already active (pid $w_pid) - not duplicating"
+                end
+            end
+        end
+    end
+    if test $watchdog_running -eq 0
+        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1 &
+        disown
+        log "GPS watchdog launched in observation mode"
+    end
+else
+    log "WARN: skipping watchdog startup; Island or main shell is not ready"
 end
 
 log "startup pass complete"

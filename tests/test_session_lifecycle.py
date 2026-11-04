@@ -74,6 +74,14 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertIn("polkit-kde-authentication-agent-1", RUN_GPS)
         self.assertIn("not duplicating", RUN_GPS)
 
+    def test_run_gps_watchdog_autostart_and_deduplication(self):
+        """run-gps.fish starts watchdog in observe mode after Island and shell readiness, without duplicating."""
+        self.assertIn("watchdog.pid", RUN_GPS)
+        self.assertIn("gps-watchdog", RUN_GPS)
+        self.assertIn("--mode observe", RUN_GPS)
+        self.assertIn("not duplicating", RUN_GPS)
+        self.assertIn("disown", RUN_GPS)
+
 
 if __name__ == "__main__":
     unittest.main()

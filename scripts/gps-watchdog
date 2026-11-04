@@ -270,6 +270,11 @@ class GpsWatchdog:
         pause_flag = self.runtime_dir / "watchdog-pause.flag"
         return pause_flag.is_file()
 
+    def is_shutdown(self) -> bool:
+        """Check for explicit shutdown flag."""
+        shutdown_flag = self.runtime_dir / "watchdog-shutdown.flag"
+        return shutdown_flag.is_file()
+
     def tick(self, now: Optional[float] = None) -> Dict[str, Any]:
         """Perform one monitoring pass."""
         if now is None:
@@ -278,6 +283,7 @@ class GpsWatchdog:
         report: Dict[str, Any] = {
             "mode": self.mode,
             "session_active": True,
+            "shutdown": False,
             "startup_locked": False,
             "paused": False,
             "components": {},
@@ -286,10 +292,15 @@ class GpsWatchdog:
         # 1. Check session viability
         if not self.check_session_fn():
             report["session_active"] = False
-            self.logger.log("INFO", "Graphical session inactive or terminating. Watchdog idling.")
+            self.logger.log("INFO", "Graphical session inactive or terminating.")
             return report
 
-        # 2. Check startup locks / intentional pause
+        # 2. Check intentional shutdown
+        if self.is_shutdown():
+            report["shutdown"] = True
+            return report
+
+        # 3. Check startup locks / intentional pause
         if self.is_startup_locked():
             report["startup_locked"] = True
             return report
@@ -402,7 +413,13 @@ class GpsWatchdog:
         try:
             while self.running:
                 try:
-                    self.tick()
+                    rep = self.tick()
+                    if not rep.get("session_active", True):
+                        self.logger.log("INFO", "Graphical session terminated. Watchdog exiting cleanly.")
+                        break
+                    if rep.get("shutdown", False):
+                        self.logger.log("INFO", "Intentional GPS shutdown detected. Watchdog exiting cleanly.")
+                        break
                     time.sleep(interval)
                 except (KeyboardInterrupt, SystemExit):
                     self.logger.log("INFO", "GPS Watchdog stopped by signal.")
@@ -425,6 +442,9 @@ class GpsWatchdog:
 def stop_watchdog(runtime_dir: Optional[Path] = None) -> int:
     r_dir = runtime_dir or get_runtime_dir()
     pid_file = r_dir / "watchdog.pid"
+    shutdown_flag = r_dir / "watchdog-shutdown.flag"
+    shutdown_flag.unlink(missing_ok=True)
+
     if not pid_file.is_file():
         print("GPS Watchdog is not running.")
         return 0
@@ -438,13 +458,23 @@ def stop_watchdog(runtime_dir: Optional[Path] = None) -> int:
         return 0
 
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        proc_path = Path(f"/proc/{pid}")
+        if proc_path.stat().st_uid != os.getuid():
+            pid_file.unlink(missing_ok=True)
+            print(f"PID {pid} does not belong to current user (removed stale PID file).")
+            return 0
+        with open(proc_path / "cmdline", "rb") as f:
+            args = f.read().decode("utf-8", "ignore")
+        if "gps-watchdog" not in args:
+            pid_file.unlink(missing_ok=True)
+            print(f"PID {pid} is not GPS Watchdog (removed stale PID file).")
+            return 0
+    except (FileNotFoundError, ProcessLookupError):
         pid_file.unlink(missing_ok=True)
         print(f"GPS Watchdog was not running (removed stale PID file {pid}).")
         return 0
     except PermissionError:
-        print(f"Permission denied to signal PID {pid}.", file=sys.stderr)
+        print(f"Permission denied to inspect PID {pid}.", file=sys.stderr)
         return 1
 
     print(f"Stopping GPS Watchdog (PID {pid})...")

@@ -237,6 +237,52 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(pid_file.exists(), "Stale PID file should be removed")
 
+    def test_graphical_session_termination_exits_loop(self):
+        """Watchdog run loop terminates cleanly (returns 0) when graphical session ends."""
+        watchdog = gps_watchdog.GpsWatchdog(
+            mode="observe",
+            runtime_dir=self.runtime_dir,
+            logger=self.logger,
+            check_session_fn=lambda: False,  # Simulated compositor teardown
+        )
+        code = watchdog.run(interval=0.01)
+        self.assertEqual(code, 0)
+        # PID file should be removed on exit
+        pid_file = self.runtime_dir / "watchdog.pid"
+        self.assertFalse(pid_file.exists())
+
+    def test_intentional_shutdown_flag_exits_loop(self):
+        """Watchdog run loop terminates cleanly when watchdog-shutdown.flag is detected."""
+        shutdown_flag = self.runtime_dir / "watchdog-shutdown.flag"
+        shutdown_flag.touch()
+
+        watchdog = gps_watchdog.GpsWatchdog(
+            mode="observe",
+            runtime_dir=self.runtime_dir,
+            logger=self.logger,
+            check_session_fn=lambda: True,
+        )
+        code = watchdog.run(interval=0.01)
+        self.assertEqual(code, 0)
+        pid_file = self.runtime_dir / "watchdog.pid"
+        self.assertFalse(pid_file.exists())
+
+    def test_stop_watchdog_safe_against_unrelated_process(self):
+        """stop_watchdog refuses to signal a PID that is not gps-watchdog and removes stale PID file."""
+        pid_file = self.runtime_dir / "watchdog.pid"
+        # Use our own test runner process PID (which is running python unittest, not gps-watchdog)
+        pid_file.write_text(str(os.getpid()))
+
+        code = gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir)
+        self.assertEqual(code, 0)
+        self.assertFalse(pid_file.exists(), "PID file for non-watchdog process should be unlinked")
+
+    def test_stop_watchdog_idempotent(self):
+        """Multiple sequential calls to stop_watchdog succeed without error."""
+        self.assertEqual(gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir), 0)
+        self.assertEqual(gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir), 0)
+        self.assertEqual(gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

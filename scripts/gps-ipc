@@ -281,6 +281,35 @@ case "$cmd" in
             printf "Record: "
             "$REPO_DIR/scripts/gps-record" status || true
         fi
+
+        if [[ -x "$REPO_DIR/scripts/gps-watchdog" ]]; then
+            printf "Watchdog: "
+            if python3 "$REPO_DIR/scripts/gps-watchdog" --status >/dev/null 2>&1; then
+                echo "active (observation mode)"
+            else
+                echo "stopped"
+            fi
+        fi
+        ;;
+
+    watchdog)
+        action="${1:-status}"
+        shift || true
+        case "$action" in
+            start)
+                python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe &
+                ;;
+            stop)
+                python3 "$REPO_DIR/scripts/gps-watchdog" --stop
+                ;;
+            status)
+                python3 "$REPO_DIR/scripts/gps-watchdog" --status
+                ;;
+            *)
+                echo "Usage: gps-ipc watchdog <status|start|stop>" >&2
+                exit 1
+                ;;
+        esac
         ;;
 
     record)
@@ -307,7 +336,7 @@ case "$cmd" in
         ;;
 
     *)
-        echo "Usage: gps-ipc <shell|settings|island|launcher|clipboard|mediahub|toolbox|pet|rail|notify|record|shot|picker|nightlight|check|status|doctor|health> [args...]" >&2
+        echo "Usage: gps-ipc <shell|settings|island|launcher|clipboard|mediahub|toolbox|pet|rail|notify|record|shot|picker|nightlight|check|status|doctor|health|watchdog> [args...]" >&2
         echo "  shell <target> <action> [args...]" >&2
         echo "  island <show|hide|pin|unpin|status|control|launcher|history|focusToggle|nightlight|action> [args...]" >&2
         echo "  launcher [action]" >&2
@@ -322,6 +351,7 @@ case "$cmd" in
         echo "  record <start|stop|toggle|status> [args...]" >&2
         echo "  shot [region|window|monitor]" >&2
         echo "  picker" >&2
+        echo "  watchdog <status|start|stop>" >&2
         echo "  check [shell|island|settings|all]" >&2
         echo "  status" >&2
         echo "  doctor [--json]" >&2
