@@ -299,6 +299,17 @@ class InstallerManifest:
                 "reversible": True,
                 "is_state": False,
             },
+            {
+                "id": "lock_avatar_conf",
+                "category": "config",
+                "src": self.repo_root / "dots" / "hypr" / "lock-avatar.conf",
+                "dest": self.config_dir / "hypr" / "lock-avatar.conf",
+                "type": "symlink",
+                "backup_on_conflict": True,
+                "preserve_on_conflict": False,
+                "reversible": True,
+                "is_state": False,
+            },
             # Rofi configuration
             {
                 "id": "rofi_config",

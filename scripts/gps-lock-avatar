@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""gps-lock-avatar — profile picture manager for the GPS hyprlock screen.
+
+Called automatically by gps-lock before every lock. It decides which picture to
+show beside your name and writes ~/.config/hypr/lock-avatar.conf containing
+`$avatar = <absolute path>`. It also makes sure the fallback images exist, so
+the lock screen never points at a missing file.
+
+Picture lookup order (first match wins):
+  1. $GPS_LOCK_AVATAR                         (env override)
+  2. ~/.config/gps/avatar.{png,jpg,jpeg,webp} (what `--set` manages)
+  3. ~/.face, ~/.face.icon
+  4. /var/lib/AccountsService/icons/$USER
+  5. generated silhouette placeholder
+
+Commands:
+  gps-lock-avatar                refresh lock-avatar.conf (what gps-lock runs)
+  gps-lock-avatar --set FILE     use FILE as your picture (square-cropped, 512px)
+  gps-lock-avatar --clear        remove your picture, go back to placeholder
+  gps-lock-avatar --status       show what would be used
+
+The lock must never break because of this script: every failure falls back
+quietly and the exit code is always 0 (except bad arguments for --set).
+"""
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import zlib
+from pathlib import Path
+
+EXTS = (".png", ".jpg", ".jpeg", ".webp")
+HOME = Path.home()
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+CACHE_HOME = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
+AVATAR_DIR = CONFIG_HOME / "gps"
+CACHE_DIR = CACHE_HOME / "gps" / "lock"
+CONF_PATH = Path(os.environ.get("GPS_LOCK_AVATAR_CONF") or CONFIG_HOME / "hypr" / "lock-avatar.conf")
+DEFAULT_AVATAR = CACHE_DIR / "avatar-default.png"
+DEFAULT_ART = CACHE_DIR / "art-default.png"
+SIZE = 512
+
+
+# ---------------------------------------------------------------- file helpers
+def atomic_write_bytes(target: Path, data: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as tf:
+        tf.write(data)
+        tmp = tf.name
+    os.replace(tmp, target)
+
+
+def readable(p: Path) -> bool:
+    try:
+        return p.is_file() and os.access(p, os.R_OK) and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
+# ------------------------------------------------- tiny PNG writer (stdlib only)
+def write_png(path: Path, w: int, h: int, rgba: bytearray) -> None:
+    raw = bytearray()
+    stride = w * 4
+    for y in range(h):
+        raw.append(0)
+        raw.extend(rgba[y * stride:(y + 1) * stride])
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBB B", w, h, 8, 6, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+           + chunk(b"IEND", b""))
+    atomic_write_bytes(path, png)
+
+
+def render(path: Path, size: int, shader) -> None:
+    """shader(u, v) -> (r, g, b) for u, v in 0..1. 2x2 supersampling."""
+    buf = bytearray(size * size * 4)
+    offs = (0.25, 0.75)
+    for y in range(size):
+        for x in range(size):
+            r = g = b = 0
+            for oy in offs:
+                for ox in offs:
+                    cr, cg, cb = shader((x + ox) / size, (y + oy) / size)
+                    r += cr; g += cg; b += cb
+            i = (y * size + x) * 4
+            buf[i] = r // 4; buf[i + 1] = g // 4; buf[i + 2] = b // 4; buf[i + 3] = 255
+    write_png(path, size, size, buf)
+
+
+def avatar_shader(u: float, v: float):
+    bg, fg = (30, 52, 50), (150, 196, 190)
+    # head
+    if (u - 0.5) ** 2 + (v - 0.38) ** 2 <= 0.17 ** 2:
+        return fg
+    # shoulders (ellipse cut by the bottom edge)
+    if ((u - 0.5) / 0.34) ** 2 + ((v - 0.92) / 0.30) ** 2 <= 1.0:
+        return fg
+    return bg
+
+
+def art_shader(u: float, v: float):
+    bg = (14, 20, 22)
+    d = math.hypot(u - 0.5, v - 0.5)
+    if d <= 0.07:
+        return (110, 150, 146)
+    if d <= 0.10:
+        return (22, 30, 32)
+    if d <= 0.44:
+        ring = int((d - 0.10) / 0.34 * 9)
+        return (36, 48, 50) if ring % 2 == 0 else (26, 36, 38)
+    return bg
+
+
+def ensure_defaults() -> None:
+    try:
+        if not readable(DEFAULT_AVATAR):
+            render(DEFAULT_AVATAR, 256, avatar_shader)
+        if not readable(DEFAULT_ART):
+            render(DEFAULT_ART, 256, art_shader)
+    except Exception as exc:  # never block the lock
+        print(f"warn: could not generate default images: {exc}", file=sys.stderr)
+
+
+# ------------------------------------------------------ square crop + resize
+def square_crop(src: Path, dest: Path) -> bool:
+    """Center-crop to square, resize to 512px PNG. Returns True on success."""
+    try:
+        from PIL import Image, ImageOps  # type: ignore
+        with Image.open(src) as im:
+            im = ImageOps.exif_transpose(im).convert("RGBA")
+            side = min(im.size)
+            left, top = (im.width - side) // 2, (im.height - side) // 2
+            im = im.crop((left, top, left + side, top + side)).resize((SIZE, SIZE), Image.LANCZOS)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(".tmp.png")
+            im.save(tmp, "PNG")
+            os.replace(tmp, dest)
+        return True
+    except ImportError:
+        pass
+    except Exception as exc:
+        print(f"warn: PIL could not process {src}: {exc}", file=sys.stderr)
+        return False
+
+    for tool in ("magick", "convert"):
+        exe = shutil.which(tool)
+        if not exe:
+            continue
+        tmp = dest.with_suffix(".tmp.png")
+        cmd = [exe, str(src) + "[0]", "-auto-orient", "-gravity", "center",
+               "-crop", "%[fx:min(w,h)]x%[fx:min(w,h)]+0+0", "+repage",
+               "-resize", f"{SIZE}x{SIZE}", f"PNG32:{tmp}"]
+        if tool == "convert":
+            cmd[0] = exe
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=20)
+            os.replace(tmp, dest)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+# --------------------------------------------------------------- resolution
+def managed_avatar() -> Path | None:
+    for ext in EXTS:
+        p = AVATAR_DIR / f"avatar{ext}"
+        if readable(p):
+            return p
+    return None
+
+
+def find_source() -> tuple[Path | None, str]:
+    env = os.environ.get("GPS_LOCK_AVATAR")
+    if env and readable(Path(env).expanduser()):
+        return Path(env).expanduser().resolve(), "env GPS_LOCK_AVATAR"
+    m = managed_avatar()
+    if m:
+        return m.resolve(), "~/.config/gps/avatar.*"
+    for p in (HOME / ".face", HOME / ".face.icon"):
+        if readable(p):
+            return p.resolve(), str(p).replace(str(HOME), "~")
+    user = os.environ.get("USER") or ""
+    if user:
+        p = Path("/var/lib/AccountsService/icons") / user
+        if readable(p):
+            return p, "AccountsService icon"
+    return None, "generated placeholder"
+
+
+def resolve() -> tuple[Path, str]:
+    ensure_defaults()
+    src, why = find_source()
+    if src is None:
+        return DEFAULT_AVATAR, why
+    if src.parent == AVATAR_DIR and src.stem == "avatar":
+        return src, why                      # already cropped by --set
+    processed = CACHE_DIR / "avatar-processed.png"
+    if square_crop(src, processed):
+        return processed, why
+    return src, why + " (used as-is: install python-pillow for auto square-crop)"
+
+
+def write_conf(path: Path) -> None:
+    content = (
+        "# Generated by scripts/gps-lock-avatar — do not edit by hand.\n"
+        "# Change your picture with: gps-lock-avatar --set /path/to/photo.jpg\n"
+        f"$avatar = {path}\n"
+    )
+    try:
+        atomic_write_bytes(CONF_PATH, content.encode("utf-8"))
+    except OSError as exc:
+        print(f"warn: could not write {CONF_PATH}: {exc}", file=sys.stderr)
+
+
+# ------------------------------------------------------------------- main
+def main() -> int:
+    ap = argparse.ArgumentParser(description="GPS lock-screen profile picture")
+    ap.add_argument("--set", type=Path, metavar="FILE", help="use FILE as profile picture")
+    ap.add_argument("--clear", action="store_true", help="remove picture, use placeholder")
+    ap.add_argument("--status", action="store_true", help="print what would be used")
+    a = ap.parse_args()
+
+    if a.set:
+        src = a.set.expanduser()
+        if not readable(src) or src.suffix.lower() not in EXTS:
+            print(f"error: {src} is not a readable png/jpg/jpeg/webp file", file=sys.stderr)
+            return 2
+        for ext in EXTS:                       # drop older managed copies
+            try:
+                (AVATAR_DIR / f"avatar{ext}").unlink()
+            except FileNotFoundError:
+                pass
+        dest = AVATAR_DIR / "avatar.png"
+        if not square_crop(src, dest):
+            dest = AVATAR_DIR / f"avatar{src.suffix.lower()}"
+            AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            print("note: copied as-is (no python-pillow/imagemagick) — use a square photo.")
+        print(f"saved: {dest}")
+
+    if a.clear:
+        for ext in EXTS:
+            try:
+                (AVATAR_DIR / f"avatar{ext}").unlink()
+            except FileNotFoundError:
+                pass
+        print("cleared managed picture")
+
+    path, why = resolve()
+    if a.status:
+        print(f"avatar: {path}\nsource: {why}\nconf:   {CONF_PATH}")
+        return 0
+    write_conf(path)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:   # last-resort guard: the lock must still start
+        print(f"warn: gps-lock-avatar failed: {exc}", file=sys.stderr)
+        sys.exit(0)
+

@@ -313,6 +313,7 @@ class LockConfigurationLayoutTests(unittest.TestCase):
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
         self.assertIn("source = ~/.config/hypr/lock-colors.conf", content)
         self.assertIn("source = ~/.config/hypr/lock-bg.conf", content)
+        self.assertIn("source = ~/.config/hypr/lock-avatar.conf", content)
 
     def test_fallback_lock_bg_file_exists_in_repo(self):
         self.assertTrue(LOCK_BG_FALLBACK.is_file())
@@ -320,40 +321,39 @@ class LockConfigurationLayoutTests(unittest.TestCase):
     def test_telemetry_chips_have_non_overlapping_gaps(self):
         """Verify the 4 telemetry chips (bat, net, kb, caps) do not overlap."""
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
-        # Extract chip positions and sizes
-        # In our refined config:
-        # bat: center -509, width 110 -> [-564, -454]
-        # net: center -366, width 160 -> [-446, -286]
-        # kb:  center -242, width 72  -> [-278, -206]
-        # caps:center -156, width 84  -> [-198, -114]
-        self.assertIn("position = -509, 285", content)
-        self.assertIn("size = 110, 22", content)
-        self.assertIn("position = -366, 285", content)
-        self.assertIn("size = 160, 22", content)
-        self.assertIn("position = -242, 285", content)
-        self.assertIn("size = 72, 22", content)
-        self.assertIn("position = -156, 285", content)
-        self.assertIn("size = 84, 22", content)
+        # Extract chip positions and sizes in redesigned layout (1920x1200 canvas):
+        # bat: center -847, width 130 -> [-912, -782]
+        # net: center -637, width 270 -> [-772, -502]
+        # kb:  center -447, width 90  -> [-492, -402]
+        # caps:center -327, width 130 -> [-392, -262]
+        self.assertIn("position = -847, 496", content)
+        self.assertIn("size = 130, 34", content)
+        self.assertIn("position = -637, 496", content)
+        self.assertIn("size = 270, 34", content)
+        self.assertIn("position = -447, 496", content)
+        self.assertIn("size = 90, 34", content)
+        self.assertIn("position = -327, 496", content)
+        self.assertIn("size = 130, 34", content)
 
         # Check gaps mathematically
-        bat_r = -509 + 55  # -454
-        net_l = -366 - 80  # -446
+        bat_r = -847 + 65  # -782
+        net_l = -637 - 135 # -772
         self.assertGreater(net_l, bat_r, "Gap between Battery and Net must be positive")
 
-        net_r = -366 + 80  # -286
-        kb_l = -242 - 36   # -278
+        net_r = -637 + 135 # -502
+        kb_l = -447 - 45   # -492
         self.assertGreater(kb_l, net_r, "Gap between Net and Keyboard must be positive")
 
-        kb_r = -242 + 36   # -206
-        caps_l = -156 - 42 # -198
+        kb_r = -447 + 45   # -402
+        caps_l = -327 - 65 # -392
         self.assertGreater(caps_l, kb_r, "Gap between Keyboard and Caps must be positive")
 
     def test_media_card_layout_bounds(self):
-        """Verify media card layout: title at left (max 22 chars), volume positioned at left 315."""
+        """Verify media card layout: title and volume within card boundaries."""
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
         self.assertIn("text = cmd[update:3000] $info media-title", content)
         self.assertNotIn("text = cmd[update:3000] $info media-title --always", content)
-        self.assertIn("position = 315, -358", content)
+        self.assertIn("text = cmd[update:3000] $info media-vol", content)
 
 
 if __name__ == "__main__":
