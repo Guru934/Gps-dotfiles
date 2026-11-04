@@ -17,6 +17,10 @@ PanelWindow {
         : (Quickshell.env("GPS_ROOT") || "")
     readonly property string wallpaperDirectory: "file://" + Quickshell.env("HOME") + "/Pictures/Wallpapers"
 
+    readonly property var targetScreen: (root.hub && root.hub.popupScreen)
+        ? root.hub.popupScreen
+        : (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null)
+
     function toggle() { root.isOpen = !root.isOpen }
     function close() { root.isOpen = false }
     function step(delta) {
@@ -28,9 +32,17 @@ PanelWindow {
         carouselLoader.item.applyWallpaper()
     }
 
-    // PanelWindow anchors are layer-shell edge flags. Cover the full screen
-    // so floating elements can span across the display without edge clipping.
-    anchors { top: true; bottom: true; left: true; right: true }
+    // Centered finite surface: empty layer-shell edge anchors.
+    // Adapts to 82% of screen width and 68% of screen height.
+    screen: root.targetScreen
+    anchors {}
+    implicitWidth: root.targetScreen
+        ? Math.min(1600, Math.max(960, Math.round(root.targetScreen.width * 0.82)))
+        : 1574
+    implicitHeight: root.targetScreen
+        ? Math.min(880, Math.max(540, Math.round(root.targetScreen.height * 0.68)))
+        : 816
+
     color: "transparent"
     visible: root.isOpen
     exclusionMode: ExclusionMode.Ignore
@@ -85,18 +97,6 @@ PanelWindow {
                 sortField: FolderListModel.Name
             }
 
-            // Subtle dark backdrop dim for contrast and readability (click outside closes)
-            Rectangle {
-                anchors.fill: parent
-                color: Qt.rgba(0, 0, 0, 0.42)
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.ArrowCursor
-                    onClicked: root.close()
-                }
-            }
-
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_Left) {
                     contentRoot.step(-1)
@@ -121,12 +121,10 @@ PanelWindow {
                 }
             }
 
-            // Main Coverflow Stage: 85% of screen width, generous height
+            // Main Coverflow Stage: fills the centered window
             Item {
                 id: stage
-                anchors.centerIn: parent
-                width: Math.min(parent.width * 0.86, 1680)
-                height: Math.min(parent.height * 0.72, 740)
+                anchors.fill: parent
 
                 Repeater {
                     model: wallpapers
@@ -141,10 +139,10 @@ PanelWindow {
                         readonly property bool isSelected: delta === 0
 
                         // 16:10 aspect thumbnail card
-                        width: 600
-                        height: 375
-                        x: stage.width / 2 - width / 2 + delta * 270
-                        y: stage.height / 2 - height / 2 - 20
+                        width: Math.min(580, Math.round(stage.width * 0.38))
+                        height: Math.round(width * 0.625)
+                        x: stage.width / 2 - width / 2 + delta * (width * 0.45)
+                        y: stage.height / 2 - height / 2 - 24
                         z: 20 - Math.abs(delta)
 
                         // Selected item is largest; neighbors scale down progressively
@@ -215,7 +213,7 @@ PanelWindow {
                             anchors {
                                 horizontalCenter: parent.horizontalCenter
                                 top: parent.bottom
-                                topMargin: 24
+                                topMargin: 20
                             }
                             visible: cardDelegate.isSelected
                             opacity: cardDelegate.isSelected ? 1.0 : 0.0
