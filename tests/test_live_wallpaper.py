@@ -56,11 +56,17 @@ class LiveWallpaperSubsystemTests(unittest.TestCase):
         self.patch_config = patch.object(gps_wallpaper, "get_config_dir", return_value=self.config_dir)
         self.patch_runtime = patch.object(gps_wallpaper, "get_runtime_dir", return_value=self.runtime_dir)
         self.patch_cache = patch.object(gps_wallpaper, "get_cache_dir", return_value=self.cache_dir)
+        self.patch_clear = patch.object(gps_wallpaper, "clear_static_wallpaper", return_value=True)
+        self.patch_curr = patch.object(set_wallpaper, "get_current_wallpaper", return_value=str(self.static_img))
         self.patch_config.start()
         self.patch_runtime.start()
         self.patch_cache.start()
+        self.patch_clear.start()
+        self.patch_curr.start()
 
     def tearDown(self):
+        self.patch_curr.stop()
+        self.patch_clear.stop()
         self.patch_config.stop()
         self.patch_runtime.stop()
         self.patch_cache.stop()
@@ -151,23 +157,29 @@ class LiveWallpaperSubsystemTests(unittest.TestCase):
              patch("shutil.which", return_value="/usr/bin/mpvpaper"), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(set_wallpaper, "apply_wallpaper", return_value={"ok": True, "theme": {}}) as mock_theme:
-            res = gps_wallpaper.apply_live_wallpaper(self.video_mp4, output="ALL", auto_mode="FULL")
+            res = gps_wallpaper.apply_live_wallpaper(self.video_mp4, output="ALL", auto_mode="FULL", fit_mode="cover")
             self.assertTrue(res.get("ok"))
             self.assertEqual(res.get("pid"), 98765)
             mock_stop.assert_called_once()
-            mock_popen.assert_called_once()
-            cmd_called = mock_popen.call_args[0][0]
+            mpv_calls = [c for c in mock_popen.call_args_list if c[0][0][0] == "mpvpaper"]
+            self.assertEqual(len(mpv_calls), 1)
+            cmd_called = mpv_calls[0][0][0]
             self.assertEqual(cmd_called[0], "mpvpaper")
             self.assertIn("-p", cmd_called)
             self.assertIn("-a", cmd_called)
             self.assertIn("FULL", cmd_called)
             self.assertIn("ALL", cmd_called)
+            mpv_opts = cmd_called[cmd_called.index("-o") + 1]
+            self.assertIn("--panscan=1.0", mpv_opts)
+            self.assertIn("--video-unscaled=no", mpv_opts)
+            self.assertIn("--background-color='#000000'", mpv_opts)
             self.assertIn(str(self.video_mp4.resolve()), cmd_called)
             mock_theme.assert_called_once_with(image_path=dummy_poster, skip_awww=True)
 
         state = json.loads(gps_wallpaper.get_state_file_path().read_text(encoding="utf-8"))
         self.assertEqual(state.get("type"), "video")
         self.assertEqual(state.get("pid"), 98765)
+        self.assertEqual(state.get("fit_mode"), "cover")
 
     # 6. Replacing one video with another
     def test_06_replacing_video_with_another(self):
@@ -310,6 +322,48 @@ class LiveWallpaperSubsystemTests(unittest.TestCase):
             cmd = mock_popen.call_args[0][0]
             self.assertIn("eDP-1", cmd)
 
+    # 15. Background clearing and fit modes
+    def test_15_clear_static_wallpaper_and_fit_modes(self):
+        # Test clear_static_wallpaper executes awww clear 000000ff
+        self.patch_clear.stop()
+        try:
+            with patch("shutil.which", return_value="/stub/awww"), \
+                 patch("subprocess.run", return_value=SimpleNamespace(returncode=0)) as mock_run:
+                ok = gps_wallpaper.clear_static_wallpaper()
+                self.assertTrue(ok)
+                mock_run.assert_called_once()
+                cmd = mock_run.call_args[0][0]
+                self.assertEqual(cmd, ["awww", "clear", "000000ff"])
+        finally:
+            self.patch_clear.start()
+
+        # Test contain mode sets panscan to 0.0
+        dummy_poster = self.tmp_path / "dummy_poster.jpg"
+        Image.new("RGB", (32, 32), color=(50, 150, 50)).save(dummy_poster)
+        mock_proc = MagicMock(pid=44444, poll=MagicMock(return_value=None))
+        with patch.object(gps_wallpaper, "extract_poster_frame", return_value=dummy_poster), \
+             patch("shutil.which", return_value="/usr/bin/mpvpaper"), \
+             patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch.object(set_wallpaper, "apply_wallpaper", return_value={"ok": True}):
+            gps_wallpaper.apply_live_wallpaper(self.video_mp4, fit_mode="contain")
+            cmd = mock_popen.call_args[0][0]
+            opts = cmd[cmd.index("-o") + 1]
+            self.assertIn("--panscan=0.0", opts)
+
+    # 16. Monitor geometry detection
+    def test_16_monitor_geometry_detection(self):
+        mock_monitors_json = json.dumps([
+            {"id": 0, "name": "eDP-1", "width": 1920, "height": 1200, "refreshRate": 165.0, "scale": 1.0}
+        ])
+        with patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "fake_signature"}), \
+             patch("subprocess.check_output", return_value=mock_monitors_json):
+            monitors = gps_wallpaper.get_connected_monitors()
+            self.assertEqual(len(monitors), 1)
+            self.assertEqual(monitors[0]["name"], "eDP-1")
+            self.assertEqual(monitors[0]["width"], 1920)
+            self.assertEqual(monitors[0]["height"], 1200)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -249,12 +249,52 @@ def stop_live_wallpaper(timeout: float = 1.5) -> bool:
     return True
 
 
+def get_connected_monitors() -> list[dict[str, Any]]:
+    """Query Hyprland for active connected monitors and their geometry."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        try:
+            out = subprocess.check_output(["hyprctl", "monitors", "-j"], text=True, stderr=subprocess.DEVNULL)
+            data = json.loads(out)
+            if isinstance(data, list):
+                return [
+                    {
+                        "name": m.get("name"),
+                        "width": m.get("width"),
+                        "height": m.get("height"),
+                        "refreshRate": m.get("refreshRate"),
+                        "scale": m.get("scale"),
+                    }
+                    for m in data
+                    if isinstance(m, dict) and m.get("name")
+                ]
+        except Exception:
+            pass
+    return []
+
+
+def clear_static_wallpaper() -> bool:
+    """Clear awww background buffer to solid black so no static wallpaper shines through."""
+    if shutil.which("awww") is None:
+        return False
+    try:
+        res = subprocess.run(
+            ["awww", "clear", "000000ff"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+        return res.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def apply_live_wallpaper(
     video_path: Path | str,
     output: str = "ALL",
     auto_mode: str = "FULL",
     hwdec: str = "auto",
-    mpv_options: str = "no-audio --loop-playlist=inf",
+    fit_mode: str = "cover",
+    mpv_options: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Launch mpvpaper with verified parameters and lifecycle management."""
@@ -270,13 +310,28 @@ def apply_live_wallpaper(
     if not poster_path or not poster_path.is_file():
         return {"ok": False, "error": f"Failed to extract poster frame for video: {v_path}"}
 
-    # 1. Stop any currently active mpvpaper processes to prevent duplicates
+    # 1. Preserve current static wallpaper path before clearing awww
+    current_wall = set_wallpaper.get_current_wallpaper()
+    if current_wall and is_static_file(current_wall) and Path(current_wall).is_file():
+        try:
+            atomic_write(get_last_static_path(), str(Path(current_wall).resolve()) + "\n")
+        except Exception:
+            pass
+
+    # 2. Clear awww background layer to solid black so no static wallpaper shows through
+    clear_static_wallpaper()
+
+    # 3. Stop any currently active mpvpaper processes to prevent duplicates
     stop_live_wallpaper()
 
-    # 2. Build mpv options string
-    combined_mpv_opts = f"{mpv_options} --hwdec={hwdec}"
+    # 4. Configure aspect-ratio fit mode:
+    # 'cover' (default) scales to completely cover the screen without letterboxing.
+    # 'contain' fits inside screen with letterbox bars.
+    panscan_val = "1.0" if fit_mode == "cover" else "0.0"
+    base_mpv_opts = mpv_options or f"no-audio --loop-playlist=inf --panscan={panscan_val} --video-unscaled=no --background-color='#000000'"
+    combined_mpv_opts = f"{base_mpv_opts} --hwdec={hwdec}"
 
-    # 3. Assemble command
+    # 5. Assemble command
     cmd = [
         "mpvpaper",
         "-p",  # auto-pause when hidden
@@ -319,6 +374,7 @@ def apply_live_wallpaper(
         "output": output,
         "auto_mode": auto_mode,
         "hwdec": hwdec,
+        "fit_mode": fit_mode,
         "pid": proc.pid,
         "timestamp": time.time(),
     }
@@ -492,8 +548,10 @@ def inspect_wallpaper() -> dict[str, Any]:
         "type": active_type,
         "path": state.get("path", set_wallpaper.get_current_wallpaper()),
         "poster": state.get("poster"),
+        "fit_mode": state.get("fit_mode", "cover"),
         "live_running": is_live_running,
         "mpvpaper_pids": running_pids,
+        "monitors": get_connected_monitors(),
     }
 
 
@@ -529,6 +587,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("path", help="Path to wallpaper file")
     apply_p.add_argument("--output", default="ALL", help="Target display output for live wallpaper (default: ALL)")
     apply_p.add_argument("--auto-mode", default="FULL", help="Auto pause mode (default: FULL)")
+    apply_p.add_argument("--fit", choices=["cover", "contain"], default="cover", help="Video fit mode: cover (default) or contain")
 
     # stop
     subparsers.add_parser("stop", help="Stop live wallpaper playback")
@@ -570,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.command == "apply":
-        res = apply_wallpaper(args.path, output=args.output, auto_mode=args.auto_mode)
+        res = apply_wallpaper(args.path, output=args.output, auto_mode=args.auto_mode, fit_mode=args.fit)
         if not res.get("ok"):
             print(f"Error: {res.get('error')}", file=sys.stderr)
             return 1
