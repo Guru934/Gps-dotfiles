@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import "PetGeometry.js" as G
 
 // Reads the compositor: monitor size, the windows on the current workspace, the cursor.
@@ -30,6 +31,16 @@ Item {
     property real _lastMove: Date.now()
     property real _lx: -1
     property real _ly: -1
+
+    Connections {
+        target: Hyprland
+        function onFocusedWorkspaceChanged() {
+            if (world.active && !probe.running) probe.running = true
+        }
+        function onActiveToplevelChanged() {
+            if (world.active && !probe.running) probe.running = true
+        }
+    }
 
     function apply(text) {
         var parts = text.split("\n@@\n");
@@ -63,7 +74,7 @@ Item {
         stdout: StdioCollector { onStreamFinished: world.apply(text) }
     }
     Timer {
-        interval: 1000; repeat: true; running: world.active; triggeredOnStart: true
+        interval: 6000; repeat: true; running: world.active && !world.fullscreen; triggeredOnStart: true
         onTriggered: if (!probe.running) probe.running = true
     }
 
@@ -73,7 +84,8 @@ Item {
         stdout: StdioCollector { onStreamFinished: world.applyCursor(text) }
     }
     Timer {
-        interval: 300; repeat: true; running: world.active && world.pollCursor
+        interval: (world.cursorIdleSec > 5 || world.fullscreen) ? 2000 : 500
+        repeat: true; running: world.active && world.pollCursor && !world.fullscreen
         onTriggered: if (!cur.running) cur.running = true
     }
 }

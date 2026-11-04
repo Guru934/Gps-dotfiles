@@ -381,12 +381,12 @@ Item {
     property real _last: 0
     Timer {
         id: loop
-        interval: brain.moving ? 33 : 100
+        interval: brain.moving ? 33 : (brain.mode === "sleep" ? 250 : 125)
         repeat: true
         running: brain.autoRun && !brain.paused
         onTriggered: {
             var now = Date.now();
-            var dt = brain._last ? Math.min(0.1, (now - brain._last) / 1000) : interval / 1000;
+            var dt = brain._last ? Math.min(0.25, (now - brain._last) / 1000) : interval / 1000;
             brain._last = now;
             brain.step(dt);
         }

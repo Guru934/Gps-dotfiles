@@ -264,15 +264,22 @@ def _proc_name(pid: int) -> str:
         return UNKNOWN_APP
 
 
+_CAP_CACHE: dict[str, bool] = {}
+
+
 def _is_capture_node(node: str) -> bool:
     """Query capabilities only; never starts streaming or reads frames."""
+    if node in _CAP_CACHE:
+        return _CAP_CACHE[node]
     try:
         with open(node, "rb", buffering=0) as device:
             capability = bytearray(104)
             fcntl.ioctl(device, 0x80685600, capability)  # VIDIOC_QUERYCAP
             caps = struct.unpack_from("I", capability, 84)[0]
             device_caps = struct.unpack_from("I", capability, 88)[0]
-            return bool((device_caps or caps) & (0x00000001 | 0x00001000))
+            is_cap = bool((device_caps or caps) & (0x00000001 | 0x00001000))
+            _CAP_CACHE[node] = is_cap
+            return is_cap
     except (OSError, ValueError, struct.error):
         return False
 
@@ -288,23 +295,33 @@ def enumerate_v4l2(sys_root: str = "/sys/class/video4linux", proc_root: str = "/
                 devices[node] = name
     except OSError:
         return []
+    if not devices:
+        return []
     result: list[dict[str, Any]] = []
-    for pid_entry in Path(proc_root).glob("[0-9]*"):
-        try:
-            pid = int(pid_entry.name)
-            for fd in (pid_entry / "fd").iterdir():
+    try:
+        with os.scandir(proc_root) as proc_it:
+            for pid_entry in proc_it:
+                if not pid_entry.name.isdigit():
+                    continue
                 try:
-                    link = os.readlink(fd)
-                except OSError:
+                    pid = int(pid_entry.name)
+                    fd_dir = os.path.join(pid_entry.path, "fd")
+                    with os.scandir(fd_dir) as fd_it:
+                        for fd in fd_it:
+                            try:
+                                link = os.readlink(fd.path)
+                            except OSError:
+                                continue
+                            node = link if link in devices else None
+                            if not node:
+                                continue
+                            result.append({"kind": "cam", "app": _proc_name(pid), "detail": devices[node],
+                                           "pid": pid, "id": f"v4l2:{node}:{pid}"})
+                            break
+                except (OSError, ValueError):
                     continue
-                node = link if link in devices else None
-                if not node:
-                    continue
-                result.append({"kind": "cam", "app": _proc_name(pid), "detail": devices[node],
-                               "pid": pid, "id": f"v4l2:{node}:{pid}"})
-                break
-        except (OSError, ValueError):
-            continue
+    except OSError:
+        pass
     return result
 
 
@@ -370,7 +387,9 @@ def run() -> int:
     pw: subprocess.Popen[str] | None = None
     selector = selectors.DefaultSelector()
     decoder = MonitorParser()
-    last_poll = 0.0
+    v4l2_cached = enumerate_v4l2()
+    recorder_cached = check_screen_recorder()
+    last_poll = time.monotonic()
     last_payload: str | None = None
     restart_at = 0.0
     emit([], False, "starting PipeWire monitor")
@@ -400,16 +419,21 @@ def run() -> int:
                 restart_at = time.monotonic() + 2.0
                 emit([], False, "PipeWire monitor disconnected; retrying")
                 break
+            chunk_changed = False
             for value in decoder.feed(chunk.decode("utf-8", errors="replace")):
                 apply_pipewire_value(graph, value)
-                payload = json.dumps(privacy_items(graph, enumerate_v4l2(), check_screen_recorder()), separators=(",", ":"))
+                chunk_changed = True
+            if chunk_changed:
+                payload = json.dumps(privacy_items(graph, v4l2_cached, recorder_cached), separators=(",", ":"))
                 if payload != last_payload:
                     emit(json.loads(payload), True, "")
                     last_payload = payload
         now = time.monotonic()
         if now - last_poll >= POLL_SECONDS:
             last_poll = now
-            combined = privacy_items(graph, enumerate_v4l2(), check_screen_recorder())
+            v4l2_cached = enumerate_v4l2()
+            recorder_cached = check_screen_recorder()
+            combined = privacy_items(graph, v4l2_cached, recorder_cached)
             payload = json.dumps(combined, separators=(",", ":"))
             if payload != last_payload:
                 emit(combined, pw is not None, "")

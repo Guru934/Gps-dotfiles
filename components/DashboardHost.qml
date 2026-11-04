@@ -28,6 +28,7 @@ PanelWindow {
     property int panelMargin: 10
     property int panelVerticalMargin: 8
     property string activeTab: "home"
+    property bool dashboardLoaded: false
 
     // Activation strip geometry properties (mirrored from hub / defaults)
     property int triggerWidth: root.hub ? root.hub.edgeSensorWidth : 5
@@ -42,6 +43,7 @@ PanelWindow {
         : Theme.dashboardWidth
 
     function open(pinned) {
+        root.dashboardLoaded = true
         if (root.isOpen) {
             if (pinned) root.isPinned = true
             return
@@ -116,6 +118,7 @@ PanelWindow {
     }
 
     onTriggerHoveredChanged: {
+        if (root.triggerHovered) root.dashboardLoaded = true
         if (!root.isOpen) return
         if (root.triggerHovered) hideTimer.stop()
         else root.scheduleHide()
@@ -219,16 +222,26 @@ PanelWindow {
             onActiveChanged: if (active) root.isPinned = true
         }
 
-        Dashboard {
+        Loader {
+            id: dashboardLoader
             anchors.fill: parent
-            hub: root.hub
-            isOpen: root.isOpen
-            covering: root.covering
-            activeTab: root.activeTab
-            onCloseRequested: root.close()
-            onTabRequested: (tabName) => {
-                root.activeTab = tabName
-                root.tabChanged(tabName)
+            active: root.dashboardLoaded
+            sourceComponent: dashboardComponent
+        }
+
+        Component {
+            id: dashboardComponent
+
+            Dashboard {
+                hub: root.hub
+                isOpen: root.isOpen
+                covering: root.covering
+                activeTab: root.activeTab
+                onCloseRequested: root.close()
+                onTabRequested: (tabName) => {
+                    root.activeTab = tabName
+                    root.tabChanged(tabName)
+                }
             }
         }
 

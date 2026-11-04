@@ -77,14 +77,14 @@ end
 set -l ready_tries 0
 while not hyprctl version >/dev/null 2>&1
     set ready_tries (math $ready_tries + 1)
-    if test $ready_tries -ge 50
+    if test $ready_tries -ge 200
         log "WARN: compositor not reachable after 10s - continuing anyway"
         break
     end
-    sleep 0.2
+    sleep 0.05
 end
 if test $ready_tries -gt 0
-    log "compositor ready after ~"(math "0.2 * $ready_tries")"s of waiting"
+    log "compositor ready after ~"(math "0.05 * $ready_tries")"s of waiting"
 end
 
 # 1. Stop only the stale GPS shell and wallpaper daemon.
@@ -94,7 +94,6 @@ stop_pattern "awww-daemon" "awww-daemon"
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
 rm -f "$gps_shell_log" "$HOME/.config/quickshell/theme.log"
-sleep 0.2
 
 # 1b. Start Polkit authentication agent once across the session.
 # Does not terminate on shell restart so elevation sessions are preserved.
@@ -159,7 +158,12 @@ end
 if not pgrep -x awww-daemon >/dev/null 2>&1
     nohup awww-daemon >"$gps_log_dir/awww-daemon.log" 2>&1 &
     disown
-    sleep 0.3
+    for i in (seq 1 30)
+        if awww query >/dev/null 2>&1
+            break
+        end
+        sleep 0.05
+    end
 end
 
 # 2b. Re-apply the last wallpaper: awww-daemon starts blank, so without this
@@ -192,14 +196,19 @@ end
 # 5. Keep the GPS island untouched; start it only if absent. GPS Island
 #    is the sole top-center island and D-Bus notification owner.
 set -l gps_path "$REPO_DIR/island/IslandProduction.qml"
-set -l island_pid ""
+set -l island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
 set -l island_label "GPS island"
-if not pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" >/dev/null 2>&1
+if test -z "$island_pid"
     nohup /usr/bin/quickshell --no-duplicate -d -p "$gps_path" >"$HOME/.config/quickshell/island.log" 2>&1 &
     disown
+    for i in (seq 1 30)
+        set island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
+        if test -n "$island_pid"
+            break
+        end
+        sleep 0.05
+    end
 end
-sleep 0.5
-set island_pid (pgrep -u (id -u) -f "quickshell.*IslandProduction\.qml" | head -1)
 if test -n "$island_pid"
     log "$island_label up (pid $island_pid)"
 else
@@ -213,11 +222,17 @@ else
 end
 
 # 6. Launch the QuickShell master shell.
-if not pgrep -u (id -u) -f "quickshell.*shell\.qml" >/dev/null 2>&1
-    /usr/bin/quickshell --no-duplicate --daemonize --path "$GPS_ROOT/shell.qml"
-end
-sleep 0.8
 set -l shell_pid (pgrep -u (id -u) -f "quickshell.*shell\.qml" | head -1)
+if test -z "$shell_pid"
+    /usr/bin/quickshell --no-duplicate --daemonize --path "$GPS_ROOT/shell.qml"
+    for i in (seq 1 40)
+        set shell_pid (pgrep -u (id -u) -f "quickshell.*shell\.qml" | head -1)
+        if test -n "$shell_pid"
+            break
+        end
+        sleep 0.05
+    end
+end
 if test -n "$shell_pid"
     log "GPS shell up (pid $shell_pid)"
 else

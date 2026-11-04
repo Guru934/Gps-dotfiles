@@ -613,17 +613,36 @@ def apply_wallpaper(
     except Exception as e:
         return {"ok": False, "error": f"Failed to write last-wall state: {e}"}
 
-    # Extract theme and write atomically
-    try:
-        theme = generate_theme(path)
-        write_theme_files(
-            theme,
-            json_path=theme_json_path,
-            rofi_path=rofi_path,
-            lock_colors_path=lock_colors_path,
-        )
-    except Exception as e:
-        return {"ok": False, "error": f"Failed to extract or write theme: {e}"}
+    # Extract theme and write atomically (with path and mtime caching)
+    target_json = theme_json_path or get_theme_json_path()
+    target_rofi = rofi_path or get_rofi_colors_path()
+    target_lock = lock_colors_path or get_lock_colors_path()
+
+    theme = None
+    cache_hit = False
+    if target_json.is_file() and target_rofi.is_file() and target_lock.is_file():
+        try:
+            mtime_wall = path.stat().st_mtime
+            mtime_json = target_json.stat().st_mtime
+            if mtime_json >= mtime_wall:
+                cached_data = json.loads(target_json.read_text(encoding="utf-8"))
+                if isinstance(cached_data, dict) and cached_data.get("wallpaper") == str(path):
+                    cache_hit = True
+                    theme = cached_data
+        except Exception:
+            cache_hit = False
+
+    if not cache_hit:
+        try:
+            theme = generate_theme(path)
+            write_theme_files(
+                theme,
+                json_path=target_json,
+                rofi_path=target_rofi,
+                lock_colors_path=target_lock,
+            )
+        except Exception as e:
+            return {"ok": False, "error": f"Failed to extract or write theme: {e}"}
 
     # Run theme hooks
     hook_results: list[dict[str, Any]] = []

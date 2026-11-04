@@ -14,11 +14,22 @@ Item {
     width: (S.W + 2) * px
     height: (S.H + 2) * px
 
-    onSkinChanged: cv.requestPaint()
-    onPoseChanged: cv.requestPaint()
-    onTickChanged: cv.requestPaint()
-    onPxChanged: cv.requestPaint()
-    onFlipChanged: cv.requestPaint()
+    property string _lastSignature: ""
+
+    function checkRepaint() {
+        var fr = S.build(root.skin, root.pose, root.tick);
+        var sig = root.skin + "|" + root.pose + "|" + root.px + "|" + (root.flip ? "1" : "0") + "|" + JSON.stringify(fr.rects);
+        if (sig !== root._lastSignature) {
+            root._lastSignature = sig;
+            cv.requestPaint();
+        }
+    }
+
+    onSkinChanged: checkRepaint()
+    onPoseChanged: checkRepaint()
+    onTickChanged: checkRepaint()
+    onPxChanged: checkRepaint()
+    onFlipChanged: checkRepaint()
 
     Canvas {
         id: cv
@@ -28,7 +39,7 @@ Item {
             var ctx = getContext("2d");
             S.draw(ctx, root.skin, root.pose, root.tick, root.px, root.flip);
         }
-        Component.onCompleted: requestPaint()
+        Component.onCompleted: root.checkRepaint()
     }
 
     Timer {

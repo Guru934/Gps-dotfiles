@@ -131,9 +131,12 @@ Scope {
     // Brightness, Power Profile, and Media State
     readonly property int brightnessPct: Brightness.percent
     property string powerProfile: "balanced"
-    property string mediaStatus: "Stopped"
-    property string mediaArtist: ""
-    property string mediaTitle: ""
+    readonly property var activeMedia: MediaNowPlaying.player
+    property string mediaStatus: activeMedia
+        ? (activeMedia.isPlaying ? "Playing" : (activeMedia.playbackState === MprisPlaybackState.Paused ? "Paused" : "Stopped"))
+        : "Stopped"
+    property string mediaArtist: activeMedia ? (activeMedia.trackArtist || "") : ""
+    property string mediaTitle: activeMedia ? (activeMedia.trackTitle || "") : ""
 
     function toHyprRgba(col, alphaHex) {
         const c = Qt.color(col)
@@ -454,27 +457,15 @@ Scope {
         }
     }
 
-    Process {
-        id: mediaReadProc
-        command: ["playerctl", "metadata", "--format", "{{status}}|{{artist}}|{{title}}"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: root.parseMedia(this.text)
-        }
-    }
-
     Timer {
         interval: 4000
-        running: true
+        running: root.dashboardOpen
         repeat: true
         onTriggered: {
-            if (!mediaReadProc.running) mediaReadProc.running = true
-            if (root.dashboardOpen) {
-                if (root.activePopup === "battery" && !profileReadProc.running) profileReadProc.running = true
-                if (root.activePopup === "wifi" && !wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
-                    root.wifiListGen = root.wifiScanGen
-                    wifiListProc.running = true
-                }
+            if (root.activePopup === "battery" && !profileReadProc.running) profileReadProc.running = true
+            if (root.activePopup === "wifi" && !wifiListProc.running && !wifiRescanProc.running && !wifiCmdProc.running) {
+                root.wifiListGen = root.wifiScanGen
+                wifiListProc.running = true
             }
         }
     }

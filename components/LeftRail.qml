@@ -175,9 +175,14 @@ PanelWindow {
     }
 
     // Live Media State (Equalizer only animates when mediaPlaying === true)
-    property bool mediaPlaying: false
-    property bool mediaPaused: false
-    property string mediaTitle: ""
+    readonly property var activePlayer: MediaNowPlaying.player
+    readonly property bool mediaPlaying: activePlayer
+        ? (activePlayer.isPlaying === true || activePlayer.playbackState === MprisPlaybackState.Playing)
+        : false
+    readonly property bool mediaPaused: activePlayer
+        ? (activePlayer.playbackState === MprisPlaybackState.Paused)
+        : false
+    readonly property string mediaTitle: activePlayer ? (activePlayer.trackTitle || "") : ""
 
     // PipeWire Reactive Tracker (with wpctl fallback)
     PwObjectTracker {
@@ -224,19 +229,16 @@ PanelWindow {
     mask: root.isSplit ? splitMask : fullMask
 
     // ========================================================================
-    // BACKGROUND POLLING: Bluetooth, Volume, Brightness, Media Status
+    // REACTIVE FALLBACK: Volume, Media Status, Recording
     // ========================================================================
     Process {
         id: sysPollProc
         command: [
             "sh", "-c",
             "vol_line=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); "
-            + "med_line=$(playerctl metadata --format '{{status}}|{{title}}' 2>/dev/null | head -n1); "
-            + "rec_line=$(cat \"${XDG_RUNTIME_DIR:-/tmp}/gps/record-state.json\" 2>/dev/null | grep -o '\"recording\": *true' || echo ''); "
-            + "printf 'VOL:%s\\nMED:%s\\nREC:%s\\n' "
-            + "\"$vol_line\" \"$med_line\" \"$rec_line\""
+            + "printf 'VOL:%s\\n' \"$vol_line\""
         ]
-        running: true
+        running: false
         stdout: StdioCollector {
             onStreamFinished: root.parseSystemState(this.text)
         }
@@ -247,17 +249,12 @@ PanelWindow {
         interval: 140
         repeat: false
         onTriggered: {
-            if (!sysPollProc.running) sysPollProc.running = true
+            if (!root.audioReady && !sysPollProc.running) sysPollProc.running = true
         }
     }
 
-    Timer {
-        interval: 1500
-        running: true
-        repeat: true
-        onTriggered: {
-            if (!sysPollProc.running) sysPollProc.running = true
-        }
+    Component.onCompleted: {
+        if (!root.audioReady) sysPollProc.running = true
     }
 
     Timer {
