@@ -169,19 +169,24 @@ cmd_stop() {
                 fname="$(basename "$file")"
                 local fdir
                 fdir="$(dirname "$file")"
-                ACTION=$(notify-send \
+                local action=""
+                action=$(timeout 10s notify-send \
                     -a "GPS Record" \
                     -i video-x-generic \
+                    -t 10000 \
                     "Screen Recording Saved" \
                     "$fname" \
                     --action="open=Open" \
                     --action="folder=Show in Folder" 2>/dev/null || true)
-                case "$ACTION" in
+                case "$action" in
                     open) xdg-open "$file" >/dev/null 2>&1 & ;;
                     folder) xdg-open "$fdir" >/dev/null 2>&1 & ;;
                 esac
-            ) >/dev/null 2>&1 &
+            ) </dev/null >/dev/null 2>&1 9>&- &
+            local notif_pid=$!
+            disown "$notif_pid" 2>/dev/null || true
         fi
+        exec 9>&- 2>/dev/null || true
         exit 0
     elif [[ -n "$file" ]]; then
         echo "Error: Output file is missing or zero bytes: $file" >&2
@@ -323,9 +328,9 @@ cmd_start() {
     play_sound "record-start"
 
     if command -v setsid >/dev/null 2>&1; then
-        setsid "${CMD[@]}" >"$LOG_FILE" 2>&1 &
+        setsid "${CMD[@]}" >"$LOG_FILE" 2>&1 9>&- &
     else
-        "${CMD[@]}" >"$LOG_FILE" 2>&1 &
+        "${CMD[@]}" >"$LOG_FILE" 2>&1 9>&- &
     fi
     local REC_PID=$!
     disown "$REC_PID" 2>/dev/null || true
@@ -346,6 +351,7 @@ cmd_start() {
         cat "$LOG_FILE" >&2
         write_state '{"recording": false, "error": "startup failed"}'
         rm -f "$PID_FILE" "$DEST_FILE"
+        exec 9>&- 2>/dev/null || true
         exit 1
     fi
 
@@ -358,10 +364,21 @@ cmd_start() {
     fi
 
     echo "Recording started: $DEST_FILE (PID $REC_PID)"
+    exec 9>&- 2>/dev/null || true
     exit 0
 }
 
 cmd_toggle() {
+    mkdir -m 0700 -p "$STATE_DIR" 2>/dev/null || true
+    local lock_file="${STATE_DIR}/toggle.lock"
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$lock_file"
+        if ! flock -n 9; then
+            echo "Screen recording toggle already in progress. Ignoring duplicate." >&2
+            exit 0
+        fi
+    fi
+
     if get_active_record; then
         cmd_stop
     else

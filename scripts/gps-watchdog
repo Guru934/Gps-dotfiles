@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""GPS Watchdog — Lightweight Independent QuickShell Supervisor (Session 5 Work Package 3).
+
+Monitors GPS Main Shell and GPS Island independently.
+Provides:
+- Independent process supervision outside of QuickShell
+- Observation-only mode (--mode observe, default) and auto-recovery mode (--mode auto)
+- Exponential backoff with rate limits (max 3 restarts per 5 minutes per component)
+- Intentional shutdown & graphical session termination detection
+- Bounded, rotated recovery logs (<= 200 KB)
+- Desktop notifications on circuit breaker trip
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+def get_repo_root() -> Path:
+    if "GPS_ROOT" in os.environ and os.path.isdir(os.environ["GPS_ROOT"]):
+        return Path(os.environ["GPS_ROOT"]).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def get_runtime_dir() -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime and os.path.isdir(runtime):
+        base = Path(runtime) / "gps"
+    else:
+        base = Path(f"/tmp/gps-{os.getuid()}")
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def get_log_dir() -> Path:
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    log_dir = Path(cache) / "gps" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
+class WatchdogLogger:
+    def __init__(self, log_file: Path, max_bytes: int = 200 * 1024):
+        self.log_file = log_file
+        self.max_bytes = max_bytes
+
+    def log(self, level: str, message: str) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] [{level}] {message}\n"
+        sys.stderr.write(line)
+        sys.stderr.flush()
+
+        try:
+            self._ensure_bounded()
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+        except Exception:
+            pass
+
+    def _ensure_bounded(self) -> None:
+        if not self.log_file.is_file():
+            return
+        try:
+            sz = self.log_file.stat().st_size
+            if sz > self.max_bytes:
+                retain_bytes = min(50 * 1024, max(500, self.max_bytes // 2))
+                with open(self.log_file, "rb") as f:
+                    f.seek(max(0, sz - retain_bytes))
+                    tail = f.read()
+                with open(self.log_file, "wb") as f:
+                    f.write(tail)
+        except Exception:
+            pass
+
+
+class ComponentState:
+    def __init__(self, name: str, pattern: str, restart_cmd: List[str]):
+        self.name = name
+        self.pattern = pattern
+        self.restart_cmd = restart_cmd
+        self.last_pid: Optional[int] = None
+        self.restarts: List[float] = []
+        self.circuit_broken: bool = False
+
+    def prune_restarts(self, now: float, window: float = 300.0) -> None:
+        self.restarts = [t for t in self.restarts if now - t <= window]
+        if self.circuit_broken and len(self.restarts) < 3:
+            self.circuit_broken = False
+
+
+class GpsWatchdog:
+    def __init__(
+        self,
+        mode: str = "observe",
+        repo_root: Optional[Path] = None,
+        runtime_dir: Optional[Path] = None,
+        logger: Optional[WatchdogLogger] = None,
+        check_session_fn: Optional[Callable[[], bool]] = None,
+        find_pid_fn: Optional[Callable[[str], Optional[int]]] = None,
+        spawn_fn: Optional[Callable[[List[str]], bool]] = None,
+        notify_fn: Optional[Callable[[str, str], None]] = None,
+        sleep_fn: Optional[Callable[[float], None]] = None,
+    ):
+        self.mode = mode  # "observe" or "auto"
+        self.repo_root = repo_root or get_repo_root()
+        self.runtime_dir = runtime_dir or get_runtime_dir()
+        self.logger = logger or WatchdogLogger(get_log_dir() / "watchdog.log")
+        self.check_session_fn = check_session_fn or self._default_check_session
+        self.find_pid_fn = find_pid_fn or self._default_find_pid
+        self.spawn_fn = spawn_fn or self._default_spawn
+        self.notify_fn = notify_fn or self._default_notify
+        self.sleep_fn = sleep_fn or time.sleep
+        self.running = True
+
+        # Components to monitor
+        self.components: Dict[str, ComponentState] = {
+            "island": ComponentState(
+                name="GPS Island",
+                pattern="quickshell.*IslandProduction\\.qml",
+                restart_cmd=[
+                    "/usr/bin/quickshell",
+                    "--no-duplicate",
+                    "-d",
+                    "-p",
+                    str(self.repo_root / "island" / "IslandProduction.qml"),
+                ],
+            ),
+            "shell": ComponentState(
+                name="GPS Main Shell",
+                pattern="quickshell.*shell\\.qml",
+                restart_cmd=[
+                    "/usr/bin/quickshell",
+                    "--no-duplicate",
+                    "--daemonize",
+                    "--path",
+                    str(self.repo_root / "shell.qml"),
+                ],
+            ),
+        }
+
+    def _default_check_session(self) -> bool:
+        """Verify Hyprland compositor is running."""
+        try:
+            res = subprocess.run(["hyprctl", "version"], capture_output=True, timeout=2)
+            return res.returncode == 0
+        except Exception:
+            return False
+
+    def _default_find_pid(self, pattern: str) -> Optional[int]:
+        """Find alive process matching pattern for current UID."""
+        my_uid = os.getuid()
+        cmd = ["pgrep", "-u", str(my_uid), "-f", pattern]
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+            if res.returncode == 0:
+                pids = [int(p) for p in res.stdout.strip().split() if p.isdigit()]
+                return pids[0] if pids else None
+        except Exception:
+            pass
+        return None
+
+    def _default_spawn(self, cmd: List[str]) -> bool:
+        """Spawn process detached."""
+        env = os.environ.copy()
+        env["GPS_ROOT"] = str(self.repo_root)
+        env["QML2_IMPORT_PATH"] = str(self.repo_root)
+        env["QML_IMPORT_PATH"] = str(self.repo_root)
+        try:
+            subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except Exception as e:
+            self.logger.log("ERROR", f"Failed to spawn {cmd}: {e}")
+            return False
+
+    def _default_notify(self, summary: str, body: str) -> None:
+        try:
+            subprocess.Popen(
+                [
+                    "notify-send",
+                    "-u",
+                    "critical",
+                    "-a",
+                    "GPS Watchdog",
+                    "-i",
+                    "dialog-error",
+                    summary,
+                    body,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    def is_startup_locked(self) -> bool:
+        """Check if run-gps.fish or gps-start-safe holds startup lock."""
+        lock_file = self.runtime_dir / "startup.lock"
+        if not lock_file.is_file():
+            return False
+        try:
+            with open(lock_file, "r") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(f, fcntl.LOCK_UN)
+                    return False
+                except BlockingIOError:
+                    return True
+        except Exception:
+            return False
+
+    def is_paused(self) -> bool:
+        """Check for explicit pause/shutdown flag."""
+        pause_flag = self.runtime_dir / "watchdog-pause.flag"
+        return pause_flag.is_file()
+
+    def tick(self, now: Optional[float] = None) -> Dict[str, Any]:
+        """Perform one monitoring pass."""
+        if now is None:
+            now = time.time()
+
+        report: Dict[str, Any] = {
+            "mode": self.mode,
+            "session_active": True,
+            "startup_locked": False,
+            "paused": False,
+            "components": {},
+        }
+
+        # 1. Check session viability
+        if not self.check_session_fn():
+            report["session_active"] = False
+            self.logger.log("INFO", "Graphical session inactive or terminating. Watchdog idling.")
+            return report
+
+        # 2. Check startup locks / intentional pause
+        if self.is_startup_locked():
+            report["startup_locked"] = True
+            return report
+
+        if self.is_paused():
+            report["paused"] = True
+            return report
+
+        # 3. Inspect components
+        for key, comp in self.components.items():
+            comp.prune_restarts(now)
+            current_pid = self.find_pid_fn(comp.pattern)
+            status: Dict[str, Any] = {
+                "name": comp.name,
+                "pid": current_pid,
+                "alive": current_pid is not None,
+                "restart_count": len(comp.restarts),
+                "circuit_broken": comp.circuit_broken,
+                "action": "none",
+            }
+
+            if current_pid is not None:
+                # Component is healthy
+                comp.last_pid = current_pid
+            else:
+                # Component is NOT running!
+                if comp.last_pid is not None:
+                    # It was previously running and exited
+                    self.logger.log(
+                        "WARN",
+                        f"{comp.name} (previously PID {comp.last_pid}) has terminated unexpectedly.",
+                    )
+
+                if comp.circuit_broken:
+                    status["action"] = "circuit_broken_skip"
+                    self.logger.log(
+                        "WARN",
+                        f"{comp.name} recovery suspended: circuit breaker tripped (3 restarts in 5m).",
+                    )
+                elif len(comp.restarts) >= 3:
+                    comp.circuit_broken = True
+                    status["circuit_broken"] = True
+                    status["action"] = "trip_circuit_breaker"
+                    msg = f"{comp.name} exceeded 3 restarts within 5 minutes. Halting auto-recovery."
+                    self.logger.log("CRITICAL", msg)
+                    self.notify_fn("GPS Watchdog Alert", msg)
+                else:
+                    if self.mode == "auto":
+                        # Compute backoff: 2s for attempt 1, 5s for attempt 2, 15s for attempt 3
+                        attempt = len(comp.restarts) + 1
+                        backoff = 2.0 if attempt == 1 else (5.0 if attempt == 2 else 15.0)
+                        self.logger.log(
+                            "INFO",
+                            f"Restarting {comp.name} in {backoff}s (attempt {attempt}/3)...",
+                        )
+                        self.sleep_fn(backoff)
+                        if self.spawn_fn(comp.restart_cmd):
+                            comp.restarts.append(now)
+                            status["action"] = "restarted"
+                            self.logger.log("INFO", f"Successfully triggered restart for {comp.name}.")
+                        else:
+                            status["action"] = "restart_failed"
+                            self.logger.log("ERROR", f"Failed to restart {comp.name}.")
+                    else:
+                        status["action"] = "observed_down"
+                        self.logger.log(
+                            "INFO",
+                            f"[OBSERVE] {comp.name} is down. Auto-restart disabled in observe mode.",
+                        )
+
+            report["components"][key] = status
+
+        return report
+
+    def run(self, interval: float = 3.0) -> None:
+        self.logger.log("INFO", f"GPS Watchdog starting in '{self.mode}' mode (interval={interval}s).")
+        while self.running:
+            try:
+                self.tick()
+                time.sleep(interval)
+            except (KeyboardInterrupt, SystemExit):
+                self.logger.log("INFO", "GPS Watchdog stopped by signal.")
+                break
+            except Exception as e:
+                self.logger.log("ERROR", f"Unexpected error in watchdog loop: {e}")
+                time.sleep(interval)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="GPS Lightweight QuickShell Watchdog")
+    parser.add_argument(
+        "--mode",
+        choices=["observe", "auto"],
+        default="observe",
+        help="Watchdog mode: 'observe' (default, passive logging) or 'auto' (automatic component recovery)",
+    )
+    parser.add_argument("--interval", type=float, default=3.0, help="Check interval in seconds")
+    parser.add_argument("--once", action="store_true", help="Perform a single status check and exit")
+    parser.add_argument("--status", action="store_true", help="Print current status JSON and exit")
+    args = parser.parse_args()
+
+    watchdog = GpsWatchdog(mode=args.mode)
+
+    if args.status or args.once:
+        res = watchdog.tick()
+        print(json.dumps(res, indent=2))
+        return 0
+
+    def sig_handler(sig, frame):
+        watchdog.running = False
+
+    signal.signal(signal.SIGINT, sig_handler)
+    signal.signal(signal.SIGTERM, sig_handler)
+
+    watchdog.run(interval=args.interval)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

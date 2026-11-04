@@ -20,6 +20,37 @@ Scope {
     property var deviceState: EventsLogic.createInitialDeviceState()
     property bool dndActive: false
 
+    // Device watcher lifecycle and bounded backoff recovery
+    property bool shuttingDown: false
+    property int watcherRestartCount: 0
+    readonly property int maxWatcherRestarts: 5
+    property int watcherRestartDelay: 1000
+
+    Timer {
+        id: watcherRestartTimer
+        interval: root.watcherRestartDelay
+        repeat: false
+        onTriggered: {
+            if (root.shuttingDown) return
+            if (!watcherProc.running) {
+                console.log("[EventsService] Restarting device watcher (attempt " + (root.watcherRestartCount + 1) + "/" + root.maxWatcherRestarts + ")...")
+                root.watcherRestartCount++
+                watcherProc.running = true
+                watcherStabilityTimer.restart()
+            }
+        }
+    }
+
+    Timer {
+        id: watcherStabilityTimer
+        interval: 60000 // Reset count after 60s of stable execution
+        repeat: false
+        onTriggered: {
+            root.watcherRestartCount = 0
+            root.watcherRestartDelay = 1000
+        }
+    }
+
     // UPower telemetry bindings
     readonly property var batDevice: UPower.displayDevice
     readonly property bool batPresent: batDevice !== null && batDevice.isPresent
@@ -62,12 +93,39 @@ Scope {
                 } catch (e) {}
             }
         }
+        onExited: (exitCode, exitStatus) => {
+            if (root.shuttingDown) {
+                console.log("[EventsService] Device watcher stopped cleanly during intentional shutdown.")
+                return
+            }
+
+            if (root.watcherRestartCount >= root.maxWatcherRestarts) {
+                console.warn("[EventsService] Device watcher exceeded maximum restart attempts (" + root.maxWatcherRestarts + "). Auto-recovery halted.")
+                return
+            }
+
+            // Bounded exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s
+            const delay = Math.min(30000, 1000 * Math.pow(2, root.watcherRestartCount))
+            root.watcherRestartDelay = delay
+            console.log("[EventsService] Device watcher exited (code=" + exitCode + ", status=" + exitStatus + "). Scheduling restart in " + delay + "ms (attempt " + (root.watcherRestartCount + 1) + "/" + root.maxWatcherRestarts + ")")
+            watcherRestartTimer.interval = delay
+            watcherRestartTimer.start()
+        }
     }
 
     Component.onCompleted: {
         root.loadSettings()
         root.loadDnd()
         root.checkPower()
+    }
+
+    Component.onDestruction: {
+        root.shuttingDown = true
+        watcherRestartTimer.stop()
+        watcherStabilityTimer.stop()
+        if (watcherProc.running) {
+            watcherProc.running = false
+        }
     }
 
     onBatPercentageChanged: root.checkPower()
@@ -186,8 +244,18 @@ Scope {
                 batPercentage: root.batPercentage,
                 onBattery: root.onBattery,
                 devState: root.devState,
-                watcherRunning: watcherProc.running
+                watcherRunning: watcherProc.running,
+                watcherRestartCount: root.watcherRestartCount,
+                watcherRestarting: watcherRestartTimer.running
             })
+        }
+
+        function restartWatcher(): string {
+            root.watcherRestartCount = 0
+            watcherProc.running = false
+            watcherRestartTimer.interval = 100
+            watcherRestartTimer.start()
+            return JSON.stringify({ ok: true, action: "restarting" })
         }
 
         function testPower(pct: real, state: int, onBat: bool): string {

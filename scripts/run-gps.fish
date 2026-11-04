@@ -1,6 +1,32 @@
 #!/usr/bin/env fish
 # === Aetheric Shell: unified startup orchestrator ===
 
+# Advisory concurrency protection: serialize startup passes using flock
+set -l gps_runtime_root "$XDG_RUNTIME_DIR"
+if test -z "$gps_runtime_root" -o ! -d "$gps_runtime_root"
+    set gps_runtime_root "/tmp/gps-"(id -u)
+end
+set -l gps_lock_dir "$gps_runtime_root/gps"
+mkdir -p -m 0700 "$gps_lock_dir" 2>/dev/null; or true
+set -l gps_startup_lock "$gps_lock_dir/startup.lock"
+
+if not set -q _GPS_STARTUP_LOCKED
+    if command -v flock >/dev/null 2>&1
+        set -gx _GPS_STARTUP_LOCKED 1
+        flock -n "$gps_startup_lock" fish (status filename) $argv
+        set -l flock_rc $status
+        if test $flock_rc -eq 1
+            # Lock contention: another startup pass is already in progress
+            printf '[%s] GPS startup: another startup pass is in progress (lock held at %s). Skipping duplicate.\n' (date '+%Y-%m-%d %H:%M:%S') "$gps_startup_lock" >>"$HOME/.config/quickshell/startup.log" 2>/dev/null; or true
+            echo "GPS startup: another startup pass is in progress. Skipping duplicate." >&2
+            exit 0
+        end
+        exit $flock_rc
+    else
+        printf '[%s] WARN: flock not found; proceeding without startup concurrency lock\n' (date '+%Y-%m-%d %H:%M:%S') >>"$HOME/.config/quickshell/startup.log" 2>/dev/null; or true
+    end
+end
+
 set -l REPO_DIR (realpath (status dirname)/..)
 
 set -gx LC_CTYPE C.UTF-8

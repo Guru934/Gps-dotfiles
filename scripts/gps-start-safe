@@ -5,6 +5,21 @@ set -euo pipefail
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Fast non-blocking check: if a GPS startup pass is already holding the lock,
+# skip duplicate execution cleanly instead of racing through D-Bus checks.
+LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/gps"
+if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
+    LOCK_DIR="/tmp/gps-$(id -u)"
+fi
+STARTUP_LOCK="${LOCK_DIR}/startup.lock"
+
+if command -v flock >/dev/null 2>&1 && [ -f "$STARTUP_LOCK" ]; then
+    if ! flock -n "$STARTUP_LOCK" -c "true" 2>/dev/null; then
+        echo "GPS startup already in progress (startup lock held at $STARTUP_LOCK); skipping duplicate invocation." >&2
+        exit 0
+    fi
+fi
+
 if ! command -v gdbus >/dev/null 2>&1; then
     echo "GPS startup refused: gdbus is unavailable; notification ownership cannot be checked." >&2
     exit 2
