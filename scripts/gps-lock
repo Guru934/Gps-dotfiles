@@ -113,7 +113,7 @@ fi
 # Check if LOCK_AVATAR_CONF exists and points to a valid readable avatar image
 avatar_valid=0
 if [ -s "$LOCK_AVATAR_CONF" ]; then
-    avatar_path="$(grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
+    avatar_path="$( (grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null || true) | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
     if [ -n "$avatar_path" ] && [ -r "$avatar_path" ] && [ -s "$avatar_path" ]; then
         avatar_valid=1
     fi
@@ -125,7 +125,7 @@ if [ "$avatar_valid" -eq 0 ]; then
     fi
     # Re-validate after running the tool
     if [ -s "$LOCK_AVATAR_CONF" ]; then
-        avatar_path="$(grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
+        avatar_path="$( (grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null || true) | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
         if [ -n "$avatar_path" ] && [ -r "$avatar_path" ] && [ -s "$avatar_path" ]; then
             avatar_valid=1
         fi
@@ -139,12 +139,23 @@ if [ "$avatar_valid" -eq 0 ]; then
     if [ ! -s "$fallback_img" ]; then
         mkdir -p "$fallback_dir" 2>/dev/null || true
         # Minimal valid 1x1 transparent PNG (67 bytes), base64-encoded
-        printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/pOOxfwAAAABJRU5ErkJggg==' \
+        printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==' \
             | base64 -d > "$fallback_img" 2>/dev/null || true
     fi
     if [ -s "$fallback_img" ]; then
-        mkdir -p "$(dirname "$LOCK_AVATAR_CONF")" 2>/dev/null || true
-        printf '%s\n' "\$avatar = $fallback_img" > "$LOCK_AVATAR_CONF" 2>/dev/null || true
+        conf_dir="$(dirname "$LOCK_AVATAR_CONF")"
+        mkdir -p "$conf_dir" 2>/dev/null || true
+        conf_tmp="$conf_dir/.lock-avatar.tmp.$$"
+        printf '%s\n' "\$avatar = $fallback_img" > "$conf_tmp" 2>/dev/null || true
+        if [ -s "$conf_tmp" ]; then
+            # Safe replacement: never write through a pre-existing symlink
+            if [ -L "$LOCK_AVATAR_CONF" ]; then
+                rm -f "$LOCK_AVATAR_CONF" 2>/dev/null || true
+            fi
+            mv -f "$conf_tmp" "$LOCK_AVATAR_CONF" 2>/dev/null || rm -f "$conf_tmp" 2>/dev/null
+        else
+            rm -f "$conf_tmp" 2>/dev/null || true
+        fi
     fi
 fi
 

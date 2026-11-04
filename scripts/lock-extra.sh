@@ -37,6 +37,63 @@ fmt_time() {   # seconds (float) -> MM:SS or H:MM:SS
         if(h>0) printf "%d:%02d:%02d\n", h,m,r; else printf "%02d:%02d\n", m,r }'
 }
 
+# Validates downloaded artwork: size bounds, format signature filter, and integrity check.
+validate_image_file() {
+    local f="$1"
+    [ -f "$f" ] || return 1
+
+    # 1. Post-download byte-size check (non-empty, maximum 5 MB)
+    local sz
+    sz="$(wc -c < "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)"
+    if [ "$sz" -le 0 ] || [ "$sz" -gt 5242880 ]; then
+        return 1
+    fi
+
+    # 2. Fast magic-byte header check (identifies supported container formats; not full validation)
+    local hdr
+    hdr="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 -N4 | tr -d ' ')"
+    case "$hdr" in
+        89504e47) ;; # PNG signature
+        ffd8ff*)  ;; # JPEG SOI
+        52494646) ;; # RIFF (WebP)
+        47494638) ;; # GIF87a/89a
+        *) return 1 ;;
+    esac
+
+    # 3. Reliable lightweight image integrity verification
+    if have python3; then
+        python3 -c '
+import sys
+try:
+    from PIL import Image
+    with Image.open(sys.argv[1]) as im:
+        im.verify()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+' "$f" 2>/dev/null && return 0
+        return 1
+    elif have identify; then
+        identify -ping -quiet "$f" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+
+    # Fallback container boundary checks if dedicated image analyzers are absent
+    case "$hdr" in
+        ffd8ff*)
+            # Valid JPEG must end with EOI marker FF D9
+            local eoi
+            eoi="$(tail -c 2 "$f" 2>/dev/null | od -An -tx1 -N2 | tr -d ' ')"
+            [ "$eoi" = "ffd9" ] || return 1
+            ;;
+        89504e47)
+            # Valid PNG must end with IEND chunk
+            tail -c 12 "$f" 2>/dev/null | grep -q "IEND" || return 1
+            ;;
+    esac
+    return 0
+}
+
 case "${1:-}" in
 greeting)
     h="$(date +%H)"; h=$((10#$h))
@@ -163,19 +220,8 @@ media-art)
                     --max-time 4 \
                     --max-filesize 5242880 \
                     -o "$tmp" "$url" 2>/dev/null; then
-                    if [ -s "$tmp" ]; then
-                        # Lightweight image validation: check magic bytes
-                        hdr="$(head -c 4 "$tmp" 2>/dev/null | od -An -tx1 -N4 | tr -d ' ')"
-                        case "$hdr" in
-                            89504e47) ;; # PNG
-                            ffd8ff*)  ;; # JPEG
-                            52494646) ;; # RIFF (WEBP)
-                            47494638) ;; # GIF
-                            *) rm -f "$tmp" 2>/dev/null; hdr="" ;;
-                        esac
-                        if [ -n "$hdr" ]; then
-                            mv -f "$tmp" "$dest" 2>/dev/null || rm -f "$tmp" 2>/dev/null
-                        fi
+                    if validate_image_file "$tmp"; then
+                        mv -f "$tmp" "$dest" 2>/dev/null || rm -f "$tmp" 2>/dev/null
                     else
                         rm -f "$tmp" 2>/dev/null
                     fi

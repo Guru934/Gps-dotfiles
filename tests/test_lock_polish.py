@@ -592,11 +592,10 @@ class LockExtraArtworkHardeningTests(unittest.TestCase):
 
     def test_valid_png_image_is_cached_successfully(self):
         """Downloaded content with valid PNG magic bytes is accepted and cached."""
-        # Minimal valid PNG (1x1 transparent pixel)
         import base64
-        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/pOOxfwAAAABJRU5ErkJggg=="
+        # Genuinely valid 2x2 PNG image (verified with PIL)
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGNkaGBgYGBgAhEMDAAGKgCE2O/yUgAAAABJRU5ErkJggg=="
         png_bytes = base64.b64decode(png_b64)
-        png_hex = png_bytes.hex()
 
         mock_curl = self.mock_bin_dir / "curl"
         # Write a mock curl that produces a real PNG file
@@ -631,9 +630,24 @@ class LockExtraArtworkHardeningTests(unittest.TestCase):
         self.assertGreater(Path(output).stat().st_size, 0)
 
     def test_valid_jpeg_image_is_cached_successfully(self):
-        """Downloaded content with valid JPEG magic bytes is accepted and cached."""
-        # Minimal JPEG-ish content (valid magic header + padding)
-        jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+        """Downloaded content with valid JPEG integrity is accepted and cached."""
+        import base64
+        # Genuinely valid JPEG (verified with PIL Image.open().verify())
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        jpeg_bytes = base64.b64decode(jpeg_b64)
 
         mock_curl = self.mock_bin_dir / "curl"
         jpeg_file = self.tmp_path / "valid.jpg"
@@ -661,6 +675,78 @@ class LockExtraArtworkHardeningTests(unittest.TestCase):
         output = res.stdout.strip()
         self.assertFalse(output.endswith("art-default.png"), f"Expected cached JPEG, got fallback: {output}")
         self.assertTrue(Path(output).is_file())
+
+    def test_corrupt_truncated_jpeg_is_rejected_and_not_cached(self):
+        """Corrupt or truncated JPEG payload (missing valid structure and EOI) must be rejected."""
+        # Truncate genuine JPEG header to 32 bytes (valid SOI/APP0 but missing SOF/SOS/EOI)
+        corrupt_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\x00" * 12
+
+        mock_curl = self.mock_bin_dir / "curl"
+        bad_jpg_file = self.tmp_path / "bad.jpg"
+        bad_jpg_file.write_bytes(corrupt_jpeg)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/corrupt-cover.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Verify no .img or .tmp files remain cached
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_oversized_successful_download_is_rejected_and_deleted(self):
+        """When download succeeds (exit 0) but file size exceeds 5 MB, it must be deleted and rejected."""
+        mock_curl = self.mock_bin_dir / "curl"
+        oversized_file = self.tmp_path / "oversized.png"
+        # Write 5.5 MB of data
+        with open(oversized_file, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 5500000)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{oversized_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/giant-artwork.png")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Must not be cached, and temporary files must be deleted
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
 
 
 if __name__ == "__main__":

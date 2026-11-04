@@ -180,6 +180,51 @@ class GpsLockWrapperTests(HermeticTestCase):
         self.assertTrue(fallback_path.is_file(), f"Fallback avatar image must exist at {fallback_path}")
         self.assertGreater(fallback_path.stat().st_size, 0)
 
+    def test_avatar_fallback_never_writes_through_symlink_to_protected_file(self):
+        """When avatar helper fails and LOCK_AVATAR_CONF is a symlink, target file is preserved."""
+        mock_pidof = self.mock_bin_dir / "pidof"
+        mock_pidof.write_text("#!/bin/sh\nexit 1\n")
+        mock_pidof.chmod(mock_pidof.stat().st_mode | stat.S_IEXEC)
+
+        mock_hyprlock = self.mock_bin_dir / "hyprlock"
+        mock_hyprlock.write_text(f"#!/bin/sh\necho 'SPAWNED' >> '{self.log_file}'\nexit 0\n")
+        mock_hyprlock.chmod(mock_hyprlock.stat().st_mode | stat.S_IEXEC)
+
+        config_dir = self.tmp_path / "config"
+        cache_dir = self.tmp_path / "cache"
+        gps_config_dir = config_dir / "gps"
+        gps_config_dir.mkdir(parents=True, exist_ok=True)
+
+        protected_target = self.tmp_path / "protected_target.txt"
+        protected_target.write_text("CRITICAL UNMODIFIED REPO DATA", encoding="utf-8")
+
+        target_conf = gps_config_dir / "lock-avatar.conf"
+        target_conf.symlink_to(protected_target)
+
+        # Mock avatar tool to fail
+        mock_avatar = self.mock_bin_dir / "gps-lock-avatar"
+        mock_avatar.write_text("#!/bin/sh\nexit 1\n")
+        mock_avatar.chmod(mock_avatar.stat().st_mode | stat.S_IEXEC)
+
+        env = {
+            **self.hermetic.env,
+            "PATH": f"{self.mock_bin_dir}:{self.hermetic.env.get('PATH', '')}",
+            "XDG_CONFIG_HOME": str(config_dir),
+            "XDG_CACHE_HOME": str(cache_dir),
+        }
+
+        res = subprocess.run([str(GPS_LOCK_SCRIPT)], env=env, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(self.log_file.exists())
+
+        # Protected target MUST remain completely unchanged
+        self.assertEqual(protected_target.read_text(encoding="utf-8"), "CRITICAL UNMODIFIED REPO DATA")
+
+        # target_conf must now be a standalone regular file, not a symlink
+        self.assertTrue(target_conf.is_file())
+        self.assertFalse(target_conf.is_symlink())
+        self.assertIn("$avatar =", target_conf.read_text(encoding="utf-8"))
+
 
 class GpsIdleControllerTests(HermeticTestCase):
     """Unit tests for scripts/gps-idle lifecycle management."""
