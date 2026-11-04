@@ -202,6 +202,7 @@ end
 stop_pattern "quickshell.*shell\.qml" "GPS master shell"
 stop_device_watcher "GPS device watcher"
 stop_pattern "awww-daemon" "awww-daemon"
+stop_pattern "mpvpaper" "mpvpaper"
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
 rm -f "$gps_shell_log" "$HOME/.config/quickshell/theme.log"
@@ -279,14 +280,19 @@ end
 
 # 2b. Re-apply the last wallpaper: awww-daemon starts blank, so without this
 # every shell restart would leave the background empty until a manual pick.
-set -l last_wall_file "$HOME/.config/quickshell/gps-last-wall.txt"
-if test -f "$last_wall_file"
-    set last_wall (cat "$last_wall_file")
-    if test -f "$last_wall"
-        awww img "$last_wall" --transition-type none >/dev/null 2>&1
-        log "wallpaper re-applied: $last_wall"
-    else
-        log "WARN: last wallpaper file missing: $last_wall"
+if test -x "$REPO_DIR/scripts/gps-wallpaper"
+    "$REPO_DIR/scripts/gps-wallpaper" restore >/dev/null 2>&1
+    log "wallpaper restored via gps-wallpaper"
+else
+    set -l last_wall_file "$HOME/.config/quickshell/gps-last-wall.txt"
+    if test -f "$last_wall_file"
+        set last_wall (cat "$last_wall_file")
+        if test -f "$last_wall"
+            awww img "$last_wall" --transition-type none >/dev/null 2>&1
+            log "wallpaper re-applied: $last_wall"
+        else
+            log "WARN: last wallpaper file missing: $last_wall"
+        end
     end
 end
 

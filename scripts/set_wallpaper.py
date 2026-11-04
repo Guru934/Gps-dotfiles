@@ -570,6 +570,14 @@ def apply_wallpaper(
     last_wall = last_wall_path or get_last_wall_path()
 
     if restore:
+        if last_wall_path is None:
+            try:
+                import gps_wallpaper
+                res = gps_wallpaper.restore_wallpaper()
+                if res.get("ok"):
+                    return res
+            except Exception:
+                pass
         if not last_wall.exists():
             return {"ok": False, "error": "No previous wallpaper recorded to restore"}
         try:
@@ -587,7 +595,20 @@ def apply_wallpaper(
     if not path.is_file():
         return {"ok": False, "error": f"Wallpaper file not found: {path}"}
 
+    # If target is a video file, delegate to live wallpaper pipeline
+    if path.suffix.lower() in {".mp4", ".webm", ".mkv", ".mov"}:
+        try:
+            import gps_wallpaper
+            return gps_wallpaper.apply_live_wallpaper(path)
+        except Exception as e:
+            return {"ok": False, "error": f"Failed to apply video wallpaper: {e}"}
+
     if not skip_awww:
+        try:
+            import gps_wallpaper
+            gps_wallpaper.stop_live_wallpaper()
+        except Exception:
+            pass
         ensure_awww_daemon()
         cmd = [
             "awww", "img", str(path),

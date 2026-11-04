@@ -67,6 +67,7 @@ libnotify [feature] # Desktop notification CLI (notify-send) used for capture/pi
 upower [hardware] # UPower daemon for battery status monitoring in laptop LeftRail/Island
 power-profiles-daemon [hardware] # Power profile switching (performance/balanced/power-saver)
 mpv [feature] # Recommended hardware-accelerated video player for Media Hub playback
+mpvpaper [feature] # Hardware-accelerated Wayland video wallpaper player for Wallpaper Carousel
 ffmpeg [feature] # Video transcoding and ffprobe audio metadata extractor for Media Hub
 yt-dlp [feature] # Command-line video and audio downloader for Media Hub Downloads queue
 7zip [feature] # Archive utility (7z) providing CBR extraction for Media Hub Manga Reader

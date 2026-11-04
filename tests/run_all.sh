@@ -96,6 +96,8 @@ export HYPRLAND_INSTANCE_SIGNATURE=""
 export PATH="$TMP_ENV/stubs:$PATH"
 export PYTHONPATH="$REPO_DIR:${PYTHONPATH:-}"
 export GPS_STUB_LOG="$TMP_ENV/stubs.log"
+unset GPS_ROOT
+
 
 START_TIME=$(date +%s)
 

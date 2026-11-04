@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import QtQuick.Effects
@@ -11,11 +12,13 @@ PanelWindow {
     property var hub: null
     property bool isOpen: false
     property int currentIndex: 0
+    property var posterMap: ({})
     readonly property int visibleRadius: 3
     readonly property string repoRoot: (root.hub && root.hub.repoRoot)
         ? root.hub.repoRoot
         : (Quickshell.env("GPS_ROOT") || "")
     readonly property string wallpaperDirectory: "file://" + Quickshell.env("HOME") + "/Pictures/Wallpapers"
+    readonly property string wallpaperDirectoryPath: Quickshell.env("HOME") + "/Pictures/Wallpapers"
 
     readonly property var targetScreen: (root.hub && root.hub.popupScreen)
         ? root.hub.popupScreen
@@ -30,6 +33,29 @@ PanelWindow {
     function applyWallpaper() {
         if (!carouselLoader.item) return
         carouselLoader.item.applyWallpaper()
+    }
+
+    // Posters extraction and synchronization process
+    Process {
+        id: posterSyncProc
+        command: [root.repoRoot + "/scripts/gps-wallpaper", "sync-posters", root.wallpaperDirectoryPath]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const parsed = JSON.parse(this.text)
+                    if (parsed && typeof parsed === "object") {
+                        root.posterMap = parsed
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    onIsOpenChanged: {
+        if (root.isOpen) {
+            posterSyncProc.running = true
+        }
     }
 
     // Centered finite surface: empty layer-shell edge anchors.
@@ -85,14 +111,17 @@ PanelWindow {
                 if (wallpapers.count === 0) return
                 const path = wallpapers.get(root.currentIndex, "filePath")
                 if (!path) return
-                Quickshell.execDetached([root.repoRoot + "/scripts/set-wallpaper", path])
+                Quickshell.execDetached([root.repoRoot + "/scripts/gps-wallpaper", "apply", path])
                 root.close()
             }
 
             FolderListModel {
                 id: wallpapers
                 folder: root.wallpaperDirectory
-                nameFilters: ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp"]
+                nameFilters: [
+                    "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp",
+                    "*.mp4", "*.webm", "*.mkv", "*.mov"
+                ]
                 showDirs: false
                 sortField: FolderListModel.Name
             }
@@ -133,6 +162,13 @@ PanelWindow {
                         required property int index
                         required property url fileUrl
                         required property string fileName
+                        required property string filePath
+
+                        readonly property bool isVideo: /\.(mp4|webm|mkv|mov)$/i.test(cardDelegate.fileName)
+                        readonly property var posterUrl: root.posterMap[cardDelegate.filePath] || ""
+                        readonly property var cardSource: cardDelegate.isVideo
+                            ? (cardDelegate.posterUrl || "")
+                            : cardDelegate.fileUrl
 
                         readonly property int delta: index - root.currentIndex
                         readonly property bool inRange: Math.abs(delta) <= root.visibleRadius
@@ -189,12 +225,54 @@ PanelWindow {
                                 Image {
                                     anchors.fill: parent
                                     anchors.margins: cardDelegate.isSelected ? 2 : 0
-                                    source: fileUrl
+                                    source: cardDelegate.cardSource
                                     sourceSize.width: 720
                                     sourceSize.height: 450
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     cache: true
+                                }
+
+                                // Subtle LIVE badge for video wallpapers
+                                Rectangle {
+                                    id: liveBadge
+                                    visible: cardDelegate.isVideo
+                                    anchors {
+                                        top: parent.top
+                                        left: parent.left
+                                        margins: 14
+                                    }
+                                    height: 22
+                                    width: liveRow.implicitWidth + 14
+                                    radius: Theme.radiusSm
+                                    color: Qt.rgba(0, 0, 0, 0.65)
+                                    border.width: 1
+                                    border.color: Qt.rgba(255, 255, 255, 0.15)
+                                    z: 5
+
+                                    Row {
+                                        id: liveRow
+                                        anchors.centerIn: parent
+                                        spacing: 5
+
+                                        Rectangle {
+                                            width: 6
+                                            height: 6
+                                            radius: 3
+                                            color: Theme.brandAccent
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Text {
+                                            text: "LIVE"
+                                            color: Theme.textMain
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 10
+                                            font.weight: Font.DemiBold
+                                            font.letterSpacing: 0.8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
                                 }
 
                                 // Neighbor darkening overlay
