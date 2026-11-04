@@ -295,18 +295,94 @@ case "$cmd" in
     watchdog)
         action="${1:-status}"
         shift || true
+        config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell"
+        flag_file="$config_dir/gps-watchdog-auto"
+
         case "$action" in
+            status)
+                python3 "$REPO_DIR/scripts/gps-watchdog" --status
+                ;;
             start)
-                python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe &
+                mode="${1:-}"
+                if [[ -z "$mode" ]]; then
+                    if [[ -f "$flag_file" ]]; then
+                        content=$(cat "$flag_file" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)
+                        case "$content" in
+                            ""|auto|1|true|enabled)
+                                mode="auto"
+                                ;;
+                            *)
+                                mode="observe"
+                                ;;
+                        esac
+                    else
+                        mode="observe"
+                    fi
+                fi
+                if [[ "$mode" != "observe" && "$mode" != "auto" ]]; then
+                    echo "Invalid mode: $mode (must be 'observe' or 'auto')" >&2
+                    exit 1
+                fi
+                setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode "$mode" </dev/null >/dev/null 2>&1 &
+                disown
+                echo "GPS Watchdog started in ${mode} mode."
                 ;;
             stop)
                 python3 "$REPO_DIR/scripts/gps-watchdog" --stop
                 ;;
-            status)
-                python3 "$REPO_DIR/scripts/gps-watchdog" --status
+            mode)
+                target="${1:-}"
+                if [[ -z "$target" ]]; then
+                    cfg_mode="observe"
+                    if [[ -f "$flag_file" ]]; then
+                        c=$(cat "$flag_file" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)
+                        case "$c" in
+                            ""|auto|1|true|enabled) cfg_mode="auto" ;;
+                        esac
+                    fi
+                    echo "Configured mode: $cfg_mode (flag file: $([[ -f "$flag_file" ]] && echo "present" || echo "absent"))"
+                    if python3 "$REPO_DIR/scripts/gps-watchdog" --once >/dev/null 2>&1; then
+                        r_dir="${XDG_RUNTIME_DIR:-/tmp/gps-$(id -u)}/gps"
+                        r_mode="observe"
+                        if [[ -f "$r_dir/watchdog-mode" ]]; then
+                            r_mode=$(cat "$r_dir/watchdog-mode" 2>/dev/null | tr -d '[:space:]')
+                        fi
+                        echo "Running mode: $r_mode"
+                    else
+                        echo "Running mode: stopped"
+                    fi
+                elif [[ "$target" == "auto" ]]; then
+                    mkdir -p "$config_dir"
+                    printf "auto\n" > "$flag_file"
+                    echo "GPS Watchdog: persistent automatic recovery enabled."
+                    if python3 "$REPO_DIR/scripts/gps-watchdog" --once >/dev/null 2>&1; then
+                        python3 "$REPO_DIR/scripts/gps-watchdog" --stop >/dev/null 2>&1 || true
+                        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode auto </dev/null >/dev/null 2>&1 &
+                        disown
+                        echo "GPS Watchdog restarted in auto mode."
+                    fi
+                elif [[ "$target" == "observe" ]]; then
+                    rm -f "$flag_file"
+                    echo "GPS Watchdog: persistent observation mode enabled (auto recovery disabled)."
+                    if python3 "$REPO_DIR/scripts/gps-watchdog" --once >/dev/null 2>&1; then
+                        python3 "$REPO_DIR/scripts/gps-watchdog" --stop >/dev/null 2>&1 || true
+                        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1 &
+                        disown
+                        echo "GPS Watchdog restarted in observe mode."
+                    fi
+                else
+                    echo "Usage: gps-ipc watchdog mode [observe|auto]" >&2
+                    exit 1
+                fi
+                ;;
+            enable-auto)
+                exec "$REPO_DIR/scripts/gps-ipc" watchdog mode auto
+                ;;
+            disable-auto)
+                exec "$REPO_DIR/scripts/gps-ipc" watchdog mode observe
                 ;;
             *)
-                echo "Usage: gps-ipc watchdog <status|start|stop>" >&2
+                echo "Usage: gps-ipc watchdog <status|start|stop|mode|enable-auto|disable-auto> [args...]" >&2
                 exit 1
                 ;;
         esac
@@ -351,7 +427,7 @@ case "$cmd" in
         echo "  record <start|stop|toggle|status> [args...]" >&2
         echo "  shot [region|window|monitor]" >&2
         echo "  picker" >&2
-        echo "  watchdog <status|start|stop>" >&2
+        echo "  watchdog <status|start|stop|mode|enable-auto|disable-auto> [args...]" >&2
         echo "  check [shell|island|settings|all]" >&2
         echo "  status" >&2
         echo "  doctor [--json]" >&2

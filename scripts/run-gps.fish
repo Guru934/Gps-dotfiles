@@ -383,9 +383,27 @@ if test -n "$island_pid" -a -n "$shell_pid" -a -d "/proc/$island_pid" -a -d "/pr
         end
     end
     if test $watchdog_running -eq 0
-        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1 &
+        set -l target_mode "observe"
+        set -l flag_file "$HOME/.config/quickshell/gps-watchdog-auto"
+        if test -f "$flag_file"
+            set -l flag_content (cat "$flag_file" 2>/dev/null | string trim | string lower)
+            if test $status -eq 0
+                if test -z "$flag_content" -o "$flag_content" = "auto" -o "$flag_content" = "1" -o "$flag_content" = "true" -o "$flag_content" = "enabled"
+                    set target_mode "auto"
+                else
+                    log "WARN: gps-watchdog-auto contains '$flag_content'; falling back to observe mode"
+                end
+            else
+                log "WARN: gps-watchdog-auto is unreadable; falling back to observe mode"
+            end
+        end
+        if test "$target_mode" = "auto"
+            setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode auto </dev/null >/dev/null 2>&1 &
+        else
+            setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1 &
+        end
         disown
-        log "GPS watchdog launched in observation mode"
+        log "GPS watchdog launched in $target_mode mode"
     end
 else
     log "WARN: skipping watchdog startup; Island or main shell is not ready"
