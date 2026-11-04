@@ -365,6 +365,7 @@ class GpsWatchdog:
                         self.sleep_fn(backoff)
                         if self.spawn_fn(comp.restart_cmd):
                             comp.restarts.append(now)
+                            status["restart_count"] = len(comp.restarts)
                             status["action"] = "restarted"
                             self.logger.log("INFO", f"Successfully triggered restart for {comp.name}.")
                         else:
@@ -406,8 +407,10 @@ class GpsWatchdog:
         try:
             with open(self.pid_file, "w") as f:
                 f.write(str(os.getpid()))
+            with open(self.runtime_dir / "watchdog-mode", "w") as f:
+                f.write(self.mode)
         except Exception as e:
-            self.logger.log("WARN", f"Could not write PID file: {e}")
+            self.logger.log("WARN", f"Could not write PID/mode file: {e}")
 
         self.logger.log("INFO", f"GPS Watchdog starting in '{self.mode}' mode (PID {os.getpid()}, interval={interval}s).")
         try:
@@ -433,6 +436,7 @@ class GpsWatchdog:
                     with open(self.pid_file, "r") as f:
                         if f.read().strip() == str(os.getpid()):
                             self.pid_file.unlink(missing_ok=True)
+                            (self.runtime_dir / "watchdog-mode").unlink(missing_ok=True)
             except Exception:
                 pass
             self.logger.log("INFO", "GPS Watchdog stopped cleanly.")
@@ -444,6 +448,7 @@ def stop_watchdog(runtime_dir: Optional[Path] = None) -> int:
     pid_file = r_dir / "watchdog.pid"
     shutdown_flag = r_dir / "watchdog-shutdown.flag"
     shutdown_flag.unlink(missing_ok=True)
+    (r_dir / "watchdog-mode").unlink(missing_ok=True)
 
     if not pid_file.is_file():
         print("GPS Watchdog is not running.")
@@ -513,7 +518,15 @@ def main() -> int:
     if args.stop:
         return stop_watchdog()
 
-    watchdog = GpsWatchdog(mode=args.mode)
+    active_mode = args.mode
+    mode_file = get_runtime_dir() / "watchdog-mode"
+    if mode_file.is_file():
+        try:
+            active_mode = mode_file.read_text().strip() or args.mode
+        except Exception:
+            pass
+
+    watchdog = GpsWatchdog(mode=active_mode)
 
     if args.status or args.once:
         res = watchdog.tick()
