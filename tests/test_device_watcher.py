@@ -144,6 +144,40 @@ class DeviceWatcherTests(unittest.TestCase):
         self.assertEqual(emitted[1][1], "disconnected")
         self.assertEqual(emitted[1][2], "Office-5GHz")
 
+    def test_pid_file_lifecycle_and_stale_handling(self):
+        """Watcher acquires PID file, handles stale PID, and cleans up on exit."""
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_file = Path(tmpdir) / "device-watcher.pid"
+
+            # 1. Stale PID file handling
+            pid_file.write_text("99999999\n")
+            gps_device_watcher.acquire_or_replace_pid_file(pid_file)
+            self.assertEqual(pid_file.read_text().strip(), str(os.getpid()))
+
+            # 2. Cleanup only deletes if current process owns it
+            gps_device_watcher.cleanup_pid_file(pid_file)
+            self.assertFalse(pid_file.exists())
+
+            # 3. Cleanup does not delete if another PID owns it
+            pid_file.write_text("12345\n")
+            gps_device_watcher.cleanup_pid_file(pid_file)
+            self.assertTrue(pid_file.exists())
+
+    def test_is_owned_watcher_pid_validation(self):
+        """is_owned_watcher_pid validates process existence and command line."""
+        import os
+
+        # Non-existent PID
+        self.assertFalse(gps_device_watcher.is_owned_watcher_pid(99999999))
+        # Self PID is skipped
+        self.assertFalse(gps_device_watcher.is_owned_watcher_pid(os.getpid()))
+        # Negative / zero PID
+        self.assertFalse(gps_device_watcher.is_owned_watcher_pid(0))
+        self.assertFalse(gps_device_watcher.is_owned_watcher_pid(-1))
+
 
 if __name__ == "__main__":
     unittest.main()

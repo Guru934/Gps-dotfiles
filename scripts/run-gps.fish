@@ -71,6 +71,90 @@ function stop_pattern --argument-names pattern label
     return 0
 end
 
+# Safe stop for GPS device watcher: strictly verifies UID ownership and exact
+# script command line before signalling, preventing accidental termination of
+# unrelated processes. Also removes stale PID files.
+function stop_device_watcher --argument-names label
+    set -l my_uid (id -u)
+    set -l pid_file "$XDG_RUNTIME_DIR/gps/device-watcher.pid"
+    if test -z "$XDG_RUNTIME_DIR" -o ! -d "$XDG_RUNTIME_DIR"
+        set pid_file "/tmp/gps-$my_uid/device-watcher.pid"
+    end
+
+    set -l target_pids
+
+    # 1. Read PID file if present
+    if test -f "$pid_file"
+        set -l file_pid (cat "$pid_file" 2>/dev/null | string trim)
+        if test -n "$file_pid" -a -d "/proc/$file_pid"
+            set -a target_pids $file_pid
+        end
+    end
+
+    # 2. Inspect candidate PIDs for this user matching gps-device-watcher
+    for p in (pgrep -u $my_uid -f "gps-device-watcher" 2>/dev/null)
+        if test "$p" = $fish_pid
+            continue
+        end
+        if not contains $p $target_pids
+            set -a target_pids $p
+        end
+    end
+
+    set -l confirmed_pids
+    for pid in $target_pids
+        if not test -d "/proc/$pid"
+            continue
+        end
+        set -l p_uid (stat -c '%u' "/proc/$pid" 2>/dev/null)
+        if test "$p_uid" != "$my_uid"
+            continue
+        end
+        set -l cmdline (tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)
+        if not string match -q "*gps-device-watcher*" "$cmdline"
+            continue
+        end
+        set -a confirmed_pids $pid
+    end
+
+    if test (count $confirmed_pids) -eq 0
+        rm -f "$pid_file"
+        return 0
+    end
+
+    for pid in $confirmed_pids
+        kill -TERM $pid 2>/dev/null; or true
+    end
+
+    for i in (seq 1 15)
+        set -l any_alive 0
+        for pid in $confirmed_pids
+            if test -d "/proc/$pid"
+                set any_alive 1
+                break
+            end
+        end
+        if test $any_alive -eq 0
+            rm -f "$pid_file"
+            log "stopped $label gracefully"
+            return 0
+        end
+        sleep 0.1
+    end
+
+    for pid in $confirmed_pids
+        if test -d "/proc/$pid"
+            set -l p_uid (stat -c '%u' "/proc/$pid" 2>/dev/null)
+            if test "$p_uid" = "$my_uid"
+                kill -9 $pid 2>/dev/null; or true
+            end
+        end
+    end
+    rm -f "$pid_file"
+    log "force-killed $label after 1.5s timeout"
+    return 0
+end
+
 # 0. Wait until the compositor accepts Wayland clients. hyprland.start can
 #    fire a moment before the socket is ready; launching early crashed every
 #    GUI process at login with "wl_display: Connection refused".
@@ -87,9 +171,10 @@ if test $ready_tries -gt 0
     log "compositor ready after ~"(math "0.05 * $ready_tries")"s of waiting"
 end
 
-# 1. Stop only the stale GPS shell and wallpaper daemon.
+# 1. Stop only the stale GPS shell, device watcher, and wallpaper daemon.
 # GPS Island is also a QuickShell process, so never kill all quickshell PIDs.
 stop_pattern "quickshell.*shell\.qml" "GPS master shell"
+stop_device_watcher "GPS device watcher"
 stop_pattern "awww-daemon" "awww-daemon"
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
