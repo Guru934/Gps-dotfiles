@@ -34,8 +34,9 @@ PanelWindow {
     color: "transparent"
     visible: root.isOpen
     exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "gps-wallpaper-carousel"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.isOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.isOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
     Shortcut { sequence: "Super+W"; context: Qt.ApplicationShortcut; onActivated: root.toggle() }
 
@@ -44,15 +45,24 @@ PanelWindow {
         id: carouselLoader
         anchors.fill: parent
         active: root.isOpen
+        focus: true
         sourceComponent: carouselContent
+        onLoaded: {
+            if (carouselLoader.item) {
+                carouselLoader.item.forceActiveFocus()
+            }
+        }
     }
 
     Component {
         id: carouselContent
 
-        Item {
+        FocusScope {
             id: contentRoot
             anchors.fill: parent
+            focus: true
+
+            Component.onCompleted: contentRoot.forceActiveFocus()
 
             function step(delta) {
                 if (wallpapers.count === 0) return
@@ -87,158 +97,160 @@ PanelWindow {
                 }
             }
 
-            FocusScope {
-                id: keyboardTrap
-                anchors.fill: parent
-                focus: true
-
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Left) {
-                        contentRoot.step(-1)
+            Keys.onPressed: event => {
+                if (event.key === Qt.Key_Left) {
+                    contentRoot.step(-1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Right) {
+                    contentRoot.step(1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    if (event.isAutoRepeat) {
                         event.accepted = true
-                    } else if (event.key === Qt.Key_Right) {
-                        contentRoot.step(1)
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        contentRoot.applyWallpaper()
-                        event.accepted = true
-                    } else if (event.key === Qt.Key_Escape) {
-                        root.close()
-                        event.accepted = true
+                        return
                     }
+                    contentRoot.applyWallpaper()
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Escape) {
+                    if (event.isAutoRepeat) {
+                        event.accepted = true
+                        return
+                    }
+                    root.close()
+                    event.accepted = true
                 }
+            }
 
-                // Main Coverflow Stage: 85% of screen width, generous height
-                Item {
-                    id: stage
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width * 0.86, 1680)
-                    height: Math.min(parent.height * 0.72, 740)
+            // Main Coverflow Stage: 85% of screen width, generous height
+            Item {
+                id: stage
+                anchors.centerIn: parent
+                width: Math.min(parent.width * 0.86, 1680)
+                height: Math.min(parent.height * 0.72, 740)
 
-                    Repeater {
-                        model: wallpapers
-                        delegate: Item {
-                            id: cardDelegate
-                            required property int index
-                            required property url fileUrl
-                            required property string fileName
+                Repeater {
+                    model: wallpapers
+                    delegate: Item {
+                        id: cardDelegate
+                        required property int index
+                        required property url fileUrl
+                        required property string fileName
 
-                            readonly property int delta: index - root.currentIndex
-                            readonly property bool inRange: Math.abs(delta) <= root.visibleRadius
-                            readonly property bool isSelected: delta === 0
+                        readonly property int delta: index - root.currentIndex
+                        readonly property bool inRange: Math.abs(delta) <= root.visibleRadius
+                        readonly property bool isSelected: delta === 0
 
-                            // 16:10 aspect thumbnail card
-                            width: 600
-                            height: 375
-                            x: stage.width / 2 - width / 2 + delta * 270
-                            y: stage.height / 2 - height / 2 - 20
-                            z: 20 - Math.abs(delta)
+                        // 16:10 aspect thumbnail card
+                        width: 600
+                        height: 375
+                        x: stage.width / 2 - width / 2 + delta * 270
+                        y: stage.height / 2 - height / 2 - 20
+                        z: 20 - Math.abs(delta)
 
-                            // Selected item is largest; neighbors scale down progressively
-                            scale: isSelected ? 1.0 : (Math.abs(delta) === 1 ? 0.78 : (Math.abs(delta) === 2 ? 0.62 : 0.48))
-                            opacity: inRange ? (isSelected ? 1.0 : (Math.abs(delta) === 1 ? 0.70 : (Math.abs(delta) === 2 ? 0.40 : 0.15))) : 0
-                            visible: opacity > 0.01
+                        // Selected item is largest; neighbors scale down progressively
+                        scale: isSelected ? 1.0 : (Math.abs(delta) === 1 ? 0.78 : (Math.abs(delta) === 2 ? 0.62 : 0.48))
+                        opacity: inRange ? (isSelected ? 1.0 : (Math.abs(delta) === 1 ? 0.70 : (Math.abs(delta) === 2 ? 0.40 : 0.15))) : 0
+                        visible: opacity > 0.01
 
-                            transform: Rotation {
-                                origin.x: cardDelegate.width / 2
-                                origin.y: cardDelegate.height / 2
-                                axis { x: 0; y: 1; z: 0 }
-                                angle: delta < 0 ? 32 : (delta > 0 ? -32 : 0)
-                                Behavior on angle { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        transform: Rotation {
+                            origin.x: cardDelegate.width / 2
+                            origin.y: cardDelegate.height / 2
+                            axis { x: 0; y: 1; z: 0 }
+                            angle: delta < 0 ? 32 : (delta > 0 ? -32 : 0)
+                            Behavior on angle { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        }
+
+                        Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+
+                        // Card Surface
+                        Item {
+                            id: cardVisual
+                            anchors.fill: parent
+
+                            // Soft shadow for selected card
+                            layer.enabled: cardDelegate.isSelected
+                            layer.effect: MultiEffect {
+                                shadowEnabled: true
+                                shadowColor: Theme.shadowColor
+                                shadowBlur: 0.85
+                                shadowVerticalOffset: 10
+                                shadowHorizontalOffset: 0
                             }
 
-                            Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-                            Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-                            Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                            // Card Surface
-                            Item {
-                                id: cardVisual
+                            Rectangle {
+                                id: cardRect
                                 anchors.fill: parent
+                                radius: Theme.radiusXl
+                                color: Theme.surfaceDeep
+                                border.width: cardDelegate.isSelected ? 2 : 0
+                                border.color: cardDelegate.isSelected ? Theme.brandAccent : "transparent"
+                                clip: true
 
-                                // Soft shadow for selected card
-                                layer.enabled: cardDelegate.isSelected
-                                layer.effect: MultiEffect {
-                                    shadowEnabled: true
-                                    shadowColor: Theme.shadowColor
-                                    shadowBlur: 0.85
-                                    shadowVerticalOffset: 10
-                                    shadowHorizontalOffset: 0
+                                Image {
+                                    anchors.fill: parent
+                                    anchors.margins: cardDelegate.isSelected ? 2 : 0
+                                    source: fileUrl
+                                    sourceSize.width: 720
+                                    sourceSize.height: 450
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    cache: true
                                 }
 
+                                // Neighbor darkening overlay
                                 Rectangle {
-                                    id: cardRect
                                     anchors.fill: parent
                                     radius: Theme.radiusXl
-                                    color: Theme.surfaceDeep
-                                    border.width: cardDelegate.isSelected ? 2 : 0
-                                    border.color: cardDelegate.isSelected ? Theme.brandAccent : "transparent"
-                                    clip: true
-
-                                    Image {
-                                        anchors.fill: parent
-                                        anchors.margins: cardDelegate.isSelected ? 2 : 0
-                                        source: fileUrl
-                                        sourceSize.width: 720
-                                        sourceSize.height: 450
-                                        fillMode: Image.PreserveAspectCrop
-                                        asynchronous: true
-                                        cache: true
-                                    }
-
-                                    // Neighbor darkening overlay
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        radius: Theme.radiusXl
-                                        color: "#000000"
-                                        opacity: cardDelegate.isSelected ? 0.0 : (Math.abs(cardDelegate.delta) === 1 ? 0.28 : 0.55)
-                                        Behavior on opacity { NumberAnimation { duration: 220 } }
-                                    }
-                                }
-                            }
-
-                            // Small floating filename label under the selected wallpaper only
-                            Text {
-                                anchors {
-                                    horizontalCenter: parent.horizontalCenter
-                                    top: parent.bottom
-                                    topMargin: 24
-                                }
-                                visible: cardDelegate.isSelected
-                                opacity: cardDelegate.isSelected ? 1.0 : 0.0
-                                Behavior on opacity { NumberAnimation { duration: 200 } }
-
-                                text: cardDelegate.fileName
-                                color: Theme.textMain
-                                font.family: Theme.fontUi
-                                font.pixelSize: Theme.fontSizeHeading
-                                font.bold: true
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onWheel: wheel => {
-                                    contentRoot.step(wheel.angleDelta.y > 0 ? -1 : 1)
-                                    wheel.accepted = true
-                                }
-                                onClicked: {
-                                    if (cardDelegate.delta === 0) contentRoot.applyWallpaper()
-                                    else root.currentIndex = cardDelegate.index
+                                    color: "#000000"
+                                    opacity: cardDelegate.isSelected ? 0.0 : (Math.abs(cardDelegate.delta) === 1 ? 0.28 : 0.55)
+                                    Behavior on opacity { NumberAnimation { duration: 220 } }
                                 }
                             }
                         }
-                    }
 
-                    // Empty state fallback
-                    Text {
-                        anchors.centerIn: parent
-                        visible: wallpapers.count === 0
-                        text: "No wallpapers found in ~/Pictures/Wallpapers"
-                        color: Theme.textMuted
-                        font.family: Theme.fontUi
-                        font.pixelSize: Theme.fontSizeSubheading
+                        // Small floating filename label under the selected wallpaper only
+                        Text {
+                            anchors {
+                                horizontalCenter: parent.horizontalCenter
+                                top: parent.bottom
+                                topMargin: 24
+                            }
+                            visible: cardDelegate.isSelected
+                            opacity: cardDelegate.isSelected ? 1.0 : 0.0
+                            Behavior on opacity { NumberAnimation { duration: 200 } }
+
+                            text: cardDelegate.fileName
+                            color: Theme.textMain
+                            font.family: Theme.fontUi
+                            font.pixelSize: Theme.fontSizeHeading
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onWheel: wheel => {
+                                contentRoot.step(wheel.angleDelta.y > 0 ? -1 : 1)
+                                wheel.accepted = true
+                            }
+                            onClicked: {
+                                if (cardDelegate.delta === 0) contentRoot.applyWallpaper()
+                                else root.currentIndex = cardDelegate.index
+                            }
+                        }
                     }
+                }
+
+                // Empty state fallback
+                Text {
+                    anchors.centerIn: parent
+                    visible: wallpapers.count === 0
+                    text: "No wallpapers found in ~/Pictures/Wallpapers"
+                    color: Theme.textMuted
+                    font.family: Theme.fontUi
+                    font.pixelSize: Theme.fontSizeSubheading
                 }
             }
         }
