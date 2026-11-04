@@ -18,6 +18,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -84,10 +85,17 @@ class WatchdogLogger:
 
 
 class ComponentState:
-    def __init__(self, name: str, pattern: str, restart_cmd: List[str]):
+    def __init__(
+        self,
+        name: str,
+        pattern: str,
+        restart_cmd: List[str],
+        observed_only: bool = False,
+    ):
         self.name = name
         self.pattern = pattern
         self.restart_cmd = restart_cmd
+        self.observed_only = observed_only
         self.last_pid: Optional[int] = None
         self.restarts: List[float] = []
         self.circuit_broken: bool = False
@@ -114,6 +122,7 @@ class GpsWatchdog:
         self.mode = mode  # "observe" or "auto"
         self.repo_root = repo_root or get_repo_root()
         self.runtime_dir = runtime_dir or get_runtime_dir()
+        self.pid_file = self.runtime_dir / "watchdog.pid"
         self.logger = logger or WatchdogLogger(get_log_dir() / "watchdog.log")
         self.check_session_fn = check_session_fn or self._default_check_session
         self.find_pid_fn = find_pid_fn or self._default_find_pid
@@ -134,6 +143,7 @@ class GpsWatchdog:
                     "-p",
                     str(self.repo_root / "island" / "IslandProduction.qml"),
                 ],
+                observed_only=False,
             ),
             "shell": ComponentState(
                 name="GPS Main Shell",
@@ -145,6 +155,13 @@ class GpsWatchdog:
                     "--path",
                     str(self.repo_root / "shell.qml"),
                 ],
+                observed_only=False,
+            ),
+            "device_watcher": ComponentState(
+                name="GPS Device Watcher",
+                pattern="python3.*gps-device-watcher",
+                restart_cmd=[],
+                observed_only=True,
             ),
         }
 
@@ -157,16 +174,40 @@ class GpsWatchdog:
             return False
 
     def _default_find_pid(self, pattern: str) -> Optional[int]:
-        """Find alive process matching pattern for current UID."""
+        """Find alive process matching pattern for current UID via /proc scanning."""
         my_uid = os.getuid()
-        cmd = ["pgrep", "-u", str(my_uid), "-f", pattern]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
-            if res.returncode == 0:
-                pids = [int(p) for p in res.stdout.strip().split() if p.isdigit()]
-                return pids[0] if pids else None
-        except Exception:
-            pass
+        for pid_str in os.listdir("/proc"):
+            if not pid_str.isdigit():
+                continue
+            try:
+                pid = int(pid_str)
+                proc_path = Path(f"/proc/{pid}")
+                if proc_path.stat().st_uid != my_uid:
+                    continue
+                with open(proc_path / "cmdline", "rb") as f:
+                    args = f.read().decode("utf-8", "ignore").split("\0")
+                if not args or not args[0]:
+                    continue
+                if pid == os.getpid():
+                    continue
+
+                # Match known components specifically or fallback to pattern regex
+                if "IslandProduction" in pattern:
+                    if "quickshell" in args[0] and any("IslandProduction" in a for a in args):
+                        return pid
+                elif "shell.qml" in pattern:
+                    if "quickshell" in args[0] and any("shell.qml" in a for a in args):
+                        return pid
+                elif "gps-device-watcher" in pattern:
+                    if "python" in args[0] and any(a.endswith("gps-device-watcher") for a in args):
+                        return pid
+                else:
+                    if re.search(pattern, " ".join(args)):
+                        return pid
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            except Exception:
+                continue
         return None
 
     def _default_spawn(self, cmd: List[str]) -> bool:
@@ -282,7 +323,13 @@ class GpsWatchdog:
                         f"{comp.name} (previously PID {comp.last_pid}) has terminated unexpectedly.",
                     )
 
-                if comp.circuit_broken:
+                if comp.observed_only:
+                    status["action"] = "observed_down"
+                    self.logger.log(
+                        "INFO",
+                        f"[OBSERVE] {comp.name} is down (supervised externally).",
+                    )
+                elif comp.circuit_broken:
                     status["action"] = "circuit_broken_skip"
                     self.logger.log(
                         "WARN",
@@ -323,18 +370,100 @@ class GpsWatchdog:
 
         return report
 
-    def run(self, interval: float = 3.0) -> None:
-        self.logger.log("INFO", f"GPS Watchdog starting in '{self.mode}' mode (interval={interval}s).")
-        while self.running:
+    def run(self, interval: float = 3.0) -> int:
+        # Check single-instance protection
+        if self.pid_file.is_file():
             try:
-                self.tick()
-                time.sleep(interval)
-            except (KeyboardInterrupt, SystemExit):
-                self.logger.log("INFO", "GPS Watchdog stopped by signal.")
+                with open(self.pid_file, "r") as f:
+                    old_pid = int(f.read().strip())
+                if old_pid > 0 and old_pid != os.getpid():
+                    try:
+                        os.kill(old_pid, 0)
+                        is_alive = True
+                    except PermissionError:
+                        is_alive = True
+                    except ProcessLookupError:
+                        is_alive = False
+
+                    if is_alive:
+                        self.logger.log("ERROR", f"Watchdog already running with PID {old_pid}. Exiting.")
+                        sys.stderr.write(f"GPS Watchdog already running with PID {old_pid}.\n")
+                        return 1
+            except (ValueError, OSError):
+                pass
+
+        try:
+            with open(self.pid_file, "w") as f:
+                f.write(str(os.getpid()))
+        except Exception as e:
+            self.logger.log("WARN", f"Could not write PID file: {e}")
+
+        self.logger.log("INFO", f"GPS Watchdog starting in '{self.mode}' mode (PID {os.getpid()}, interval={interval}s).")
+        try:
+            while self.running:
+                try:
+                    self.tick()
+                    time.sleep(interval)
+                except (KeyboardInterrupt, SystemExit):
+                    self.logger.log("INFO", "GPS Watchdog stopped by signal.")
+                    break
+                except Exception as e:
+                    self.logger.log("ERROR", f"Unexpected error in watchdog loop: {e}")
+                    time.sleep(interval)
+        finally:
+            try:
+                if self.pid_file.is_file():
+                    with open(self.pid_file, "r") as f:
+                        if f.read().strip() == str(os.getpid()):
+                            self.pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self.logger.log("INFO", "GPS Watchdog stopped cleanly.")
+        return 0
+
+
+def stop_watchdog(runtime_dir: Optional[Path] = None) -> int:
+    r_dir = runtime_dir or get_runtime_dir()
+    pid_file = r_dir / "watchdog.pid"
+    if not pid_file.is_file():
+        print("GPS Watchdog is not running.")
+        return 0
+
+    try:
+        with open(pid_file, "r") as f:
+            pid = int(f.read().strip())
+    except Exception:
+        pid_file.unlink(missing_ok=True)
+        print("GPS Watchdog was not running (removed corrupt PID file).")
+        return 0
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        pid_file.unlink(missing_ok=True)
+        print(f"GPS Watchdog was not running (removed stale PID file {pid}).")
+        return 0
+    except PermissionError:
+        print(f"Permission denied to signal PID {pid}.", file=sys.stderr)
+        return 1
+
+    print(f"Stopping GPS Watchdog (PID {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(30):
+            time.sleep(0.1)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
                 break
-            except Exception as e:
-                self.logger.log("ERROR", f"Unexpected error in watchdog loop: {e}")
-                time.sleep(interval)
+        else:
+            print(f"Warning: Watchdog (PID {pid}) did not exit within 3s.", file=sys.stderr)
+    except Exception as e:
+        print(f"Error signaling watchdog: {e}", file=sys.stderr)
+
+    pid_file.unlink(missing_ok=True)
+    print("GPS Watchdog stopped.")
+    return 0
 
 
 def main() -> int:
@@ -348,7 +477,11 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=3.0, help="Check interval in seconds")
     parser.add_argument("--once", action="store_true", help="Perform a single status check and exit")
     parser.add_argument("--status", action="store_true", help="Print current status JSON and exit")
+    parser.add_argument("--stop", action="store_true", help="Stop any running background GPS watchdog instance")
     args = parser.parse_args()
+
+    if args.stop:
+        return stop_watchdog()
 
     watchdog = GpsWatchdog(mode=args.mode)
 
@@ -363,8 +496,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
 
-    watchdog.run(interval=args.interval)
-    return 0
+    return watchdog.run(interval=args.interval)
 
 
 if __name__ == "__main__":

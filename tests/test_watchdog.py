@@ -167,6 +167,60 @@ class WatchdogTests(unittest.TestCase):
         sz = self.log_file.stat().st_size
         self.assertLessEqual(sz, 2000, "Log file should stay bounded")
 
+    def test_device_watcher_is_observed_only(self):
+        """Device watcher is observed but never restarted in auto mode."""
+        spawned = []
+        pids = {"island": 1234, "shell": 5678, "device_watcher": None}
+
+        watchdog = gps_watchdog.GpsWatchdog(
+            mode="auto",
+            runtime_dir=self.runtime_dir,
+            logger=self.logger,
+            check_session_fn=lambda: True,
+            find_pid_fn=lambda pattern: pids.get(
+                "device_watcher" if "gps-device-watcher" in pattern
+                else ("island" if "IslandProduction" in pattern else "shell")
+            ),
+            spawn_fn=lambda cmd: spawned.append(cmd) or True,
+            sleep_fn=lambda s: None,
+        )
+
+        res = watchdog.tick(now=1000.0)
+        dw_status = res["components"]["device_watcher"]
+        self.assertFalse(dw_status["alive"])
+        self.assertEqual(dw_status["action"], "observed_down")
+        self.assertEqual(len(spawned), 0, "Device watcher must not be restarted by watchdog")
+
+    def test_single_instance_prevents_duplicate_runs(self):
+        """Watchdog fails to start if another instance is already running with an alive PID."""
+        pid_file = self.runtime_dir / "watchdog.pid"
+        # Write current process PID as the simulated running watchdog
+        pid_file.write_text(str(os.getpid()))
+
+        watchdog = gps_watchdog.GpsWatchdog(
+            mode="observe",
+            runtime_dir=self.runtime_dir,
+            logger=self.logger,
+        )
+        # Calling run() with another PID active should return 1
+        # To test cleanly, write an alive PID different from os.getpid(), e.g. init PID 1
+        pid_file.write_text("1")
+        code = watchdog.run(interval=0.1)
+        self.assertEqual(code, 1)
+
+    def test_stop_watchdog_handles_missing_and_stale(self):
+        """stop_watchdog safely handles missing or dead PID files."""
+        # 1. Missing PID file
+        code = gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir)
+        self.assertEqual(code, 0)
+
+        # 2. Stale PID file (non-existent PID)
+        pid_file = self.runtime_dir / "watchdog.pid"
+        pid_file.write_text("99999999")
+        code = gps_watchdog.stop_watchdog(runtime_dir=self.runtime_dir)
+        self.assertEqual(code, 0)
+        self.assertFalse(pid_file.exists(), "Stale PID file should be removed")
+
 
 if __name__ == "__main__":
     unittest.main()
