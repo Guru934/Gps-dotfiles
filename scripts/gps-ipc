@@ -323,8 +323,7 @@ case "$cmd" in
                     echo "Invalid mode: $mode (must be 'observe' or 'auto')" >&2
                     exit 1
                 fi
-                setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode "$mode" </dev/null >/dev/null 2>&1 &
-                disown
+                setsid -f python3 "$REPO_DIR/scripts/gps-watchdog" --mode "$mode" </dev/null >/dev/null 2>&1
                 echo "GPS Watchdog started in ${mode} mode."
                 ;;
             stop)
@@ -357,8 +356,7 @@ case "$cmd" in
                     echo "GPS Watchdog: persistent automatic recovery enabled."
                     if python3 "$REPO_DIR/scripts/gps-watchdog" --once >/dev/null 2>&1; then
                         python3 "$REPO_DIR/scripts/gps-watchdog" --stop >/dev/null 2>&1 || true
-                        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode auto </dev/null >/dev/null 2>&1 &
-                        disown
+                        setsid -f python3 "$REPO_DIR/scripts/gps-watchdog" --mode auto </dev/null >/dev/null 2>&1
                         echo "GPS Watchdog restarted in auto mode."
                     fi
                 elif [[ "$target" == "observe" ]]; then
@@ -366,8 +364,7 @@ case "$cmd" in
                     echo "GPS Watchdog: persistent observation mode enabled (auto recovery disabled)."
                     if python3 "$REPO_DIR/scripts/gps-watchdog" --once >/dev/null 2>&1; then
                         python3 "$REPO_DIR/scripts/gps-watchdog" --stop >/dev/null 2>&1 || true
-                        setsid python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1 &
-                        disown
+                        setsid -f python3 "$REPO_DIR/scripts/gps-watchdog" --mode observe </dev/null >/dev/null 2>&1
                         echo "GPS Watchdog restarted in observe mode."
                     fi
                 else
