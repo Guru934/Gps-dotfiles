@@ -164,7 +164,18 @@ media-art)
                     --max-filesize 5242880 \
                     -o "$tmp" "$url" 2>/dev/null; then
                     if [ -s "$tmp" ]; then
-                        mv -f "$tmp" "$dest" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+                        # Lightweight image validation: check magic bytes
+                        hdr="$(head -c 4 "$tmp" 2>/dev/null | od -An -tx1 -N4 | tr -d ' ')"
+                        case "$hdr" in
+                            89504e47) ;; # PNG
+                            ffd8ff*)  ;; # JPEG
+                            52494646) ;; # RIFF (WEBP)
+                            47494638) ;; # GIF
+                            *) rm -f "$tmp" 2>/dev/null; hdr="" ;;
+                        esac
+                        if [ -n "$hdr" ]; then
+                            mv -f "$tmp" "$dest" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+                        fi
                     else
                         rm -f "$tmp" 2>/dev/null
                     fi

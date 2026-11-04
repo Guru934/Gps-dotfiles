@@ -559,6 +559,109 @@ class LockExtraArtworkHardeningTests(unittest.TestCase):
         temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
         self.assertEqual(temp_files, [])
 
+    def test_invalid_image_content_rejected_and_not_cached(self):
+        """Downloaded content that is not a valid image (no recognized magic bytes) is rejected."""
+        mock_curl = self.mock_bin_dir / "curl"
+        # Mock curl that writes non-image content (HTML error page)
+        html_content = b"<html><body>404 Not Found</body></html>"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "# Only handle -o (output file) argument\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"printf '%s' '{html_content.decode()}' > \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/fake-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Verify no .img or .tmp files left
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_valid_png_image_is_cached_successfully(self):
+        """Downloaded content with valid PNG magic bytes is accepted and cached."""
+        # Minimal valid PNG (1x1 transparent pixel)
+        import base64
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/pOOxfwAAAABJRU5ErkJggg=="
+        png_bytes = base64.b64decode(png_b64)
+        png_hex = png_bytes.hex()
+
+        mock_curl = self.mock_bin_dir / "curl"
+        # Write a mock curl that produces a real PNG file
+        png_file = self.tmp_path / "valid.png"
+        png_file.write_bytes(png_bytes)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{png_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/real-cover.png")
+        # Ensure lock subdir exists for cache
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        output = res.stdout.strip()
+        # Should NOT fall back to art-default.png
+        self.assertFalse(output.endswith("art-default.png"), f"Expected cached image, got fallback: {output}")
+        # The cached file should exist and be a valid PNG
+        self.assertTrue(Path(output).is_file())
+        self.assertGreater(Path(output).stat().st_size, 0)
+
+    def test_valid_jpeg_image_is_cached_successfully(self):
+        """Downloaded content with valid JPEG magic bytes is accepted and cached."""
+        # Minimal JPEG-ish content (valid magic header + padding)
+        jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+        mock_curl = self.mock_bin_dir / "curl"
+        jpeg_file = self.tmp_path / "valid.jpg"
+        jpeg_file.write_bytes(jpeg_bytes)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{jpeg_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        output = res.stdout.strip()
+        self.assertFalse(output.endswith("art-default.png"), f"Expected cached JPEG, got fallback: {output}")
+        self.assertTrue(Path(output).is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

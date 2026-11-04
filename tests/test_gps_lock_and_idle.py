@@ -172,7 +172,13 @@ class GpsLockWrapperTests(HermeticTestCase):
         self.assertEqual(res.returncode, 0)
         self.assertTrue(self.log_file.exists())
         self.assertTrue(target_conf.is_file())
-        self.assertIn("$avatar =", target_conf.read_text(encoding="utf-8"))
+        content = target_conf.read_text(encoding="utf-8")
+        self.assertIn("$avatar =", content)
+        # Verify the fallback image file actually exists on disk
+        avatar_line = [l for l in content.splitlines() if l.startswith("$avatar =")][0]
+        fallback_path = Path(avatar_line.split("=", 1)[1].strip())
+        self.assertTrue(fallback_path.is_file(), f"Fallback avatar image must exist at {fallback_path}")
+        self.assertGreater(fallback_path.stat().st_size, 0)
 
 
 class GpsIdleControllerTests(HermeticTestCase):
