@@ -43,7 +43,7 @@ for attempt in {1..20}; do
 done
 
 if [[ -n "$notification_owner" ]]; then
-    owner_command="$(ps -p "$notification_pid" -o args= 2>/dev/null || true)"
+    owner_command="$(tr '\0' ' ' <"/proc/$notification_pid/cmdline" 2>/dev/null || ps -ww -p "$notification_pid" -o args= 2>/dev/null || true)"
     if [[ "$owner_command" != *"$REPO_DIR/island/IslandProduction.qml"* ]]; then
         echo "GPS startup refused: org.freedesktop.Notifications is owned by PID $notification_pid ($owner_command)." >&2
         echo "Resolve notification ownership before starting GPS Island." >&2
@@ -60,5 +60,7 @@ for qs_pid in $(pgrep -u "$(id -u)" -x qs 2>/dev/null || true); do
     fi
 done
 
-export GPS_ROOT="$REPO_DIR"
-exec "$REPO_DIR/scripts/run-gps.fish"
+export GPS_ROOT="${GPS_ROOT:-$REPO_DIR}"
+export QML2_IMPORT_PATH="$GPS_ROOT"
+export QML_IMPORT_PATH="$GPS_ROOT"
+exec "$GPS_ROOT/scripts/run-gps.fish"

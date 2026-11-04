@@ -26,8 +26,26 @@ local function resolve_gps_root()
     local resolved = pipe:read("*l")
     pipe:close()
     if resolved then
-        return resolved:gsub("/dots/hypr/gps/startup%.lua$", "")
+        local stripped = resolved:gsub("/dots/hypr/gps/startup%.lua$", "")
+        if stripped ~= resolved then
+            local marker = io.open(stripped .. "/scripts/gps-start-safe", "r")
+            if marker then
+                marker:close()
+                return stripped
+            end
+        end
     end
+
+    local home = os.getenv("HOME") or ""
+    if home ~= "" then
+        local fallback = home .. "/Projects/my-rice"
+        local marker = io.open(fallback .. "/scripts/gps-start-safe", "r")
+        if marker then
+            marker:close()
+            return fallback
+        end
+    end
+
     return nil
 end
 

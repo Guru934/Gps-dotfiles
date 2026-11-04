@@ -214,8 +214,7 @@ end
 
 # 6. Launch the QuickShell master shell.
 if not pgrep -u (id -u) -f "quickshell.*shell\.qml" >/dev/null 2>&1
-    nohup /usr/bin/quickshell --no-duplicate -d -p "$REPO_DIR/shell.qml" >"$gps_shell_log" 2>&1 &
-    disown
+    /usr/bin/quickshell --no-duplicate --daemonize --path "$GPS_ROOT/shell.qml"
 end
 sleep 0.8
 set -l shell_pid (pgrep -u (id -u) -f "quickshell.*shell\.qml" | head -1)
