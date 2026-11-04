@@ -317,6 +317,7 @@ class LockConfigurationLayoutTests(unittest.TestCase):
         self.assertIn("source = ~/.config/hypr/lock-colors.conf", content)
         self.assertIn("source = ~/.config/hypr/lock-bg.conf", content)
         self.assertIn("source = ~/.config/gps/lock-avatar.conf", content)
+        self.assertIn("source = ~/.config/hypr/lock-root.conf", content)
 
     def test_fallback_lock_bg_file_exists_in_repo(self):
         self.assertTrue(LOCK_BG_FALLBACK.is_file())

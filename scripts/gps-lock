@@ -159,6 +159,13 @@ if [ "$avatar_valid" -eq 0 ]; then
     fi
 fi
 
+# 4e. Ensure lock root config exists so hyprlock commands know the repository root
+LOCK_ROOT_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-root.conf"
+if [ ! -f "$LOCK_ROOT_CONF" ]; then
+    mkdir -p "$(dirname "$LOCK_ROOT_CONF")"
+    printf '%s\n' "\$GPS_ROOT = ${GPS_ROOT:-$REPO_DIR}" > "$LOCK_ROOT_CONF" 2>/dev/null || true
+fi
+
 # 5. Keep an owner-readable diagnostic log and report failures while the
 # session is still unlocked. A successful hyprlock remains in the foreground
 # until the user authenticates and exits.
