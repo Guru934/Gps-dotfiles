@@ -158,6 +158,22 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(res["session_active"])
         self.assertEqual(len(res["components"]), 0)
 
+    def test_suppressed_when_pause_flag_present(self):
+        """Watchdog pauses inspection when watchdog-pause.flag exists."""
+        pause_flag = self.runtime_dir / "watchdog-pause.flag"
+        pause_flag.touch()
+
+        watchdog = gps_watchdog.GpsWatchdog(
+            mode="auto",
+            runtime_dir=self.runtime_dir,
+            logger=self.logger,
+            check_session_fn=lambda: True,
+        )
+
+        res = watchdog.tick(now=1000.0)
+        self.assertTrue(res["paused"])
+        self.assertEqual(len(res["components"]), 0)
+
     def test_bounded_log_rotation(self):
         """Logger truncates when size exceeds max_bytes."""
         logger = gps_watchdog.WatchdogLogger(self.log_file, max_bytes=1000)
