@@ -299,17 +299,6 @@ class InstallerManifest:
                 "reversible": True,
                 "is_state": False,
             },
-            {
-                "id": "lock_avatar_conf",
-                "category": "config",
-                "src": self.repo_root / "dots" / "hypr" / "lock-avatar.conf",
-                "dest": self.config_dir / "hypr" / "lock-avatar.conf",
-                "type": "symlink",
-                "backup_on_conflict": True,
-                "preserve_on_conflict": False,
-                "reversible": True,
-                "is_state": False,
-            },
             # Rofi configuration
             {
                 "id": "rofi_config",
@@ -453,6 +442,17 @@ class InstallerManifest:
                 "category": "binary",
                 "src": self.repo_root / "scripts" / "gps-gamemode",
                 "dest": self.bin_dir / "gps-gamemode",
+                "type": "symlink",
+                "backup_on_conflict": True,
+                "preserve_on_conflict": False,
+                "reversible": True,
+                "is_state": False,
+            },
+            {
+                "id": "bin_gps_lock_avatar",
+                "category": "binary",
+                "src": self.repo_root / "scripts" / "gps-lock-avatar",
+                "dest": self.bin_dir / "gps-lock-avatar",
                 "type": "symlink",
                 "backup_on_conflict": True,
                 "preserve_on_conflict": False,
@@ -1227,6 +1227,14 @@ class GpsInstaller:
                     signal.signal(signal.SIGTERM, old_sigterm)
                 except (ValueError, OSError):
                     pass
+
+        # Clean up legacy symlink if present from earlier GPS versions
+        legacy_avatar_symlink = self.config_dir / "hypr" / "lock-avatar.conf"
+        if legacy_avatar_symlink.is_symlink():
+            try:
+                legacy_avatar_symlink.unlink()
+            except OSError:
+                pass
 
         print(f"\n{self.C_GREEN}{self.C_BOLD}GPS Desktop installation completed successfully!{self.C_RESET}")
 

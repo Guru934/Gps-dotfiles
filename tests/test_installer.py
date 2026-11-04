@@ -132,6 +132,7 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertIn("scripts/gps-sound", res.stdout)
         self.assertIn("scripts/pet-alert", res.stdout)
         self.assertIn("scripts/gps-gamemode", res.stdout)
+        self.assertIn("scripts/gps-lock-avatar", res.stdout)
         self.assertIn("templates/rice-settings.json", res.stdout)
 
     def test_03_apply_creates_the_expected_symlinks(self):
@@ -160,6 +161,10 @@ class TestGpsInstaller(InstallerTestBase):
 
         gps_idle = self.fake_bin / "gps-idle"
         self.assertTrue(gps_idle.is_symlink())
+
+        gps_avatar = self.fake_bin / "gps-lock-avatar"
+        self.assertTrue(gps_avatar.is_symlink())
+        self.assertEqual(gps_avatar.resolve(), (REPO_ROOT / "scripts" / "gps-lock-avatar").resolve())
 
     def test_04_apply_creates_missing_templates_only(self):
         """4. Apply creates missing templates only."""

@@ -41,7 +41,7 @@ CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
 CACHE_HOME = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
 AVATAR_DIR = CONFIG_HOME / "gps"
 CACHE_DIR = CACHE_HOME / "gps" / "lock"
-CONF_PATH = Path(os.environ.get("GPS_LOCK_AVATAR_CONF") or CONFIG_HOME / "hypr" / "lock-avatar.conf")
+CONF_PATH = Path(os.environ.get("GPS_LOCK_AVATAR_CONF") or CONFIG_HOME / "gps" / "lock-avatar.conf")
 DEFAULT_AVATAR = CACHE_DIR / "avatar-default.png"
 DEFAULT_ART = CACHE_DIR / "art-default.png"
 SIZE = 512
@@ -220,6 +220,18 @@ def write_conf(path: Path) -> None:
         f"$avatar = {path}\n"
     )
     try:
+        # Safe migration: clean up stale legacy symlink in ~/.config/hypr/ if present
+        legacy_symlink = CONFIG_HOME / "hypr" / "lock-avatar.conf"
+        if legacy_symlink.is_symlink():
+            try:
+                legacy_symlink.unlink()
+            except OSError:
+                pass
+
+        # Protect against replacing repository symlinks
+        if CONF_PATH.is_symlink():
+            CONF_PATH.unlink()
+
         atomic_write_bytes(CONF_PATH, content.encode("utf-8"))
     except OSError as exc:
         print(f"warn: could not write {CONF_PATH}: {exc}", file=sys.stderr)

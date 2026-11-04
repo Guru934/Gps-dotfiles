@@ -148,14 +148,29 @@ media-art)
         file://*)
             f="${url#file://}"
             f="$(printf '%b' "${f//%/\\x}")"      # decode %20 etc.
-            if [ -r "$f" ]; then echo "$f"; exit 0; fi
+            if [ -s "$f" ] && [ -r "$f" ]; then echo "$f"; exit 0; fi
             ;;
-        http://*|https://*)
+        https://*)
             mkdir -p "$CACHE_DIR" 2>/dev/null
             key="$(printf '%s' "$url" | md5sum | cut -c1-16)"
             dest="$CACHE_DIR/art-$key.img"
             if [ ! -s "$dest" ] && have curl; then
-                curl -fsL --max-time 3 -o "$dest" "$url" 2>/dev/null || rm -f "$dest"
+                tmp="$CACHE_DIR/art-$key.tmp.$$"
+                if curl -fsL \
+                    --proto =https \
+                    --proto-redir =https \
+                    --connect-timeout 2 \
+                    --max-time 4 \
+                    --max-filesize 5242880 \
+                    -o "$tmp" "$url" 2>/dev/null; then
+                    if [ -s "$tmp" ]; then
+                        mv -f "$tmp" "$dest" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+                    else
+                        rm -f "$tmp" 2>/dev/null
+                    fi
+                else
+                    rm -f "$tmp" 2>/dev/null
+                fi
             fi
             if [ -s "$dest" ]; then
                 find "$CACHE_DIR" -name 'art-*.img' ! -name "art-$key.img" -mmin +30 -delete 2>/dev/null

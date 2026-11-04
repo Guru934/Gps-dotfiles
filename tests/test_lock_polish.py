@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
 LOCK_INFO_SCRIPT = SCRIPTS_DIR / "lock-info.sh"
 LOCK_BG_SCRIPT = SCRIPTS_DIR / "gps-lock-bg"
+LOCK_EXTRA_SCRIPT = SCRIPTS_DIR / "lock-extra.sh"
+LOCK_AVATAR_SCRIPT = SCRIPTS_DIR / "gps-lock-avatar"
 HYPRLOCK_CONF = ROOT / "dots" / "hypr" / "hyprlock.conf"
 LOCK_BG_FALLBACK = ROOT / "dots" / "hypr" / "lock-bg.conf"
 
@@ -313,7 +316,7 @@ class LockConfigurationLayoutTests(unittest.TestCase):
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
         self.assertIn("source = ~/.config/hypr/lock-colors.conf", content)
         self.assertIn("source = ~/.config/hypr/lock-bg.conf", content)
-        self.assertIn("source = ~/.config/hypr/lock-avatar.conf", content)
+        self.assertIn("source = ~/.config/gps/lock-avatar.conf", content)
 
     def test_fallback_lock_bg_file_exists_in_repo(self):
         self.assertTrue(LOCK_BG_FALLBACK.is_file())
@@ -354,6 +357,207 @@ class LockConfigurationLayoutTests(unittest.TestCase):
         self.assertIn("text = cmd[update:3000] $info media-title", content)
         self.assertNotIn("text = cmd[update:3000] $info media-title --always", content)
         self.assertIn("text = cmd[update:3000] $info media-vol", content)
+
+
+class LockAvatarLifecycleTests(unittest.TestCase):
+    """Test suite ensuring gps-lock-avatar correctly manages avatar config and assets."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+        self.fake_home = self.tmp_path / "home"
+        self.fake_home.mkdir(parents=True, exist_ok=True)
+        self.fake_config = self.tmp_path / "config"
+        self.fake_cache = self.tmp_path / "cache"
+        self.fake_config.mkdir(parents=True, exist_ok=True)
+        self.fake_cache.mkdir(parents=True, exist_ok=True)
+        self.conf_path = self.fake_config / "gps" / "lock-avatar.conf"
+
+        self.env = {
+            **os.environ,
+            "HOME": str(self.fake_home),
+            "USER": "gps_test_isolated_user",
+            "XDG_CONFIG_HOME": str(self.fake_config),
+            "XDG_CACHE_HOME": str(self.fake_cache),
+            "GPS_LOCK_AVATAR_CONF": str(self.conf_path),
+        }
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def _run_avatar_tool(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(LOCK_AVATAR_SCRIPT), *args],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_default_execution_generates_default_avatar_and_config(self):
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(self.conf_path.is_file())
+        content = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn("$avatar =", content)
+        avatar_path = Path(content.split("=", 1)[1].strip())
+        self.assertTrue(avatar_path.is_file())
+        self.assertEqual(avatar_path.name, "avatar-default.png")
+
+    def test_symlink_at_config_path_is_unlinked_before_write_preserving_target(self):
+        repo_like_dir = self.tmp_path / "repo"
+        repo_like_dir.mkdir(parents=True, exist_ok=True)
+        protected_target = repo_like_dir / "placeholder.conf"
+        protected_target.write_text("# protected repository content\n", encoding="utf-8")
+
+        self.conf_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conf_path.symlink_to(protected_target)
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(self.conf_path.is_file())
+        self.assertFalse(self.conf_path.is_symlink())
+        self.assertEqual(protected_target.read_text(encoding="utf-8"), "# protected repository content\n")
+
+    def test_user_avatar_png_is_preserved_and_used(self):
+        gps_dir = self.fake_config / "gps"
+        gps_dir.mkdir(parents=True, exist_ok=True)
+        user_avatar = gps_dir / "avatar.png"
+        user_avatar.write_bytes(b"\x89PNG\r\n\x1a\nfake_user_avatar")
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        content = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn(str(user_avatar), content)
+        self.assertTrue(user_avatar.exists())
+
+    def test_set_and_clear_lifecycle(self):
+        from PIL import Image
+        src_img = self.tmp_path / "custom.png"
+        img = Image.new("RGBA", (200, 100), color="blue")
+        img.save(src_img)
+
+        # --set
+        res_set = self._run_avatar_tool("--set", str(src_img))
+        self.assertEqual(res_set.returncode, 0)
+        content = self.conf_path.read_text(encoding="utf-8")
+        user_avatar = self.fake_config / "gps" / "avatar.png"
+        self.assertIn(str(user_avatar), content)
+        self.assertTrue(user_avatar.is_file())
+
+        # Check square crop
+        with Image.open(user_avatar) as loaded:
+            self.assertEqual(loaded.size, (512, 512))
+
+        # --clear
+        res_clear = self._run_avatar_tool("--clear")
+        self.assertEqual(res_clear.returncode, 0)
+        self.assertFalse(user_avatar.exists())
+        content_after = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn("avatar-default.png", content_after)
+
+    def test_removes_legacy_hypr_symlink(self):
+        legacy_dir = self.fake_config / "hypr"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_link = legacy_dir / "lock-avatar.conf"
+        target = self.tmp_path / "some_target"
+        target.write_text("dummy", encoding="utf-8")
+        legacy_link.symlink_to(target)
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertFalse(legacy_link.exists() or legacy_link.is_symlink())
+
+
+class LockExtraArtworkHardeningTests(unittest.TestCase):
+    """Test suite ensuring lock-extra.sh handles media art URLs securely and reliably."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+        self.mock_bin_dir = self.tmp_path / "bin"
+        self.mock_bin_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir = self.tmp_path / "cache" / "gps"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.env = {
+            **os.environ,
+            "PATH": f"{self.mock_bin_dir}:{os.environ.get('PATH', '')}",
+            "XDG_CACHE_HOME": str(self.tmp_path / "cache"),
+        }
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def _create_mock_playerctl(self, art_url: str):
+        mock_pc = self.mock_bin_dir / "playerctl"
+        content = (
+            f"#!/bin/sh\n"
+            f"if [ \"$1\" = \"metadata\" ] && [ \"$2\" = \"mpris:artUrl\" ]; then\n"
+            f"    printf '%s\\n' '{art_url}'\n"
+            f"    exit 0\n"
+            f"fi\n"
+            f"exit 0\n"
+        )
+        mock_pc.write_text(content, encoding="utf-8")
+        mock_pc.chmod(mock_pc.stat().st_mode | stat.S_IEXEC)
+
+    def _run_lock_extra(self, action: str = "media-art") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), action],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_local_file_url_resolved_directly(self):
+        local_art = self.tmp_path / "local art cover.png"
+        local_art.write_bytes(b"\x89PNG\r\n\x1a\nlocal_cover")
+
+        # URL with encoded spaces
+        self._create_mock_playerctl(f"file://{local_art.as_posix().replace(' ', '%20')}")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stdout.strip(), str(local_art))
+
+    def test_insecure_http_url_rejected_and_falls_back(self):
+        self._create_mock_playerctl("http://example.com/insecure-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        # Should fallback to art-default.png
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+    def test_failed_download_leaves_no_temp_files(self):
+        # Mock curl that exits with an error
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text("#!/bin/sh\nexit 28\n")
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/artwork.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Confirm no temporary files left in cache
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_oversized_artwork_is_not_cached(self):
+        # Mock curl that produces a file exceeding 5MB or returns error
+        mock_curl = self.mock_bin_dir / "curl"
+        # Simulate curl failing due to --max-filesize flag
+        mock_curl.write_text("#!/bin/sh\nexit 63\n")
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/huge-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # No cache images or temp files created
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
 
 
 if __name__ == "__main__":

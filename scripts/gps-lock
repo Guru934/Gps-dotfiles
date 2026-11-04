@@ -100,18 +100,35 @@ if [ -x "$BG_ROTATOR" ]; then
 fi
 
 # 4d. Resolve the lock-screen profile picture (round avatar beside the name).
-# Only regenerate synchronously if lock-avatar.conf is missing or empty.
+# Generated per-user state in ~/.config/gps/lock-avatar.conf.
 AVATAR_TOOL="${SCRIPT_DIR}/gps-lock-avatar"
-LOCK_AVATAR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-avatar.conf"
-if [ ! -s "$LOCK_AVATAR_CONF" ]; then
+LOCK_AVATAR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/gps/lock-avatar.conf"
+
+# Safe migration: if an old symlink exists in ~/.config/hypr/lock-avatar.conf, remove it
+LEGACY_AVATAR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-avatar.conf"
+if [ -L "$LEGACY_AVATAR_CONF" ]; then
+    rm -f "$LEGACY_AVATAR_CONF" 2>/dev/null || true
+fi
+
+# Check if LOCK_AVATAR_CONF exists and points to a valid readable avatar image
+avatar_valid=0
+if [ -s "$LOCK_AVATAR_CONF" ]; then
+    avatar_path="$(grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
+    if [ -n "$avatar_path" ] && [ -r "$avatar_path" ] && [ -s "$avatar_path" ]; then
+        avatar_valid=1
+    fi
+fi
+
+if [ "$avatar_valid" -eq 0 ]; then
     if [ -f "$AVATAR_TOOL" ] && command -v python3 >/dev/null 2>&1; then
         python3 "$AVATAR_TOOL" >/dev/null 2>&1 || true
     fi
 fi
-if [ ! -f "$LOCK_AVATAR_CONF" ]; then
+
+if [ ! -s "$LOCK_AVATAR_CONF" ]; then
     mkdir -p "$(dirname "$LOCK_AVATAR_CONF")" 2>/dev/null || true
-    printf '%s\n' '# fallback: gps-lock-avatar did not run; hyprlock.conf default is used' \
-        > "$LOCK_AVATAR_CONF" 2>/dev/null || true
+    fallback_img="${XDG_CACHE_HOME:-$HOME/.cache}/gps/lock/avatar-default.png"
+    printf '%s\n' "\$avatar = $fallback_img" > "$LOCK_AVATAR_CONF" 2>/dev/null || true
 fi
 
 # 5. Keep an owner-readable diagnostic log and report failures while the
