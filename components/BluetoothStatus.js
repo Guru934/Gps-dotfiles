@@ -93,4 +93,3 @@ function resolve(adapter) {
         discovering: !!adapter.discovering
     }
 }
-

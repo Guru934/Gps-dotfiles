@@ -132,6 +132,7 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertIn("scripts/gps-sound", res.stdout)
         self.assertIn("scripts/pet-alert", res.stdout)
         self.assertIn("scripts/gps-gamemode", res.stdout)
+        self.assertIn("scripts/gps-lock-avatar", res.stdout)
         self.assertIn("templates/rice-settings.json", res.stdout)
 
     def test_03_apply_creates_the_expected_symlinks(self):
@@ -160,6 +161,10 @@ class TestGpsInstaller(InstallerTestBase):
 
         gps_idle = self.fake_bin / "gps-idle"
         self.assertTrue(gps_idle.is_symlink())
+
+        gps_avatar = self.fake_bin / "gps-lock-avatar"
+        self.assertTrue(gps_avatar.is_symlink())
+        self.assertEqual(gps_avatar.resolve(), (REPO_ROOT / "scripts" / "gps-lock-avatar").resolve())
 
     def test_04_apply_creates_missing_templates_only(self):
         """4. Apply creates missing templates only."""
@@ -580,7 +585,7 @@ class TestGpsInstaller(InstallerTestBase):
             bin_dir=self.fake_bin,
         )
         entries = manifest.get_entries()
-        self.assertEqual(len(entries), 19)  # 12 dots + 6 binaries + 1 template
+        self.assertEqual(len(entries), 20)  # 13 dots + 6 binaries + 1 template
 
         # Ensure all repo source files exist
         for e in entries:
@@ -781,9 +786,9 @@ class TestGpsInstaller(InstallerTestBase):
         # 1. Install from repo_a
         res1 = self.run_cmd(["--apply"], repo=repo_a)
         self.assertEqual(res1.returncode, 0)
-        hypr_link = self.fake_config / "hypr" / "hyprland.lua"
+        hypr_link = self.fake_config / "rofi" / "config.rasi"
         self.assertTrue(hypr_link.is_symlink())
-        self.assertEqual(hypr_link.resolve(), (repo_a / "dots" / "hypr" / "hyprland.lua").resolve())
+        self.assertEqual(hypr_link.resolve(), (repo_a / "dots" / "rofi" / "config.rasi").resolve())
 
         # 2. Relocate repo_a to repo_b
         shutil.move(str(repo_a), str(repo_b))
@@ -797,7 +802,7 @@ class TestGpsInstaller(InstallerTestBase):
         res_apply2 = self.run_cmd(["--apply"], repo=repo_b)
         self.assertEqual(res_apply2.returncode, 0)
         self.assertTrue(hypr_link.is_symlink())
-        self.assertEqual(hypr_link.resolve(), (repo_b / "dots" / "hypr" / "hyprland.lua").resolve())
+        self.assertEqual(hypr_link.resolve(), (repo_b / "dots" / "rofi" / "config.rasi").resolve())
 
     def test_31_existing_user_templates_survive_failed_apply_rollback(self):
         """31. Pre-existing user templates survive failed apply rollback; newly created templates removed."""
@@ -859,20 +864,20 @@ class TestGpsInstaller(InstallerTestBase):
         """32. Crash recovery reconciles filesystem state when journal records planned but filesystem was modified."""
         from scripts.installer import compute_sha256
 
-        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr = self.fake_config / "rofi" / "config.rasi"
         orig_hypr.parent.mkdir(parents=True, exist_ok=True)
-        orig_hypr.write_text("-- original user hyprland.lua\n", encoding="utf-8")
+        orig_hypr.write_text("-- original user integration.lua\n", encoding="utf-8")
         orig_hash = compute_sha256(orig_hypr)
 
         # Create backup directory and store original file
         backup_dir = self.fake_state / "gps" / "backups" / "crash_boundary_sim"
         backup_files = backup_dir / "files" / "config"
         backup_files.mkdir(parents=True, exist_ok=True)
-        backed_up_file = backup_files / "hyprland.lua"
-        backed_up_file.write_text("-- original user hyprland.lua\n", encoding="utf-8")
+        backed_up_file = backup_files / "integration.lua"
+        backed_up_file.write_text("-- original user integration.lua\n", encoding="utf-8")
 
-        # Simulate that filesystem operation completed (hyprland.lua was replaced with GPS symlink)
-        gps_hypr = REPO_ROOT / "dots" / "hypr" / "hyprland.lua"
+        # Simulate that filesystem operation completed (integration.lua was replaced with GPS symlink)
+        gps_hypr = REPO_ROOT / "dots" / "hypr" / "gps" / "integration.lua"
         orig_hypr.unlink()
         orig_hypr.symlink_to(gps_hypr)
 
@@ -994,7 +999,7 @@ class TestGpsInstaller(InstallerTestBase):
 
     def test_34_restartable_and_idempotent_uninstall(self):
         """34. Interrupted uninstall is safely restartable and detects already-restored files vs modifications."""
-        orig_hypr = self.fake_config / "hypr" / "hyprland.lua"
+        orig_hypr = self.fake_config / "rofi" / "config.rasi"
         orig_hypr.parent.mkdir(parents=True, exist_ok=True)
         orig_hypr.write_text("-- original config for restartable uninstall\n", encoding="utf-8")
 
@@ -1003,14 +1008,14 @@ class TestGpsInstaller(InstallerTestBase):
         self.assertEqual(res_apply.returncode, 0)
         self.assertTrue(orig_hypr.is_symlink())
 
-        # 2. Simulate interruption immediately after restoring hyprland.lua (before active manifest cleanup)
+        # 2. Simulate interruption immediately after restoring integration.lua (before active manifest cleanup)
         orig_hypr.unlink()
         backup_root = self.fake_state / "gps" / "backups"
         latest_backup = sorted(list(backup_root.iterdir()))[-1]
-        backup_file = latest_backup / "files" / "config" / "hyprland.lua"
+        backup_file = latest_backup / "files" / "config" / "config.rasi"
         shutil.copy2(backup_file, orig_hypr)
 
-        # 3. Rerun uninstall: must recognize that hyprland.lua is already restored, exit 0, no conflicts
+        # 3. Rerun uninstall: must recognize that integration.lua is already restored, exit 0, no conflicts
         res_un1 = self.run_cmd(["--uninstall"])
         self.assertEqual(res_un1.returncode, 0)
         self.assertIn("GPS Desktop uninstalled cleanly", res_un1.stdout)

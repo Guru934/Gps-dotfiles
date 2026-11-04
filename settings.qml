@@ -839,7 +839,10 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
     FloatingWindow {
         id: win
         visible: root.shown
-        onVisibleChanged: root.shown = visible
+        onVisibleChanged: {
+            root.shown = visible
+            if (!visible) Qt.quit()
+        }
         title: "Settings Hub"
         implicitWidth: 1120; implicitHeight: 720
         color: "transparent"
@@ -896,7 +899,7 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                         Pill { text: root.saved === "" ? "live" : root.saved; tone: root.saved === "saving…" ? pal.tertiary : pal.primary }
                         Pill { visible: root.hyprVersion !== ""; text: "hyprland " + root.hyprVersion; tone: pal.secondary }
                         Pill { text: root.luaMode ? "lua config" : "hyprlang"; tone: pal.tertiary }
-                        Btn { icon: "close"; onClicked: root.shown = false } }
+                        Btn { icon: "close"; onClicked: { root.shown = false; Qt.quit() } } }
                 }
 
                 StackLayout {

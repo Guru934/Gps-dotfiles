@@ -805,10 +805,9 @@ PanelWindow {
                         iconColor: Theme.textMain
                         tooltip: "Settings (Super+,)"
                         onClicked: Quickshell.execDetached([
-                            "quickshell",
-                            "--no-duplicate",
-                            "-p",
-                            root.repoRoot ? (root.repoRoot + "/settings.qml") : "settings.qml"
+                            root.repoRoot ? (root.repoRoot + "/scripts/gps-ipc") : "gps-ipc",
+                            "settings",
+                            "toggle"
                         ])
                     }
                 }

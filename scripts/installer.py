@@ -448,6 +448,17 @@ class InstallerManifest:
                 "reversible": True,
                 "is_state": False,
             },
+            {
+                "id": "bin_gps_lock_avatar",
+                "category": "binary",
+                "src": self.repo_root / "scripts" / "gps-lock-avatar",
+                "dest": self.bin_dir / "gps-lock-avatar",
+                "type": "symlink",
+                "backup_on_conflict": True,
+                "preserve_on_conflict": False,
+                "reversible": True,
+                "is_state": False,
+            },
             # Templates: created ONLY if absent; never symlinked, never overwritten, never deleted
             {
                 "id": "template_rice_settings",
@@ -1216,6 +1227,14 @@ class GpsInstaller:
                     signal.signal(signal.SIGTERM, old_sigterm)
                 except (ValueError, OSError):
                     pass
+
+        # Clean up legacy symlink if present from earlier GPS versions
+        legacy_avatar_symlink = self.config_dir / "hypr" / "lock-avatar.conf"
+        if legacy_avatar_symlink.is_symlink():
+            try:
+                legacy_avatar_symlink.unlink()
+            except OSError:
+                pass
 
         print(f"\n{self.C_GREEN}{self.C_BOLD}GPS Desktop installation completed successfully!{self.C_RESET}")
 

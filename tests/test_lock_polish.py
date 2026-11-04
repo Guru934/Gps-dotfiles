@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
 LOCK_INFO_SCRIPT = SCRIPTS_DIR / "lock-info.sh"
 LOCK_BG_SCRIPT = SCRIPTS_DIR / "gps-lock-bg"
+LOCK_EXTRA_SCRIPT = SCRIPTS_DIR / "lock-extra.sh"
+LOCK_AVATAR_SCRIPT = SCRIPTS_DIR / "gps-lock-avatar"
 HYPRLOCK_CONF = ROOT / "dots" / "hypr" / "hyprlock.conf"
 LOCK_BG_FALLBACK = ROOT / "dots" / "hypr" / "lock-bg.conf"
 
@@ -313,6 +316,7 @@ class LockConfigurationLayoutTests(unittest.TestCase):
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
         self.assertIn("source = ~/.config/hypr/lock-colors.conf", content)
         self.assertIn("source = ~/.config/hypr/lock-bg.conf", content)
+        self.assertIn("source = ~/.config/gps/lock-avatar.conf", content)
 
     def test_fallback_lock_bg_file_exists_in_repo(self):
         self.assertTrue(LOCK_BG_FALLBACK.is_file())
@@ -320,40 +324,625 @@ class LockConfigurationLayoutTests(unittest.TestCase):
     def test_telemetry_chips_have_non_overlapping_gaps(self):
         """Verify the 4 telemetry chips (bat, net, kb, caps) do not overlap."""
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
-        # Extract chip positions and sizes
-        # In our refined config:
-        # bat: center -509, width 110 -> [-564, -454]
-        # net: center -366, width 160 -> [-446, -286]
-        # kb:  center -242, width 72  -> [-278, -206]
-        # caps:center -156, width 84  -> [-198, -114]
-        self.assertIn("position = -509, 285", content)
-        self.assertIn("size = 110, 22", content)
-        self.assertIn("position = -366, 285", content)
-        self.assertIn("size = 160, 22", content)
-        self.assertIn("position = -242, 285", content)
-        self.assertIn("size = 72, 22", content)
-        self.assertIn("position = -156, 285", content)
-        self.assertIn("size = 84, 22", content)
+        # Extract chip positions and sizes in redesigned layout (1920x1200 canvas):
+        # bat: center -847, width 130 -> [-912, -782]
+        # net: center -637, width 270 -> [-772, -502]
+        # kb:  center -447, width 90  -> [-492, -402]
+        # caps:center -327, width 130 -> [-392, -262]
+        self.assertIn("position = -847, 496", content)
+        self.assertIn("size = 130, 34", content)
+        self.assertIn("position = -637, 496", content)
+        self.assertIn("size = 270, 34", content)
+        self.assertIn("position = -447, 496", content)
+        self.assertIn("size = 90, 34", content)
+        self.assertIn("position = -327, 496", content)
+        self.assertIn("size = 130, 34", content)
 
         # Check gaps mathematically
-        bat_r = -509 + 55  # -454
-        net_l = -366 - 80  # -446
+        bat_r = -847 + 65  # -782
+        net_l = -637 - 135 # -772
         self.assertGreater(net_l, bat_r, "Gap between Battery and Net must be positive")
 
-        net_r = -366 + 80  # -286
-        kb_l = -242 - 36   # -278
+        net_r = -637 + 135 # -502
+        kb_l = -447 - 45   # -492
         self.assertGreater(kb_l, net_r, "Gap between Net and Keyboard must be positive")
 
-        kb_r = -242 + 36   # -206
-        caps_l = -156 - 42 # -198
+        kb_r = -447 + 45   # -402
+        caps_l = -327 - 65 # -392
         self.assertGreater(caps_l, kb_r, "Gap between Keyboard and Caps must be positive")
 
     def test_media_card_layout_bounds(self):
-        """Verify media card layout: title at left (max 22 chars), volume positioned at left 315."""
+        """Verify media card layout: title and volume within card boundaries."""
         content = HYPRLOCK_CONF.read_text(encoding="utf-8")
         self.assertIn("text = cmd[update:3000] $info media-title", content)
         self.assertNotIn("text = cmd[update:3000] $info media-title --always", content)
-        self.assertIn("position = 315, -358", content)
+        self.assertIn("text = cmd[update:3000] $info media-vol", content)
+
+
+class LockAvatarLifecycleTests(unittest.TestCase):
+    """Test suite ensuring gps-lock-avatar correctly manages avatar config and assets."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+        self.fake_home = self.tmp_path / "home"
+        self.fake_home.mkdir(parents=True, exist_ok=True)
+        self.fake_config = self.tmp_path / "config"
+        self.fake_cache = self.tmp_path / "cache"
+        self.fake_config.mkdir(parents=True, exist_ok=True)
+        self.fake_cache.mkdir(parents=True, exist_ok=True)
+        self.conf_path = self.fake_config / "gps" / "lock-avatar.conf"
+
+        self.env = {
+            **os.environ,
+            "HOME": str(self.fake_home),
+            "USER": "gps_test_isolated_user",
+            "XDG_CONFIG_HOME": str(self.fake_config),
+            "XDG_CACHE_HOME": str(self.fake_cache),
+            "GPS_LOCK_AVATAR_CONF": str(self.conf_path),
+        }
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def _run_avatar_tool(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(LOCK_AVATAR_SCRIPT), *args],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_default_execution_generates_default_avatar_and_config(self):
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(self.conf_path.is_file())
+        content = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn("$avatar =", content)
+        avatar_path = Path(content.split("=", 1)[1].strip())
+        self.assertTrue(avatar_path.is_file())
+        self.assertEqual(avatar_path.name, "avatar-default.png")
+
+    def test_symlink_at_config_path_is_unlinked_before_write_preserving_target(self):
+        repo_like_dir = self.tmp_path / "repo"
+        repo_like_dir.mkdir(parents=True, exist_ok=True)
+        protected_target = repo_like_dir / "placeholder.conf"
+        protected_target.write_text("# protected repository content\n", encoding="utf-8")
+
+        self.conf_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conf_path.symlink_to(protected_target)
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(self.conf_path.is_file())
+        self.assertFalse(self.conf_path.is_symlink())
+        self.assertEqual(protected_target.read_text(encoding="utf-8"), "# protected repository content\n")
+
+    def test_user_avatar_png_is_preserved_and_used(self):
+        gps_dir = self.fake_config / "gps"
+        gps_dir.mkdir(parents=True, exist_ok=True)
+        user_avatar = gps_dir / "avatar.png"
+        user_avatar.write_bytes(b"\x89PNG\r\n\x1a\nfake_user_avatar")
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        content = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn(str(user_avatar), content)
+        self.assertTrue(user_avatar.exists())
+
+    def test_set_and_clear_lifecycle(self):
+        from PIL import Image
+        src_img = self.tmp_path / "custom.png"
+        img = Image.new("RGBA", (200, 100), color="blue")
+        img.save(src_img)
+
+        # --set
+        res_set = self._run_avatar_tool("--set", str(src_img))
+        self.assertEqual(res_set.returncode, 0)
+        content = self.conf_path.read_text(encoding="utf-8")
+        user_avatar = self.fake_config / "gps" / "avatar.png"
+        self.assertIn(str(user_avatar), content)
+        self.assertTrue(user_avatar.is_file())
+
+        # Check square crop
+        with Image.open(user_avatar) as loaded:
+            self.assertEqual(loaded.size, (512, 512))
+
+        # --clear
+        res_clear = self._run_avatar_tool("--clear")
+        self.assertEqual(res_clear.returncode, 0)
+        self.assertFalse(user_avatar.exists())
+        content_after = self.conf_path.read_text(encoding="utf-8")
+        self.assertIn("avatar-default.png", content_after)
+
+    def test_removes_legacy_hypr_symlink(self):
+        legacy_dir = self.fake_config / "hypr"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_link = legacy_dir / "lock-avatar.conf"
+        target = self.tmp_path / "some_target"
+        target.write_text("dummy", encoding="utf-8")
+        legacy_link.symlink_to(target)
+
+        res = self._run_avatar_tool()
+        self.assertEqual(res.returncode, 0)
+        self.assertFalse(legacy_link.exists() or legacy_link.is_symlink())
+
+
+class LockExtraArtworkHardeningTests(unittest.TestCase):
+    """Test suite ensuring lock-extra.sh handles media art URLs securely and reliably."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp_dir.name)
+        self.mock_bin_dir = self.tmp_path / "bin"
+        self.mock_bin_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir = self.tmp_path / "cache" / "gps"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.env = {
+            **os.environ,
+            "PATH": f"{self.mock_bin_dir}:{os.environ.get('PATH', '')}",
+            "XDG_CACHE_HOME": str(self.tmp_path / "cache"),
+        }
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def _create_mock_playerctl(self, art_url: str):
+        mock_pc = self.mock_bin_dir / "playerctl"
+        content = (
+            f"#!/bin/sh\n"
+            f"if [ \"$1\" = \"metadata\" ] && [ \"$2\" = \"mpris:artUrl\" ]; then\n"
+            f"    printf '%s\\n' '{art_url}'\n"
+            f"    exit 0\n"
+            f"fi\n"
+            f"exit 0\n"
+        )
+        mock_pc.write_text(content, encoding="utf-8")
+        mock_pc.chmod(mock_pc.stat().st_mode | stat.S_IEXEC)
+
+    def _run_lock_extra(self, action: str = "media-art") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), action],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_local_file_url_resolved_directly(self):
+        local_art = self.tmp_path / "local art cover.png"
+        local_art.write_bytes(b"\x89PNG\r\n\x1a\nlocal_cover")
+
+        # URL with encoded spaces
+        self._create_mock_playerctl(f"file://{local_art.as_posix().replace(' ', '%20')}")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stdout.strip(), str(local_art))
+
+    def test_insecure_http_url_rejected_and_falls_back(self):
+        self._create_mock_playerctl("http://example.com/insecure-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        # Should fallback to art-default.png
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+    def test_failed_download_leaves_no_temp_files(self):
+        # Mock curl that exits with an error
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text("#!/bin/sh\nexit 28\n")
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/artwork.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Confirm no temporary files left in cache
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_oversized_artwork_is_not_cached(self):
+        # Mock curl that produces a file exceeding 5MB or returns error
+        mock_curl = self.mock_bin_dir / "curl"
+        # Simulate curl failing due to --max-filesize flag
+        mock_curl.write_text("#!/bin/sh\nexit 63\n")
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/huge-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # No cache images or temp files created
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_invalid_image_content_rejected_and_not_cached(self):
+        """Downloaded content that is not a valid image (no recognized magic bytes) is rejected."""
+        mock_curl = self.mock_bin_dir / "curl"
+        # Mock curl that writes non-image content (HTML error page)
+        html_content = b"<html><body>404 Not Found</body></html>"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "# Only handle -o (output file) argument\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"printf '%s' '{html_content.decode()}' > \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/fake-art.jpg")
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Verify no .img or .tmp files left
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_valid_png_image_is_cached_successfully(self):
+        """Downloaded content with valid PNG magic bytes is accepted and cached."""
+        import base64
+        # Genuinely valid 2x2 PNG image (verified with PIL)
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAE0lEQVR4nGNkaGBgYGBgAhEMDAAGKgCE2O/yUgAAAABJRU5ErkJggg=="
+        png_bytes = base64.b64decode(png_b64)
+
+        mock_curl = self.mock_bin_dir / "curl"
+        # Write a mock curl that produces a real PNG file
+        png_file = self.tmp_path / "valid.png"
+        png_file.write_bytes(png_bytes)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{png_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/real-cover.png")
+        # Ensure lock subdir exists for cache
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        output = res.stdout.strip()
+        # Should NOT fall back to art-default.png
+        self.assertFalse(output.endswith("art-default.png"), f"Expected cached image, got fallback: {output}")
+        # The cached file should exist and be a valid PNG
+        self.assertTrue(Path(output).is_file())
+        self.assertGreater(Path(output).stat().st_size, 0)
+
+    def test_valid_jpeg_image_is_cached_successfully(self):
+        """Downloaded content with valid JPEG integrity is accepted and cached."""
+        import base64
+        # Genuinely valid JPEG (verified with PIL Image.open().verify())
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        jpeg_bytes = base64.b64decode(jpeg_b64)
+
+        mock_curl = self.mock_bin_dir / "curl"
+        jpeg_file = self.tmp_path / "valid.jpg"
+        jpeg_file.write_bytes(jpeg_bytes)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{jpeg_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        output = res.stdout.strip()
+        self.assertFalse(output.endswith("art-default.png"), f"Expected cached JPEG, got fallback: {output}")
+        self.assertTrue(Path(output).is_file())
+
+    def test_corrupt_truncated_jpeg_is_rejected_and_not_cached(self):
+        """Corrupt or truncated JPEG payload (missing valid structure and EOI) must be rejected."""
+        # Truncate genuine JPEG header to 32 bytes (valid SOI/APP0 but missing SOF/SOS/EOI)
+        corrupt_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\x00" * 12
+
+        mock_curl = self.mock_bin_dir / "curl"
+        bad_jpg_file = self.tmp_path / "bad.jpg"
+        bad_jpg_file.write_bytes(corrupt_jpeg)
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/corrupt-cover.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Verify no .img or .tmp files remain cached
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_oversized_successful_download_is_rejected_and_deleted(self):
+        """When download succeeds (exit 0) but file size exceeds 5 MB, it must be deleted and rejected."""
+        mock_curl = self.mock_bin_dir / "curl"
+        oversized_file = self.tmp_path / "oversized.png"
+        # Write 5.5 MB of data
+        with open(oversized_file, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 5500000)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in\n"
+            "        -o) outfile=\"$arg\" ;;\n"
+            "    esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{oversized_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/giant-artwork.png")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res = self._run_lock_extra("media-art")
+        self.assertEqual(res.returncode, 0)
+        self.assertTrue(res.stdout.strip().endswith("art-default.png"))
+
+        # Must not be cached, and temporary files must be deleted
+        cached_imgs = list(self.cache_dir.glob("art-*.img"))
+        self.assertEqual(cached_imgs, [])
+        temp_files = list(self.cache_dir.glob("art-*.tmp.*"))
+        self.assertEqual(temp_files, [])
+
+    def test_python_present_pillow_absent_identify_available(self):
+        """When Python is present but Pillow is absent, ImageMagick identify validates images."""
+        import base64
+        # Mock python3 that exits 2 on PIL import
+        mock_py = self.mock_bin_dir / "python3"
+        mock_py.write_text(
+            "#!/bin/sh\n"
+            "if printf '%s' \"$*\" | grep -q 'from PIL import Image'; then\n"
+            "    exit 2\n"
+            "fi\n"
+            "exec /usr/bin/python3 \"$@\"\n"
+        )
+        mock_py.chmod(mock_py.stat().st_mode | stat.S_IEXEC)
+
+        # 1. Valid JPEG should be accepted by identify
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        valid_jpg = self.tmp_path / "valid_id.jpg"
+        valid_jpg.write_bytes(base64.b64decode(jpeg_b64))
+
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{valid_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover_id.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res_valid = self._run_lock_extra("media-art")
+        self.assertEqual(res_valid.returncode, 0)
+        self.assertFalse(res_valid.stdout.strip().endswith("art-default.png"))
+        self.assertTrue(Path(res_valid.stdout.strip()).is_file())
+
+        # 2. Corrupt JPEG must be explicitly rejected by identify
+        bad_jpg = self.tmp_path / "bad_id.jpg"
+        bad_jpg.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 30)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/bad_id.jpg")
+        res_bad = self._run_lock_extra("media-art")
+        self.assertEqual(res_bad.returncode, 0)
+        self.assertTrue(res_bad.stdout.strip().endswith("art-default.png"))
+
+    def test_python_present_pillow_absent_identify_unavailable(self):
+        """When neither Pillow nor identify is available, structural fallback validates or rejects."""
+        import base64
+        # Mock python3 that exits 2 on PIL import
+        mock_py = self.mock_bin_dir / "python3"
+        mock_py.write_text(
+            "#!/bin/sh\n"
+            "if printf '%s' \"$*\" | grep -q 'from PIL import Image'; then\n"
+            "    exit 2\n"
+            "fi\n"
+            "exit 2\n"
+        )
+        mock_py.chmod(mock_py.stat().st_mode | stat.S_IEXEC)
+
+        # Isolated environment that lacks identify
+        isolated_core = self.tmp_path / "isolated_core_bin"
+        isolated_core.mkdir(parents=True, exist_ok=True)
+        for tool in ["bash", "sh", "od", "head", "tail", "grep", "wc", "rm", "mv", "mkdir", "md5sum", "find", "cat", "cut", "awk", "tr", "cp"]:
+            p = Path(f"/usr/bin/{tool}")
+            if p.exists():
+                (isolated_core / tool).symlink_to(p)
+
+        isolated_env = {
+            **self.env,
+            "PATH": f"{self.mock_bin_dir}:{isolated_core}",
+        }
+
+        # 1. Valid JPEG should pass structural fallback (ends with ffd9)
+        jpeg_b64 = (
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy"
+            "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIA"
+            "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+            "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+            "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+            "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+            "AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+            "BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+            "U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+            "uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK"
+            "+ZP3E//Z"
+        )
+        valid_jpg = self.tmp_path / "valid_struct.jpg"
+        valid_jpg.write_bytes(base64.b64decode(jpeg_b64))
+
+        mock_curl = self.mock_bin_dir / "curl"
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{valid_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+        mock_curl.chmod(mock_curl.stat().st_mode | stat.S_IEXEC)
+
+        self._create_mock_playerctl("https://example.com/cover_struct.jpg")
+        lock_cache = self.tmp_path / "cache" / "gps" / "lock"
+        lock_cache.mkdir(parents=True, exist_ok=True)
+
+        res_valid = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_valid.returncode, 0)
+        self.assertFalse(res_valid.stdout.strip().endswith("art-default.png"))
+        self.assertTrue(Path(res_valid.stdout.strip()).is_file())
+
+        # 2. Corrupt JPEG must fail structural fallback (missing ffd9 EOI)
+        bad_jpg = self.tmp_path / "bad_struct.jpg"
+        bad_jpg.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 30)
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{bad_jpg}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/bad_struct.jpg")
+        res_bad = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_bad.returncode, 0)
+        self.assertTrue(res_bad.stdout.strip().endswith("art-default.png"))
+
+        # 3. Unverified WebP must be rejected in structural fallback
+        webp_file = self.tmp_path / "dummy.webp"
+        webp_file.write_bytes(b"RIFF\x10\x00\x00\x00WEBPVP8 \x04\x00\x00\x00\x00\x00\x00\x00")
+
+        mock_curl.write_text(
+            "#!/bin/sh\n"
+            "outfile=''\n"
+            "for arg in \"$@\"; do\n"
+            "    case \"$prev\" in -o) outfile=\"$arg\" ;; esac\n"
+            "    prev=\"$arg\"\n"
+            "done\n"
+            f"cp '{webp_file}' \"$outfile\"\n"
+            "exit 0\n"
+        )
+
+        self._create_mock_playerctl("https://example.com/unverified.webp")
+        res_webp = subprocess.run(
+            [str(LOCK_EXTRA_SCRIPT), "media-art"],
+            env=isolated_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res_webp.returncode, 0)
+        self.assertTrue(res_webp.stdout.strip().endswith("art-default.png"))
 
 
 if __name__ == "__main__":

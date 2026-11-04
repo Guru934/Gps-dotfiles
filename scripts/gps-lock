@@ -89,9 +89,74 @@ if [ ! -f "$LOCK_BG" ]; then
 fi
 
 # 4c. Select rotating background if available
+# If lock-bg.conf already exists, rotate asynchronously in background for the next lock
 BG_ROTATOR="$(dirname "$(realpath "$0")")/gps-lock-bg"
 if [ -x "$BG_ROTATOR" ]; then
-    "$BG_ROTATOR" >/dev/null 2>&1 || true
+    if [ -s "$LOCK_BG" ]; then
+        ( "$BG_ROTATOR" >/dev/null 2>&1 & )
+    else
+        "$BG_ROTATOR" >/dev/null 2>&1 || true
+    fi
+fi
+
+# 4d. Resolve the lock-screen profile picture (round avatar beside the name).
+# Generated per-user state in ~/.config/gps/lock-avatar.conf.
+AVATAR_TOOL="${SCRIPT_DIR}/gps-lock-avatar"
+LOCK_AVATAR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/gps/lock-avatar.conf"
+
+# Safe migration: if an old symlink exists in ~/.config/hypr/lock-avatar.conf, remove it
+LEGACY_AVATAR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/lock-avatar.conf"
+if [ -L "$LEGACY_AVATAR_CONF" ]; then
+    rm -f "$LEGACY_AVATAR_CONF" 2>/dev/null || true
+fi
+
+# Check if LOCK_AVATAR_CONF exists and points to a valid readable avatar image
+avatar_valid=0
+if [ -s "$LOCK_AVATAR_CONF" ]; then
+    avatar_path="$( (grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null || true) | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
+    if [ -n "$avatar_path" ] && [ -r "$avatar_path" ] && [ -s "$avatar_path" ]; then
+        avatar_valid=1
+    fi
+fi
+
+if [ "$avatar_valid" -eq 0 ]; then
+    if [ -f "$AVATAR_TOOL" ] && command -v python3 >/dev/null 2>&1; then
+        python3 "$AVATAR_TOOL" >/dev/null 2>&1 || true
+    fi
+    # Re-validate after running the tool
+    if [ -s "$LOCK_AVATAR_CONF" ]; then
+        avatar_path="$( (grep -E '^\$avatar\s*=\s*' "$LOCK_AVATAR_CONF" 2>/dev/null || true) | head -1 | sed -E 's/^\$avatar\s*=\s*//; s/[[:space:]]+$//')"
+        if [ -n "$avatar_path" ] && [ -r "$avatar_path" ] && [ -s "$avatar_path" ]; then
+            avatar_valid=1
+        fi
+    fi
+fi
+
+# Last-resort fallback: generate a minimal 1x1 PNG if nothing else worked
+if [ "$avatar_valid" -eq 0 ]; then
+    fallback_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gps/lock"
+    fallback_img="$fallback_dir/avatar-default.png"
+    if [ ! -s "$fallback_img" ]; then
+        mkdir -p "$fallback_dir" 2>/dev/null || true
+        # Minimal valid 1x1 transparent PNG (67 bytes), base64-encoded
+        printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==' \
+            | base64 -d > "$fallback_img" 2>/dev/null || true
+    fi
+    if [ -s "$fallback_img" ]; then
+        conf_dir="$(dirname "$LOCK_AVATAR_CONF")"
+        mkdir -p "$conf_dir" 2>/dev/null || true
+        conf_tmp="$conf_dir/.lock-avatar.tmp.$$"
+        printf '%s\n' "\$avatar = $fallback_img" > "$conf_tmp" 2>/dev/null || true
+        if [ -s "$conf_tmp" ]; then
+            # Safe replacement: never write through a pre-existing symlink
+            if [ -L "$LOCK_AVATAR_CONF" ]; then
+                rm -f "$LOCK_AVATAR_CONF" 2>/dev/null || true
+            fi
+            mv -f "$conf_tmp" "$LOCK_AVATAR_CONF" 2>/dev/null || rm -f "$conf_tmp" 2>/dev/null
+        else
+            rm -f "$conf_tmp" 2>/dev/null || true
+        fi
+    fi
 fi
 
 # 5. Keep an owner-readable diagnostic log and report failures while the
@@ -101,10 +166,10 @@ LOCK_LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gps/logs"
 LOCK_LOG="$LOCK_LOG_DIR/gps-lock.log"
 if ! mkdir -p "$LOCK_LOG_DIR"; then
     echo "WARN: could not create lock log directory; launching hyprlock without file logging." >&2
-    exec "$LOCK_BIN" --config "$CONFIG_FILE" "$@"
+    exec "$LOCK_BIN" --immediate-render --config "$CONFIG_FILE" "$@"
 fi
 
-if "$LOCK_BIN" --config "$CONFIG_FILE" "$@" >>"$LOCK_LOG" 2>&1; then
+if "$LOCK_BIN" --immediate-render --config "$CONFIG_FILE" "$@" >>"$LOCK_LOG" 2>&1; then
     exit 0
 else
     LOCK_STATUS=$?
