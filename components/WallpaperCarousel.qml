@@ -13,6 +13,7 @@ PanelWindow {
     property bool isOpen: false
     property int currentIndex: 0
     property var posterMap: ({})
+    property var wallpaperStatus: ({})
     readonly property int visibleRadius: 3
     readonly property string repoRoot: (root.hub && root.hub.repoRoot)
         ? root.hub.repoRoot
@@ -35,6 +36,23 @@ PanelWindow {
         carouselLoader.item.applyWallpaper()
     }
 
+    // Live wallpaper status query
+    Process {
+        id: statusProc
+        command: [root.repoRoot + "/scripts/gps-wallpaper", "inspect"]
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const parsed = JSON.parse(this.text)
+                    if (parsed && typeof parsed === "object") {
+                        root.wallpaperStatus = parsed
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
     // Posters extraction and synchronization process
     Process {
         id: posterSyncProc
@@ -55,6 +73,7 @@ PanelWindow {
     onIsOpenChanged: {
         if (root.isOpen) {
             posterSyncProc.running = true
+            statusProc.running = true
         }
     }
 
@@ -233,7 +252,7 @@ PanelWindow {
                                     cache: true
                                 }
 
-                                // Subtle LIVE badge for video wallpapers
+                                // Subtle LIVE / Awareness badge for video wallpapers
                                 Rectangle {
                                     id: liveBadge
                                     visible: cardDelegate.isVideo
@@ -250,6 +269,23 @@ PanelWindow {
                                     border.color: Qt.rgba(255, 255, 255, 0.15)
                                     z: 5
 
+                                    readonly property bool isCurrentWall: root.wallpaperStatus && root.wallpaperStatus.path === cardDelegate.filePath
+                                    readonly property string liveStatus: isCurrentWall ? (root.wallpaperStatus.status || "") : ""
+                                    readonly property string badgeText: {
+                                        if (!isCurrentWall) return "LIVE"
+                                        if (liveStatus === "LIVE PLAYING") return "LIVE PLAYING"
+                                        if (liveStatus.indexOf("BATTERY") >= 0) return "PAUSED: BATTERY"
+                                        if (liveStatus.indexOf("APPLICATION") >= 0) return "PAUSED: APP OPEN"
+                                        return "LIVE"
+                                    }
+                                    readonly property color badgeDotColor: {
+                                        if (!isCurrentWall) return Theme.brandAccent
+                                        if (liveStatus === "LIVE PLAYING") return Theme.brandAccent
+                                        if (liveStatus.indexOf("BATTERY") >= 0) return "#F7768E"
+                                        if (liveStatus.indexOf("APPLICATION") >= 0) return Theme.statusWarn
+                                        return Theme.brandAccent
+                                    }
+
                                     Row {
                                         id: liveRow
                                         anchors.centerIn: parent
@@ -259,12 +295,12 @@ PanelWindow {
                                             width: 6
                                             height: 6
                                             radius: 3
-                                            color: Theme.brandAccent
+                                            color: liveBadge.badgeDotColor
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
 
                                         Text {
-                                            text: "LIVE"
+                                            text: liveBadge.badgeText
                                             color: Theme.textMain
                                             font.family: Theme.fontUi
                                             font.pixelSize: 10

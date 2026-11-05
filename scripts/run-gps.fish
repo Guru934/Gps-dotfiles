@@ -203,6 +203,9 @@ stop_pattern "quickshell.*shell\.qml" "GPS master shell"
 stop_device_watcher "GPS device watcher"
 stop_pattern "awww-daemon" "awww-daemon"
 stop_pattern "mpvpaper" "mpvpaper"
+if test -x "$REPO_DIR/scripts/gps-wallpaper"
+    "$REPO_DIR/scripts/gps-wallpaper" stop-watcher >/dev/null 2>&1
+end
 stop_pattern "wl-paste.*cliphist store" "stale cliphist watcher"
 stop_pattern "wl-paste.*gps-clip-store" "GPS clip store watcher"
 rm -f "$gps_shell_log" "$HOME/.config/quickshell/theme.log"
