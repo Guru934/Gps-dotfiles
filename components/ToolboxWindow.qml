@@ -91,9 +91,28 @@ FloatingWindow {
     Component {
         id: toolboxContent
 
-        Toolbox {
-            showCloseButton: true
-            onCloseRequested: root.close()
+        Item {
+            anchors.fill: parent
+
+            ToolboxBackend {
+                id: backend
+                toolbox: tb
+            }
+
+            Toolbox {
+                id: tb
+                anchors.fill: parent
+                showCloseButton: true
+                onCloseRequested: root.close()
+
+                hostName: backend.hostName
+                osName: backend.osName
+                compositorName: backend.compositorName
+                compositorState: backend.compositorState
+                integrationAvailable: backend.integrationAvailable
+                availableActionIds: backend.availableActionIds
+                showSampleData: backend.showSampleData
+            }
         }
     }
 }

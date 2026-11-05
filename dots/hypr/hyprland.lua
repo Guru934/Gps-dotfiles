@@ -470,6 +470,7 @@ hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell wallp
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell dashboard toggle"))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc shell notifcenter toggle"))
 hl.bind(mainMod .. " + comma", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc settings toggle"))
+hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(repo .. "/scripts/gps-ipc toolbox toggle"))
 -- Lock the session: unified lock wrapper (gps-lock)
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(repo .. "/scripts/gps-lock"))
 -- Clipboard history: toggles the unified GPS clipboard picker via shell router.
