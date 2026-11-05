@@ -45,7 +45,7 @@ for _, key in ipairs({
     "SUPER + SUPER_L", "SUPER + SUPER_R", "SUPER + SPACE", "SUPER + R",
     "SUPER + Return", "SUPER + E", "SUPER + C", "SUPER + F",
     "SUPER + SHIFT + V", "SUPER + D", "SUPER + N", "SUPER + L",
-    "SUPER + W", "SUPER + Q", "SUPER + Z", "SUPER + comma", "SUPER + V",
+    "SUPER + W", "SUPER + Q", "SUPER + Z", "SUPER + comma", "SUPER + T", "SUPER + V",
     "SUPER + ALT + C", "SUPER + SHIFT + R", "SUPER + SHIFT + P",
     "SUPER + SHIFT + Space", "Print", "SHIFT + Print", "ALT + Print",
 }) do
@@ -69,6 +69,7 @@ local gps_binds = {
     { "SUPER + N", hl.dsp.exec_cmd(ipc_command("shell notifcenter toggle")) },
     { "SUPER + W", hl.dsp.exec_cmd(ipc_command("shell wallpaper toggle")) },
     { "SUPER + comma", hl.dsp.exec_cmd(ipc_command("settings toggle")) },
+    { "SUPER + T", hl.dsp.exec_cmd(ipc_command("toolbox toggle")) },
     { "SUPER + V", hl.dsp.exec_cmd(ipc_command("shell clipboard toggle")) },
     { "SUPER + ALT + C", hl.dsp.exec_cmd(ipc_command("island control toggle")) },
     { "SUPER + L", hl.dsp.exec_cmd(shell_quote(root .. "/scripts/gps-lock")) },

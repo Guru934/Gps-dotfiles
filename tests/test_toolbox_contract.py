@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HYPR_LUA = (ROOT / "dots/hypr/hyprland.lua").read_text(encoding="utf-8")
+GPS_INTEGRATION_LUA = (ROOT / "dots/hypr/gps/integration.lua").read_text(encoding="utf-8")
 TOOLBOX_QML = (ROOT / "components/Toolbox.qml").read_text(encoding="utf-8")
 TOOLBOX_WIN = (ROOT / "components/ToolboxWindow.qml").read_text(encoding="utf-8")
 TOOLBOX_BACKEND = (ROOT / "components/ToolboxBackend.qml").read_text(encoding="utf-8")
@@ -13,9 +14,11 @@ class ToolboxContractTests(unittest.TestCase):
     """Verifies GPS Toolbox keybinds, window wiring, and backend signal coverage."""
 
     def test_super_t_keybind_registered_in_hyprland(self):
-        """Verifies Super+T is bound to 'scripts/gps-ipc toolbox toggle'."""
+        """Verifies Super+T is bound in standalone Hyprland and Caelestia integration."""
         self.assertIn('hl.bind(mainMod .. " + T"', HYPR_LUA)
         self.assertIn('scripts/gps-ipc toolbox toggle', HYPR_LUA)
+        self.assertIn('"SUPER + T"', GPS_INTEGRATION_LUA)
+        self.assertIn('toolbox toggle', GPS_INTEGRATION_LUA)
 
     def test_toolbox_window_wires_backend_and_presentation(self):
         """Verifies ToolboxWindow embeds ToolboxBackend and binds live facts to Toolbox."""

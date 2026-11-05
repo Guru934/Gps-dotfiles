@@ -116,6 +116,7 @@ class CaelestiaIntegrationTests(unittest.TestCase):
         self.assertIn('"SUPER + Q"', module)
         self.assertIn('"SUPER + V"', module)
         self.assertIn('"SUPER + comma"', module)
+        self.assertIn('"SUPER + T"', module)
         self.assertIn('"SUPER + Z"', module)
         self.assertIn('"SUPER + ALT + C"', module)
         for conflicting_key in (
