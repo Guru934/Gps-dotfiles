@@ -114,6 +114,7 @@ FloatingWindow {
                 showSampleData: backend.showSampleData
                 savedItems: backend.savedItems
                 collections: backend.collections
+                activityEvents: backend.activityEvents
             }
         }
     }

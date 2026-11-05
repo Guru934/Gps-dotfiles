@@ -21,10 +21,26 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 DEFAULT_COLLECTIONS = ["Development", "Linux", "Websites", "Personal"]
+MAX_HISTORY_ENTRIES = 5000
 
 VALID_ITEM_TYPES = {"bookmark", "note", "snippet"}
 VALID_TRUST_LEVELS = {"", "reviewed", "needs-review", "restricted"}
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-.:]{0,63}\Z")
+
+
+def get_repo_root() -> Path:
+    """Return the GPS repository root directory."""
+    configured = os.environ.get("GPS_ROOT") or os.environ.get("GPS_DESKTOP_ROOT")
+    if configured and Path(configured).is_dir():
+        return Path(configured).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def get_config_dir() -> Path:
+    """Return user configuration directory honoring XDG_CONFIG_HOME."""
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(config_home) if config_home and Path(config_home).is_absolute() else Path.home() / ".config"
+    return base / "gps"
 
 
 def get_state_dir() -> Path:
@@ -39,6 +55,11 @@ def get_state_dir() -> Path:
 def get_saved_space_path() -> Path:
     """Return the path to saved_space.json."""
     return get_state_dir() / "saved_space.json"
+
+
+def get_history_path() -> Path:
+    """Return the path to history.jsonl."""
+    return get_state_dir() / "history.jsonl"
 
 
 def atomic_write_json(path: Path, data: Any) -> None:
@@ -71,6 +92,10 @@ def atomic_write_json(path: Path, data: Any) -> None:
                 pass
 
 
+# ==============================================================================
+# Saved Space logic
+# ==============================================================================
+
 def create_default_saved_space() -> dict[str, Any]:
     """Return a pristine Saved Space dictionary."""
     return {
@@ -94,7 +119,6 @@ def load_saved_space(path: Path | None = None) -> dict[str, Any]:
         parsed = json.loads(content)
         if not isinstance(parsed, dict) or "items" not in parsed or not isinstance(parsed["items"], list):
             raise ValueError("Invalid Saved Space schema structure")
-        # Ensure collections exist
         if "collections" not in parsed or not isinstance(parsed["collections"], list):
             parsed["collections"] = list(DEFAULT_COLLECTIONS)
         if "version" not in parsed:
@@ -166,7 +190,6 @@ def validate_item(item: dict[str, Any]) -> dict[str, Any]:
         raw_tags = [str(t).strip().lstrip("#") for t in raw_tags if str(t).strip()]
     else:
         raw_tags = []
-    # Deduplicate tags preserving order
     tags: list[str] = []
     for tag in raw_tags[:32]:
         clean = tag[:32]
@@ -195,10 +218,6 @@ def validate_item(item: dict[str, Any]) -> dict[str, Any]:
         "sample": False,
     }
 
-
-# ==============================================================================
-# Saved Space Subcommands
-# ==============================================================================
 
 def cmd_saved_space_list(args: argparse.Namespace) -> int:
     state = load_saved_space()
@@ -329,7 +348,6 @@ def cmd_saved_space_save_collections(args: argparse.Namespace) -> int:
     state = load_saved_space()
     state["collections"] = collections
 
-    # If updated items JSON was also supplied, update items too
     if args.items_json:
         try:
             items_raw = json.loads(args.items_json)
@@ -393,45 +411,311 @@ def cmd_saved_space_copy(args: argparse.Namespace) -> int:
 
 
 # ==============================================================================
-# Main Entry Point
+# Action Whitelist & History Journal Logic (Phase 3)
+# ==============================================================================
+
+def load_action_whitelist() -> dict[str, Any]:
+    """Load the action whitelist config, checking user config then repo default."""
+    user_config = get_config_dir() / "toolbox-actions.json"
+    repo_config = get_repo_root() / "config" / "toolbox-actions.json"
+
+    target = user_config if user_config.is_file() else repo_config
+    if not target.is_file():
+        return {"version": 1, "actions": {}}
+
+    try:
+        parsed = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict) and "actions" in parsed and isinstance(parsed["actions"], dict):
+            return parsed
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to read actions whitelist from {target}: {exc}\n")
+
+    return {"version": 1, "actions": {}}
+
+
+def append_history_event(event: dict[str, Any]) -> None:
+    """Append an event to history.jsonl, rotating if entry count exceeds limit."""
+    hist_path = get_history_path()
+    hist_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    line = json.dumps(event, ensure_ascii=False) + "\n"
+    try:
+        lines: list[str] = []
+        if hist_path.is_file():
+            lines = hist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines.append(line.strip())
+        if len(lines) > MAX_HISTORY_ENTRIES:
+            lines = lines[-MAX_HISTORY_ENTRIES:]
+        # Atomic write back
+        temp = hist_path.with_suffix(".tmp")
+        temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.replace(temp, hist_path)
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to write to activity history: {exc}\n")
+
+
+def cmd_action_list(args: argparse.Namespace) -> int:
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    available_ids = sorted(list(actions.keys()))
+
+    res = {
+        "ok": True,
+        "available_ids": available_ids,
+        "actions": actions,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_action_run(args: argparse.Namespace) -> int:
+    action_id = args.action_id.strip()
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+
+    if action_id not in actions:
+        err = f"Action '{action_id}' is not registered in the whitelist."
+        sys.stderr.write(f"error: {err}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    action_def = actions[action_id]
+    executable_tmpl = action_def.get("executable", [])
+    if not isinstance(executable_tmpl, list) or not executable_tmpl:
+        err = f"Action '{action_id}' has no valid executable definition."
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    # Parse and validate parameters
+    params: dict[str, Any] = {}
+    if args.params_json:
+        try:
+            parsed_params = json.loads(args.params_json)
+            if isinstance(parsed_params, dict):
+                params = parsed_params
+        except Exception as exc:
+            err = f"Invalid parameters JSON: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    param_schema = action_def.get("param_schema", {})
+    for param_name, pattern in param_schema.items():
+        val = str(params.get(param_name, "")).strip()
+        if not re.match(pattern, val):
+            err = f"Parameter '{param_name}' value '{val}' does not match validation pattern: {pattern}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    # Build argument vector without shell interpolation
+    repo_root = str(get_repo_root())
+    exec_args: list[str] = []
+    for item in executable_tmpl:
+        s = str(item).replace("${GPS_ROOT}", repo_root)
+        for k, v in params.items():
+            s = s.replace(f"${{{k}}}", str(v))
+        if re.search(r"\$\{[A-Za-z0-9_]+\}", s):
+            err = f"Unresolved placeholder in command argument: {s}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+        exec_args.append(s)
+
+    # Confirmation requirement for destructive actions
+    is_destructive = bool(action_def.get("destructive", False) or action_def.get("confirm", False))
+    is_confirmed = bool(args.confirmed or params.get("confirmed", False))
+    if is_destructive and not is_confirmed and not args.dry_run:
+        err = f"Action '{action_id}' requires explicit confirmation."
+        sys.stdout.write(json.dumps({"ok": False, "error": err, "requires_confirm": True}) + "\n")
+        return 1
+
+    start_time = time.monotonic()
+    timestamp_ms = int(time.time() * 1000)
+
+    # Dry-run execution path
+    if args.dry_run:
+        duration_str = "0.00s"
+        event = {
+            "id": f"evt_{timestamp_ms}",
+            "ts": timestamp_ms,
+            "name": action_def.get("name", action_id),
+            "trigger": "Manual",
+            "result": "completed",
+            "duration": duration_str,
+            "category": action_def.get("category", "Desktop"),
+            "automation": "",
+            "details": f"[Dry-Run] {' '.join(exec_args)}",
+        }
+        append_history_event(event)
+        res = {
+            "ok": True,
+            "dry_run": True,
+            "action": action_id,
+            "duration": duration_str,
+            "returncode": 0,
+            "event": event,
+        }
+        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+        return 0
+
+    # Real execution path
+    timeout = int(action_def.get("timeout", 10))
+    stdout_text = ""
+    stderr_text = ""
+    returncode = 0
+    try:
+        proc = subprocess.run(
+            exec_args,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            start_new_session=True,
+        )
+        returncode = proc.returncode
+        stdout_text = proc.stdout.strip()
+        stderr_text = proc.stderr.strip()
+    except subprocess.TimeoutExpired:
+        returncode = 124
+        stderr_text = f"Action timed out after {timeout} seconds."
+    except Exception as exc:
+        returncode = 1
+        stderr_text = str(exc)
+
+    duration = time.monotonic() - start_time
+    duration_str = f"{duration:.2f}s"
+    result_status = "completed" if returncode == 0 else "failed"
+
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": action_def.get("name", action_id),
+        "trigger": "Manual",
+        "result": result_status,
+        "duration": duration_str,
+        "category": action_def.get("category", "Desktop"),
+        "automation": "",
+        "details": f"{' '.join(exec_args)} (exit {returncode})",
+    }
+    append_history_event(event)
+
+    res = {
+        "ok": returncode == 0,
+        "action": action_id,
+        "result": result_status,
+        "duration": duration_str,
+        "returncode": returncode,
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "event": event,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0 if returncode == 0 else 1
+
+
+def cmd_activity_list(args: argparse.Namespace) -> int:
+    hist_path = get_history_path()
+    events: list[dict[str, Any]] = []
+
+    if hist_path.is_file():
+        try:
+            lines = hist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in reversed(lines):
+                clean = line.strip()
+                if not clean:
+                    continue
+                try:
+                    ev = json.loads(clean)
+                    if isinstance(ev, dict) and "name" in ev:
+                        events.append(ev)
+                except Exception:
+                    pass
+                if len(events) >= args.limit:
+                    break
+        except Exception as exc:
+            sys.stderr.write(f"warn: Failed to read history: {exc}\n")
+
+    res = {
+        "ok": True,
+        "count": len(events),
+        "events": events,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_activity_log(args: argparse.Namespace) -> int:
+    try:
+        event = json.loads(args.event_json)
+        if not isinstance(event, dict):
+            raise ValueError("Event must be a JSON object")
+        if "id" not in event:
+            event["id"] = f"evt_{int(time.time() * 1000)}"
+        if "ts" not in event:
+            event["ts"] = int(time.time() * 1000)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid event data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    append_history_event(event)
+    sys.stdout.write(json.dumps({"ok": True, "event": event}) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Main Entry Point & CLI Parser
 # ==============================================================================
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gps-toolbox", description="GPS Toolbox backend helper")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
-    # saved-space subcommand
+    # 1. saved-space subcommand
     ss_parser = subparsers.add_parser("saved-space", help="Saved Space operations")
     ss_sub = ss_parser.add_subparsers(dest="ss_action", required=True)
 
-    # list
     ss_sub.add_parser("list", help="List Saved Space items and collections")
 
-    # save-item
     p_save = ss_sub.add_parser("save-item", help="Save or update an item")
     p_save.add_argument("item_json", help="JSON string representing item")
 
-    # delete-item
     p_del = ss_sub.add_parser("delete-item", help="Delete an item by id")
     p_del.add_argument("item_id", help="ID of item to delete")
 
-    # patch-item
     p_patch = ss_sub.add_parser("patch-item", help="Patch item fields (favorite, pinned, etc.)")
     p_patch.add_argument("item_id", help="ID of item to patch")
     p_patch.add_argument("patch_json", help="JSON string of fields to update")
 
-    # save-collections
     p_colls = ss_sub.add_parser("save-collections", help="Save collections list")
     p_colls.add_argument("collections_json", help="JSON array of collection names")
     p_colls.add_argument("items_json", nargs="?", default=None, help="Optional JSON array of updated items")
 
-    # open-url
     p_open = ss_sub.add_parser("open-url", help="Open a web link via xdg-open safely")
     p_open.add_argument("url", help="http or https URL to open")
 
-    # copy
     p_copy = ss_sub.add_parser("copy", help="Copy text to Wayland clipboard using wl-copy")
     p_copy.add_argument("text", help="Text to copy")
+
+    # 2. action subcommand
+    act_parser = subparsers.add_parser("action", help="Action whitelist operations")
+    act_sub = act_parser.add_subparsers(dest="act_action", required=True)
+
+    act_sub.add_parser("list", help="List all registered actions and available IDs")
+
+    p_act_run = act_sub.add_parser("run", help="Run a whitelisted action safely")
+    p_act_run.add_argument("action_id", help="ID of whitelisted action to run")
+    p_act_run.add_argument("params_json", nargs="?", default=None, help="Optional JSON string of parameters")
+    p_act_run.add_argument("--dry-run", action="store_true", help="Simulate execution without running subprocess")
+    p_act_run.add_argument("--confirmed", action="store_true", help="Confirm execution of destructive action")
+
+    # 3. activity subcommand
+    hist_parser = subparsers.add_parser("activity", help="Activity journal operations")
+    hist_sub = hist_parser.add_subparsers(dest="hist_action", required=True)
+
+    p_hist_list = hist_sub.add_parser("list", help="List recent activity events")
+    p_hist_list.add_argument("--limit", type=int, default=100, help="Maximum number of events to return")
+
+    p_hist_log = hist_sub.add_parser("log", help="Append a custom event to history")
+    p_hist_log.add_argument("event_json", help="JSON string representing the activity event")
 
     return parser
 
@@ -456,10 +740,21 @@ def main(argv: list[str] | None = None) -> int:
         elif args.ss_action == "copy":
             return cmd_saved_space_copy(args)
 
+    elif args.subcommand == "action":
+        if args.act_action == "list":
+            return cmd_action_list(args)
+        elif args.act_action == "run":
+            return cmd_action_run(args)
+
+    elif args.subcommand == "activity":
+        if args.hist_action == "list":
+            return cmd_activity_list(args)
+        elif args.hist_action == "log":
+            return cmd_activity_log(args)
+
     parser.print_help()
     return 1
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

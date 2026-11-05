@@ -30,15 +30,18 @@ Item {
     // Master integration flag - set to true when backend is loaded
     readonly property bool integrationAvailable: true
 
-    // Available action IDs (empty array initially, will be populated from whitelist in Phase 3)
+    // Available action IDs loaded from the reviewed whitelist
     property var availableActionIds: []
 
-    // Show sample data flag: false in Phase 2 for real data & honest empty states
+    // Show sample data flag: false for real data & honest empty states
     property bool showSampleData: false
 
     // Saved Space persistent properties
     property var savedItems: []
     property var collections: ["Development", "Linux", "Websites", "Personal"]
+
+    // Activity & History journal events
+    property var activityEvents: []
 
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
@@ -188,12 +191,91 @@ Item {
     }
 
     // --------------------------------------------------------------------------
+    // Action Whitelist & Activity background processes (Phase 3)
+    // --------------------------------------------------------------------------
+
+    Process {
+        id: listActionsProc
+        command: [root.toolboxScript, "action", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.available_ids)) {
+                        root.availableActionIds = res.available_ids
+                        if (root.toolbox) root.toolbox.availableActionIds = res.available_ids
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: listActivityProc
+        command: [root.toolboxScript, "activity", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.events)) {
+                        root.activityEvents = res.events
+                        if (root.toolbox) root.toolbox.activityEvents = res.events
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: runActionProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        const evt = res.event || {}
+                        const actName = evt.name || res.action || "Action"
+                        root.notify(actName, "Completed successfully (" + (res.duration || "0.00s") + ")", "ok")
+                        root.reloadActivity()
+                    } else if (res && !res.ok) {
+                        const errMsg = res.error || (res.requires_confirm ? "Action requires user confirmation" : "Execution failed")
+                        root.notify("Action Failed", errMsg, "err")
+                        root.playSound("warn")
+                        root.reloadActivity()
+                    }
+                } catch (e) {
+                    root.notify("Action Output Error", "Could not parse action response", "err")
+                    root.playSound("warn")
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
     // Helper functions
     // --------------------------------------------------------------------------
 
     function reloadSavedSpace() {
         if (!listSavedSpaceProc.running) {
             listSavedSpaceProc.running = true
+        }
+    }
+
+    function reloadActions() {
+        if (!listActionsProc.running) {
+            listActionsProc.running = true
+        }
+    }
+
+    function reloadActivity() {
+        if (!listActivityProc.running) {
+            listActivityProc.running = true
         }
     }
 
@@ -227,6 +309,13 @@ Item {
         Quickshell.execDetached([root.toolboxScript, "saved-space", "copy", String(text)])
     }
 
+    function runAction(actionId, params) {
+        if (!actionId) return
+        const p = params || {}
+        runActionProc.command = [root.toolboxScript, "action", "run", String(actionId), JSON.stringify(p)]
+        runActionProc.running = true
+    }
+
     // Sound effect trigger (reuses existing gps-sound script)
     function playSound(eventKind) {
         if (!root.repoRoot) return
@@ -243,13 +332,19 @@ Item {
     // Initialize state on load
     Component.onCompleted: {
         root.reloadSavedSpace()
+        root.reloadActions()
+        root.reloadActivity()
     }
 
     onToolboxChanged: {
         if (root.toolbox) {
             if (root.savedItems.length > 0) root.toolbox.savedItems = root.savedItems
             if (root.collections.length > 0) root.toolbox.collections = root.collections
+            if (root.availableActionIds.length > 0) root.toolbox.availableActionIds = root.availableActionIds
+            if (root.activityEvents.length > 0) root.toolbox.activityEvents = root.activityEvents
             root.reloadSavedSpace()
+            root.reloadActions()
+            root.reloadActivity()
         }
     }
 
@@ -261,7 +356,7 @@ Item {
         target: root.toolbox
 
         function onActionRunRequested(actionId, params) {
-            root.notify("Action Requested", "Action '" + actionId + "' execution engine will be wired in Phase 3.", "info")
+            root.runAction(actionId, params)
             root.playSound("action")
         }
 
