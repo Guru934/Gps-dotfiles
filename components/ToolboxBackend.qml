@@ -43,6 +43,10 @@ Item {
     // Activity & History journal events
     property var activityEvents: []
 
+    // Device Bridge persistent and live facts (Phase 4)
+    property var devices: []
+    property var sharedLinks: []
+
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
 
@@ -258,6 +262,94 @@ Item {
     }
 
     // --------------------------------------------------------------------------
+    // Device Bridge background processes (Phase 4)
+    // --------------------------------------------------------------------------
+
+    Process {
+        id: listDevicesProc
+        command: [root.toolboxScript, "device", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.devices)) {
+                        root.devices = res.devices
+                        if (root.toolbox) root.toolbox.devices = res.devices
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: listLinksProc
+        command: [root.toolboxScript, "device", "links"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.links)) {
+                        root.sharedLinks = res.links
+                        if (root.toolbox) root.toolbox.sharedLinks = res.links
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: deviceActionProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        root.notify("Device Action", "Action '" + res.action + "' executed successfully", "ok")
+                        root.reloadActivity()
+                    } else if (res && !res.ok) {
+                        root.notify("Device Action Failed", res.error || "Device is currently unreachable", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {
+                    root.notify("Device Action", "Command dispatched", "info")
+                }
+            }
+        }
+    }
+
+    Process {
+        id: dismissLinkProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.links)) {
+                        root.sharedLinks = res.links
+                        if (root.toolbox) root.toolbox.sharedLinks = res.links
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    // Periodic poll for connected devices (10 second interval, cached/background)
+    Timer {
+        id: devicePollTimer
+        interval: 10000
+        running: true
+        repeat: true
+        onTriggered: root.reloadDevices()
+    }
+
+    // --------------------------------------------------------------------------
     // Helper functions
     // --------------------------------------------------------------------------
 
@@ -276,6 +368,18 @@ Item {
     function reloadActivity() {
         if (!listActivityProc.running) {
             listActivityProc.running = true
+        }
+    }
+
+    function reloadDevices() {
+        if (!listDevicesProc.running) {
+            listDevicesProc.running = true
+        }
+    }
+
+    function reloadSharedLinks() {
+        if (!listLinksProc.running) {
+            listLinksProc.running = true
         }
     }
 
@@ -316,6 +420,19 @@ Item {
         runActionProc.running = true
     }
 
+    function runDeviceAction(deviceId, action, params) {
+        if (!deviceId || !action) return
+        const p = params || {}
+        deviceActionProc.command = [root.toolboxScript, "device", "action", String(deviceId), String(action), JSON.stringify(p)]
+        deviceActionProc.running = true
+    }
+
+    function dismissSharedLink(id) {
+        if (!id) return
+        dismissLinkProc.command = [root.toolboxScript, "device", "dismiss-link", String(id)]
+        dismissLinkProc.running = true
+    }
+
     // Sound effect trigger (reuses existing gps-sound script)
     function playSound(eventKind) {
         if (!root.repoRoot) return
@@ -334,6 +451,8 @@ Item {
         root.reloadSavedSpace()
         root.reloadActions()
         root.reloadActivity()
+        root.reloadDevices()
+        root.reloadSharedLinks()
     }
 
     onToolboxChanged: {
@@ -342,9 +461,13 @@ Item {
             if (root.collections.length > 0) root.toolbox.collections = root.collections
             if (root.availableActionIds.length > 0) root.toolbox.availableActionIds = root.availableActionIds
             if (root.activityEvents.length > 0) root.toolbox.activityEvents = root.activityEvents
+            if (root.devices.length > 0) root.toolbox.devices = root.devices
+            if (root.sharedLinks.length > 0) root.toolbox.sharedLinks = root.sharedLinks
             root.reloadSavedSpace()
             root.reloadActions()
             root.reloadActivity()
+            root.reloadDevices()
+            root.reloadSharedLinks()
         }
     }
 
@@ -425,12 +548,12 @@ Item {
         }
 
         function onDeviceActionRequested(deviceId, action, params) {
-            root.notify("Device Bridge", "Device action '" + action + "' for device '" + deviceId + "' will be wired in Phase 4.", "info")
+            root.runDeviceAction(deviceId, action, params)
             root.playSound("action")
         }
 
         function onSharedLinkDismissed(id) {
-            root.notify("Device Bridge", "Dismissing link '" + id + "' will be wired in Phase 4.", "info")
+            root.dismissSharedLink(id)
             root.playSound("notice")
         }
     }

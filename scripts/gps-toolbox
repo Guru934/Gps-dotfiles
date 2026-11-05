@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """GPS Toolbox CLI and backend helper.
 
-Provides persistent state management, action whitelist execution, and system
-integration for the GPS Toolbox desktop surface.
+Provides persistent state management, action whitelist execution, device bridge
+integration, and system integration for the GPS Toolbox desktop surface.
 """
 from __future__ import annotations
 
@@ -62,6 +62,11 @@ def get_history_path() -> Path:
     return get_state_dir() / "history.jsonl"
 
 
+def get_shared_links_path() -> Path:
+    """Return the path to shared_links.json."""
+    return get_state_dir() / "shared_links.json"
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON data to path using tempfile and os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -93,7 +98,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
 
 
 # ==============================================================================
-# Saved Space logic
+# Saved Space logic (Phase 2)
 # ==============================================================================
 
 def create_default_saved_space() -> dict[str, Any]:
@@ -446,7 +451,6 @@ def append_history_event(event: dict[str, Any]) -> None:
         lines.append(line.strip())
         if len(lines) > MAX_HISTORY_ENTRIES:
             lines = lines[-MAX_HISTORY_ENTRIES:]
-        # Atomic write back
         temp = hist_path.with_suffix(".tmp")
         temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
         os.replace(temp, hist_path)
@@ -486,7 +490,6 @@ def cmd_action_run(args: argparse.Namespace) -> int:
         sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
         return 1
 
-    # Parse and validate parameters
     params: dict[str, Any] = {}
     if args.params_json:
         try:
@@ -506,7 +509,6 @@ def cmd_action_run(args: argparse.Namespace) -> int:
             sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
             return 1
 
-    # Build argument vector without shell interpolation
     repo_root = str(get_repo_root())
     exec_args: list[str] = []
     for item in executable_tmpl:
@@ -519,7 +521,6 @@ def cmd_action_run(args: argparse.Namespace) -> int:
             return 1
         exec_args.append(s)
 
-    # Confirmation requirement for destructive actions
     is_destructive = bool(action_def.get("destructive", False) or action_def.get("confirm", False))
     is_confirmed = bool(args.confirmed or params.get("confirmed", False))
     if is_destructive and not is_confirmed and not args.dry_run:
@@ -530,7 +531,6 @@ def cmd_action_run(args: argparse.Namespace) -> int:
     start_time = time.monotonic()
     timestamp_ms = int(time.time() * 1000)
 
-    # Dry-run execution path
     if args.dry_run:
         duration_str = "0.00s"
         event = {
@@ -556,7 +556,6 @@ def cmd_action_run(args: argparse.Namespace) -> int:
         sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
         return 0
 
-    # Real execution path
     timeout = int(action_def.get("timeout", 10))
     stdout_text = ""
     stderr_text = ""
@@ -662,6 +661,312 @@ def cmd_activity_log(args: argparse.Namespace) -> int:
 
 
 # ==============================================================================
+# Device Bridge Logic (Phase 4)
+# ==============================================================================
+
+def load_shared_links() -> list[dict[str, Any]]:
+    """Load shared links from shared_links.json."""
+    links_path = get_shared_links_path()
+    if not links_path.is_file():
+        atomic_write_json(links_path, {"version": 1, "links": []})
+        return []
+    try:
+        data = json.loads(links_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("links"), list):
+            return data["links"]
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to read shared links: {exc}\n")
+    return []
+
+
+def save_shared_links(links: list[dict[str, Any]]) -> None:
+    """Save shared links list atomically."""
+    links_path = get_shared_links_path()
+    atomic_write_json(links_path, {"version": 1, "links": links})
+
+
+def query_devices() -> list[dict[str, Any]]:
+    """Query connected and paired devices from KDE Connect (D-Bus) and ADB."""
+    devices: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    # 1. Query KDE Connect over D-Bus
+    try:
+        tree = subprocess.run(
+            ["busctl", "--user", "tree", "org.kde.kdeconnect"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        if tree.returncode == 0:
+            dev_ids = re.findall(r"/modules/kdeconnect/devices/([a-zA-Z0-9_-]+)", tree.stdout)
+            for dev_id in dev_ids:
+                if dev_id in seen_ids:
+                    continue
+                seen_ids.add(dev_id)
+                path = f"/modules/kdeconnect/devices/{dev_id}"
+                intro = subprocess.run(
+                    ["busctl", "--user", "introspect", "org.kde.kdeconnect", path, "org.kde.kdeconnect.device"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                )
+                name_m = re.search(r'\.name\s+property\s+s\s+"([^"]+)"', intro.stdout)
+                paired_m = re.search(r"\.isPaired\s+property\s+b\s+(true|false)", intro.stdout)
+                reachable_m = re.search(r"\.isReachable\s+property\s+b\s+(true|false)", intro.stdout)
+
+                name = name_m.group(1) if name_m else dev_id
+                paired = paired_m.group(1) == "true" if paired_m else False
+                reachable = reachable_m.group(1) == "true" if reachable_m else False
+
+                state = "connected" if reachable else ("disconnected" if paired else "unavailable")
+
+                battery = -1
+                if reachable:
+                    intro_batt = subprocess.run(
+                        ["busctl", "--user", "introspect", "org.kde.kdeconnect", path, "org.kde.kdeconnect.device.battery"],
+                        capture_output=True,
+                        text=True,
+                        timeout=1.5,
+                    )
+                    charge_m = re.search(r"\.charge\s+property\s+i\s+([0-9]+)", intro_batt.stdout)
+                    if charge_m:
+                        battery = int(charge_m.group(1))
+
+                devices.append({
+                    "id": dev_id,
+                    "name": name,
+                    "state": state,
+                    "battery": battery,
+                    "lastSeen": "Paired device" if paired else "Known device",
+                    "capabilities": ["mirror", "file", "share", "find", "notifications"],
+                })
+    except Exception as exc:
+        sys.stderr.write(f"warn: KDE Connect D-Bus query failed: {exc}\n")
+
+    # 2. Query ADB devices
+    try:
+        p = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=1.5)
+        if p.returncode == 0:
+            lines = p.stdout.strip().splitlines()
+            for line in lines[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    serial = parts[0]
+                    adb_id = f"adb_{serial}"
+                    if adb_id not in seen_ids:
+                        seen_ids.add(adb_id)
+                        devices.append({
+                            "id": adb_id,
+                            "name": f"Android ({serial})",
+                            "state": "connected",
+                            "battery": -1,
+                            "lastSeen": "USB/ADB connected",
+                            "capabilities": ["mirror"],
+                        })
+    except Exception:
+        pass
+
+    return devices
+
+
+def cmd_device_list(args: argparse.Namespace) -> int:
+    devices = query_devices()
+    res = {
+        "ok": True,
+        "count": len(devices),
+        "devices": devices,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_device_action(args: argparse.Namespace) -> int:
+    device_id = args.device_id.strip()
+    action = args.action.strip()
+    params: dict[str, Any] = {}
+    if args.params_json:
+        try:
+            params = json.loads(args.params_json)
+        except Exception:
+            pass
+
+    # Handle mirror action
+    if action == "mirror":
+        scrcpy_cmd = ["scrcpy", "--turn-screen-off", "--stay-awake"]
+        if device_id.startswith("adb_"):
+            serial = device_id.split("_", 1)[1]
+            scrcpy_cmd.extend(["-s", serial])
+        try:
+            subprocess.Popen(
+                scrcpy_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            event = {
+                "id": f"evt_{int(time.time() * 1000)}",
+                "ts": int(time.time() * 1000),
+                "name": "Launch Device Mirror",
+                "trigger": "Manual",
+                "result": "completed",
+                "duration": "0.10s",
+                "category": "Phone & Devices",
+                "automation": "",
+                "details": f"Launched scrcpy on device {device_id}",
+            }
+            append_history_event(event)
+            sys.stdout.write(json.dumps({"ok": True, "action": action, "device_id": device_id}) + "\n")
+            return 0
+        except Exception as exc:
+            err = f"Failed to launch scrcpy: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    # Handle find phone (ring)
+    elif action == "find":
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--ring"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            res_status = "completed" if proc.returncode == 0 else "failed"
+            event = {
+                "id": f"evt_{int(time.time() * 1000)}",
+                "ts": int(time.time() * 1000),
+                "name": "Find Phone",
+                "trigger": "Manual",
+                "result": res_status,
+                "duration": "0.20s",
+                "category": "Phone & Devices",
+                "automation": "",
+                "details": f"Sent ring command to {device_id}",
+            }
+            append_history_event(event)
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            err = f"Failed to ring phone: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    # Handle share URL or text
+    elif action == "share":
+        share_content = params.get("text") or params.get("url") or ""
+        if not share_content:
+            err = "Share action requires 'text' or 'url' in params."
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--share-text", str(share_content)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle send file
+    elif action == "file":
+        file_path = params.get("path")
+        if not file_path:
+            # Launch zenity or kdialog file picker asynchronously
+            try:
+                subprocess.Popen(
+                    ["kdialog", "--getopenfilename"] if shutil.which("kdialog") else ["zenity", "--file-selection"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                sys.stdout.write(json.dumps({"ok": True, "action": action, "picker": True}) + "\n")
+                return 0
+            except Exception as exc:
+                sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+                return 1
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--share", str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle device settings
+    elif action == "settings":
+        try:
+            subprocess.Popen(
+                ["kdeconnect-app"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            sys.stdout.write(json.dumps({"ok": True, "action": action, "device_id": device_id}) + "\n")
+            return 0
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle notifications summary
+    elif action == "notifications":
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--list-notifications"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "output": proc.stdout.strip()}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    err = f"Unknown device action: {action}"
+    sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+    return 1
+
+
+def cmd_device_links(args: argparse.Namespace) -> int:
+    links = load_shared_links()
+    res = {
+        "ok": True,
+        "count": len(links),
+        "links": links,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_device_dismiss_link(args: argparse.Namespace) -> int:
+    link_id = args.link_id.strip()
+    links = load_shared_links()
+    updated = [lnk for lnk in links if lnk.get("id") != link_id]
+    save_shared_links(updated)
+    res = {
+        "ok": True,
+        "deleted": link_id,
+        "count": len(updated),
+        "links": updated,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
 # Main Entry Point & CLI Parser
 # ==============================================================================
 
@@ -717,6 +1022,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_hist_log = hist_sub.add_parser("log", help="Append a custom event to history")
     p_hist_log.add_argument("event_json", help="JSON string representing the activity event")
 
+    # 4. device subcommand
+    dev_parser = subparsers.add_parser("device", help="Device Bridge operations")
+    dev_sub = dev_parser.add_subparsers(dest="dev_action", required=True)
+
+    dev_sub.add_parser("list", help="Query connected and paired devices")
+
+    p_dev_act = dev_sub.add_parser("action", help="Execute device bridge action")
+    p_dev_act.add_argument("device_id", help="ID of target device")
+    p_dev_act.add_argument("action", help="Action name (mirror, find, share, file, settings, notifications)")
+    p_dev_act.add_argument("params_json", nargs="?", default=None, help="Optional JSON params")
+
+    dev_sub.add_parser("links", help="List shared link inbox items")
+
+    p_dev_dismiss = dev_sub.add_parser("dismiss-link", help="Dismiss a shared link")
+    p_dev_dismiss.add_argument("link_id", help="ID of link to dismiss")
+
     return parser
 
 
@@ -751,6 +1072,16 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_activity_list(args)
         elif args.hist_action == "log":
             return cmd_activity_log(args)
+
+    elif args.subcommand == "device":
+        if args.dev_action == "list":
+            return cmd_device_list(args)
+        elif args.dev_action == "action":
+            return cmd_device_action(args)
+        elif args.dev_action == "links":
+            return cmd_device_links(args)
+        elif args.dev_action == "dismiss-link":
+            return cmd_device_dismiss_link(args)
 
     parser.print_help()
     return 1

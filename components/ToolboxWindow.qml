@@ -115,6 +115,8 @@ FloatingWindow {
                 savedItems: backend.savedItems
                 collections: backend.collections
                 activityEvents: backend.activityEvents
+                devices: backend.devices
+                sharedLinks: backend.sharedLinks
             }
         }
     }
