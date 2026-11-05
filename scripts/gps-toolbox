@@ -1,0 +1,465 @@
+#!/usr/bin/env python3
+"""GPS Toolbox CLI and backend helper.
+
+Provides persistent state management, action whitelist execution, and system
+integration for the GPS Toolbox desktop surface.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
+DEFAULT_COLLECTIONS = ["Development", "Linux", "Websites", "Personal"]
+
+VALID_ITEM_TYPES = {"bookmark", "note", "snippet"}
+VALID_TRUST_LEVELS = {"", "reviewed", "needs-review", "restricted"}
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-.:]{0,63}\Z")
+
+
+def get_state_dir() -> Path:
+    """Return the state directory for GPS Toolbox honoring XDG_STATE_HOME."""
+    state_home = os.environ.get("XDG_STATE_HOME")
+    base = Path(state_home) if state_home and Path(state_home).is_absolute() else Path.home() / ".local" / "state"
+    target = base / "gps" / "toolbox"
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return target
+
+
+def get_saved_space_path() -> Path:
+    """Return the path to saved_space.json."""
+    return get_state_dir() / "saved_space.json"
+
+
+def atomic_write_json(path: Path, data: Any) -> None:
+    """Atomically write JSON data to path using tempfile and os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    raw = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+
+
+def create_default_saved_space() -> dict[str, Any]:
+    """Return a pristine Saved Space dictionary."""
+    return {
+        "version": SCHEMA_VERSION,
+        "collections": list(DEFAULT_COLLECTIONS),
+        "items": [],
+    }
+
+
+def load_saved_space(path: Path | None = None) -> dict[str, Any]:
+    """Load Saved Space JSON, backing up corrupt files and returning valid state."""
+    target = path or get_saved_space_path()
+    default_state = create_default_saved_space()
+
+    if not target.exists():
+        atomic_write_json(target, default_state)
+        return default_state
+
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict) or "items" not in parsed or not isinstance(parsed["items"], list):
+            raise ValueError("Invalid Saved Space schema structure")
+        # Ensure collections exist
+        if "collections" not in parsed or not isinstance(parsed["collections"], list):
+            parsed["collections"] = list(DEFAULT_COLLECTIONS)
+        if "version" not in parsed:
+            parsed["version"] = SCHEMA_VERSION
+        return parsed
+    except Exception as exc:
+        timestamp = time.time_ns()
+        backup = target.with_name(f"{target.stem}.corrupt-{timestamp}.json")
+        try:
+            os.replace(target, backup)
+            sys.stderr.write(f"warn: Corrupt saved_space.json preserved as {backup.name}: {exc}\n")
+        except OSError as backup_err:
+            sys.stderr.write(f"warn: Failed to preserve corrupt saved_space.json: {backup_err}\n")
+
+        atomic_write_json(target, default_state)
+        return default_state
+
+
+def validate_url(raw_url: str) -> str:
+    """Strictly validate that a URL is http/https with a valid host."""
+    url = raw_url.strip()
+    if not url:
+        raise ValueError("URL cannot be empty")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError(f"URL scheme '{parsed.scheme}' not allowed. Only http and https are permitted.")
+    if not parsed.netloc or not parsed.hostname:
+        raise ValueError("URL must have a valid domain / hostname")
+    if any(ord(c) < 32 or ord(c) == 127 for c in url):
+        raise ValueError("URL contains control characters")
+    return url
+
+
+def validate_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Validate and sanitize a single Saved Space item."""
+    if not isinstance(item, dict):
+        raise ValueError("Item must be a JSON object")
+
+    item_id = str(item.get("id") or "").strip()
+    if not item_id or not SAFE_ID_RE.match(item_id):
+        item_id = f"s_{int(time.time() * 1000)}"
+
+    item_type = str(item.get("type") or "bookmark").strip().lower()
+    if item_type not in VALID_ITEM_TYPES:
+        raise ValueError(f"Invalid item type '{item_type}'. Must be one of: {VALID_ITEM_TYPES}")
+
+    title = str(item.get("title") or "").strip()
+    if not title:
+        raise ValueError("Item title is required")
+    title = title[:256]
+
+    url = ""
+    if item_type == "bookmark":
+        raw_url = str(item.get("url") or item.get("content") or "").strip()
+        url = validate_url(raw_url)
+
+    content = str(item.get("content") or "").strip()
+    if item_type in {"note", "snippet"} and not content:
+        raise ValueError(f"A {item_type} requires non-empty content")
+
+    description = str(item.get("description") or "").strip()[:1024]
+    notes = str(item.get("notes") or "").strip()[:1024]
+    collection = str(item.get("collection") or "").strip()[:64]
+
+    raw_tags = item.get("tags") or []
+    if isinstance(raw_tags, str):
+        raw_tags = [t.strip().lstrip("#") for t in raw_tags.split(",") if t.strip()]
+    elif isinstance(raw_tags, list):
+        raw_tags = [str(t).strip().lstrip("#") for t in raw_tags if str(t).strip()]
+    else:
+        raw_tags = []
+    # Deduplicate tags preserving order
+    tags: list[str] = []
+    for tag in raw_tags[:32]:
+        clean = tag[:32]
+        if clean and clean not in tags:
+            tags.append(clean)
+
+    pinned = bool(item.get("pinned", False))
+    favorite = bool(item.get("favorite", False))
+    trust = str(item.get("trust") or "").strip().lower()
+    if trust not in VALID_TRUST_LEVELS:
+        trust = "needs-review" if item_type == "snippet" else ""
+
+    return {
+        "id": item_id,
+        "type": item_type,
+        "title": title,
+        "url": url,
+        "content": content if item_type != "bookmark" else "",
+        "description": description,
+        "notes": notes,
+        "collection": collection,
+        "tags": tags,
+        "pinned": pinned,
+        "favorite": favorite,
+        "trust": trust,
+        "sample": False,
+    }
+
+
+# ==============================================================================
+# Saved Space Subcommands
+# ==============================================================================
+
+def cmd_saved_space_list(args: argparse.Namespace) -> int:
+    state = load_saved_space()
+    result = {
+        "ok": True,
+        "version": state.get("version", SCHEMA_VERSION),
+        "collections": state.get("collections", DEFAULT_COLLECTIONS),
+        "items": state.get("items", []),
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_save_item(args: argparse.Namespace) -> int:
+    try:
+        raw_data = json.loads(args.item_json)
+        item = validate_item(raw_data)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid item data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    updated = False
+    for idx, existing in enumerate(items):
+        if existing.get("id") == item["id"]:
+            items[idx] = item
+            updated = True
+            break
+    if not updated:
+        items.insert(0, item)
+
+    state["items"] = items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "action": "updated" if updated else "created",
+        "item": item,
+        "items": items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_delete_item(args: argparse.Namespace) -> int:
+    item_id = str(args.item_id).strip()
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    new_items = [it for it in items if it.get("id") != item_id]
+    state["items"] = new_items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "deleted": item_id,
+        "count": len(new_items),
+        "items": new_items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_patch_item(args: argparse.Namespace) -> int:
+    item_id = str(args.item_id).strip()
+    try:
+        patch = json.loads(args.patch_json)
+        if not isinstance(patch, dict):
+            raise ValueError("Patch must be a JSON object")
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid patch data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    found_idx = -1
+    for idx, existing in enumerate(items):
+        if existing.get("id") == item_id:
+            found_idx = idx
+            break
+
+    if found_idx < 0:
+        err = f"Item with id '{item_id}' not found"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    current = dict(items[found_idx])
+    current.update(patch)
+    try:
+        validated = validate_item(current)
+    except Exception as exc:
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    items[found_idx] = validated
+    state["items"] = items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "item": validated,
+        "items": items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_save_collections(args: argparse.Namespace) -> int:
+    try:
+        colls_raw = json.loads(args.collections_json)
+        if not isinstance(colls_raw, list):
+            raise ValueError("Collections must be a JSON array of strings")
+        collections = []
+        for c in colls_raw:
+            name = str(c).strip()
+            if name and name not in collections:
+                collections.append(name[:64])
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid collections data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    state["collections"] = collections
+
+    # If updated items JSON was also supplied, update items too
+    if args.items_json:
+        try:
+            items_raw = json.loads(args.items_json)
+            if isinstance(items_raw, list):
+                state["items"] = items_raw
+        except Exception:
+            pass
+
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "collections": collections,
+        "items": state.get("items", []),
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_open_url(args: argparse.Namespace) -> int:
+    try:
+        url = validate_url(args.url)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid URL: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        sys.stdout.write(json.dumps({"ok": True, "url": url}) + "\n")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"error: Failed to execute xdg-open: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+
+def cmd_saved_space_copy(args: argparse.Namespace) -> int:
+    text = args.text
+    try:
+        proc = subprocess.Popen(
+            ["wl-copy"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        proc.communicate(input=text.encode("utf-8"), timeout=2)
+        sys.stdout.write(json.dumps({"ok": True}) + "\n")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"error: Failed to copy to clipboard: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="gps-toolbox", description="GPS Toolbox backend helper")
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # saved-space subcommand
+    ss_parser = subparsers.add_parser("saved-space", help="Saved Space operations")
+    ss_sub = ss_parser.add_subparsers(dest="ss_action", required=True)
+
+    # list
+    ss_sub.add_parser("list", help="List Saved Space items and collections")
+
+    # save-item
+    p_save = ss_sub.add_parser("save-item", help="Save or update an item")
+    p_save.add_argument("item_json", help="JSON string representing item")
+
+    # delete-item
+    p_del = ss_sub.add_parser("delete-item", help="Delete an item by id")
+    p_del.add_argument("item_id", help="ID of item to delete")
+
+    # patch-item
+    p_patch = ss_sub.add_parser("patch-item", help="Patch item fields (favorite, pinned, etc.)")
+    p_patch.add_argument("item_id", help="ID of item to patch")
+    p_patch.add_argument("patch_json", help="JSON string of fields to update")
+
+    # save-collections
+    p_colls = ss_sub.add_parser("save-collections", help="Save collections list")
+    p_colls.add_argument("collections_json", help="JSON array of collection names")
+    p_colls.add_argument("items_json", nargs="?", default=None, help="Optional JSON array of updated items")
+
+    # open-url
+    p_open = ss_sub.add_parser("open-url", help="Open a web link via xdg-open safely")
+    p_open.add_argument("url", help="http or https URL to open")
+
+    # copy
+    p_copy = ss_sub.add_parser("copy", help="Copy text to Wayland clipboard using wl-copy")
+    p_copy.add_argument("text", help="Text to copy")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.subcommand == "saved-space":
+        if args.ss_action == "list":
+            return cmd_saved_space_list(args)
+        elif args.ss_action == "save-item":
+            return cmd_saved_space_save_item(args)
+        elif args.ss_action == "delete-item":
+            return cmd_saved_space_delete_item(args)
+        elif args.ss_action == "patch-item":
+            return cmd_saved_space_patch_item(args)
+        elif args.ss_action == "save-collections":
+            return cmd_saved_space_save_collections(args)
+        elif args.ss_action == "open-url":
+            return cmd_saved_space_open_url(args)
+        elif args.ss_action == "copy":
+            return cmd_saved_space_copy(args)
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+

@@ -14,6 +14,11 @@ Item {
         || Quickshell.env("GPS_DESKTOP_ROOT")
         || ""
 
+    // Helper script path
+    readonly property string toolboxScript: root.repoRoot
+        ? (root.repoRoot + "/scripts/gps-toolbox")
+        : "gps-toolbox"
+
     // Live system facts
     property string hostName: Quickshell.env("HOSTNAME") || Quickshell.env("HOST") || ""
     property string osName: "Linux"
@@ -28,8 +33,12 @@ Item {
     // Available action IDs (empty array initially, will be populated from whitelist in Phase 3)
     property var availableActionIds: []
 
-    // Show sample data flag (true in Phase 1, will default to false in Phase 2)
-    property bool showSampleData: true
+    // Show sample data flag: false in Phase 2 for real data & honest empty states
+    property bool showSampleData: false
+
+    // Saved Space persistent properties
+    property var savedItems: []
+    property var collections: ["Development", "Linux", "Websites", "Personal"]
 
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
@@ -67,6 +76,157 @@ Item {
         }
     }
 
+    // --------------------------------------------------------------------------
+    // Saved Space background processes
+    // --------------------------------------------------------------------------
+
+    Process {
+        id: listSavedSpaceProc
+        command: [root.toolboxScript, "saved-space", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        if (Array.isArray(res.items)) {
+                            root.savedItems = res.items
+                            if (root.toolbox) root.toolbox.savedItems = res.items
+                        }
+                        if (Array.isArray(res.collections)) {
+                            root.collections = res.collections
+                            if (root.toolbox) root.toolbox.collections = res.collections
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: saveItemProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.items)) {
+                        root.savedItems = res.items
+                        if (root.toolbox) root.toolbox.savedItems = res.items
+                    } else if (res && !res.ok) {
+                        root.notify("Failed to save item", res.error || "Unknown error", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: deleteItemProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.items)) {
+                        root.savedItems = res.items
+                        if (root.toolbox) root.toolbox.savedItems = res.items
+                    } else if (res && !res.ok) {
+                        root.notify("Failed to delete item", res.error || "Unknown error", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: saveCollsProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        if (Array.isArray(res.collections)) {
+                            root.collections = res.collections
+                            if (root.toolbox) root.toolbox.collections = res.collections
+                        }
+                        if (Array.isArray(res.items)) {
+                            root.savedItems = res.items
+                            if (root.toolbox) root.toolbox.savedItems = res.items
+                        }
+                    } else if (res && !res.ok) {
+                        root.notify("Failed to update collections", res.error || "Unknown error", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: openUrlProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && !res.ok) {
+                        root.notify("Failed to open link", res.error || "URL is not allowed for security reasons.", "warn")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
+    // Helper functions
+    // --------------------------------------------------------------------------
+
+    function reloadSavedSpace() {
+        if (!listSavedSpaceProc.running) {
+            listSavedSpaceProc.running = true
+        }
+    }
+
+    function saveItem(item) {
+        if (!item) return
+        saveItemProc.command = [root.toolboxScript, "saved-space", "save-item", JSON.stringify(item)]
+        saveItemProc.running = true
+    }
+
+    function deleteItem(id) {
+        if (!id) return
+        deleteItemProc.command = [root.toolboxScript, "saved-space", "delete-item", String(id)]
+        deleteItemProc.running = true
+    }
+
+    function saveCollections(colls, items) {
+        const cmd = [root.toolboxScript, "saved-space", "save-collections", JSON.stringify(colls)]
+        if (items) cmd.push(JSON.stringify(items))
+        saveCollsProc.command = cmd
+        saveCollsProc.running = true
+    }
+
+    function openUrl(url) {
+        if (!url) return
+        openUrlProc.command = [root.toolboxScript, "saved-space", "open-url", String(url)]
+        openUrlProc.running = true
+    }
+
+    function copyText(text) {
+        if (!text) return
+        Quickshell.execDetached([root.toolboxScript, "saved-space", "copy", String(text)])
+    }
+
     // Sound effect trigger (reuses existing gps-sound script)
     function playSound(eventKind) {
         if (!root.repoRoot) return
@@ -80,7 +240,23 @@ Item {
         }
     }
 
+    // Initialize state on load
+    Component.onCompleted: {
+        root.reloadSavedSpace()
+    }
+
+    onToolboxChanged: {
+        if (root.toolbox) {
+            if (root.savedItems.length > 0) root.toolbox.savedItems = root.savedItems
+            if (root.collections.length > 0) root.toolbox.collections = root.collections
+            root.reloadSavedSpace()
+        }
+    }
+
+    // --------------------------------------------------------------------------
     // Signal connections to Toolbox.qml
+    // --------------------------------------------------------------------------
+
     Connections {
         target: root.toolbox
 
@@ -90,17 +266,26 @@ Item {
         }
 
         function onSavedItemSaved(item) {
-            root.notify("Saved Space", "Saving item '" + (item && item.title ? item.title : "") + "' will persist to JSON in Phase 2.", "info")
+            root.saveItem(item)
             root.playSound("notice")
         }
 
         function onSavedItemDeleted(id) {
-            root.notify("Saved Space", "Deleting item will persist to JSON in Phase 2.", "info")
+            root.deleteItem(id)
             root.playSound("notice")
         }
 
+        function onCollectionsSaved(collections, items) {
+            root.saveCollections(collections, items)
+            root.playSound("notice")
+        }
+
+        function onCopyRequested(text) {
+            root.copyText(text)
+        }
+
         function onOpenUrlRequested(url) {
-            root.notify("URL Requested", "Opening '" + url + "' will be enabled in Phase 2.", "info")
+            root.openUrl(url)
             root.playSound("notice")
         }
 
@@ -155,4 +340,3 @@ Item {
         }
     }
 }
-

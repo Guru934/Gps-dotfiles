@@ -80,6 +80,8 @@ Item {
     signal openUrlRequested(string url)
     signal savedItemSaved(var item)
     signal savedItemDeleted(string id)
+    signal collectionsSaved(var collections, var items)
+    signal copyRequested(string text)
     signal actionRunRequested(string actionId, var params)
     signal automationSaved(var automation)
     signal automationDeleted(string id)
@@ -599,7 +601,7 @@ Item {
         return out
     }
     function shown(arr) { var o = []; for (var i = 0; i < arr.length; i++) if (!(arr[i].sample && !showSampleData)) o.push(arr[i]); return o }
-    function copyText(s) { clipHelper.text = s; clipHelper.selectAll(); clipHelper.copy(); clipHelper.text = "" }
+    function copyText(s) { clipHelper.text = s; clipHelper.selectAll(); clipHelper.copy(); clipHelper.text = ""; copyRequested(s) }
     function setSetting(k, v) { var s = clone(settings); s[k] = v; settings = s }
     function go(i) { pageIndex = i; searchOpen = false; notifOpen = false }
     function ask(title, msg, label, danger, fn) { cfTitle = title; cfMsg = msg; cfLabel = label; cfDanger = danger; cfFn = fn; confirmDlg.open = true }
@@ -617,6 +619,7 @@ Item {
     function openUrl(u) {
         openUrlRequested(u)
         if (allowDirectUrlOpen) { Qt.openUrlExternally(u); notify("Opening link", u, "info") }
+        else if (integrationAvailable) { notify("Opening link", u, "info") }
         else notify("Open requested", "No handler is attached. The parent must handle openUrlRequested.", "warn")
     }
 
@@ -774,11 +777,11 @@ Item {
         savedItems = upserted(savedItems, item, true)
         savedItemSaved(item)
         capDlg.open = false
-        notify(base ? "Item updated" : "Saved to Space", "“" + title + "” is stored in memory only — it won’t survive a restart unless a backend handles savedItemSaved.", "ok")
+        notify(base ? "Item updated" : "Saved to Space", "“" + title + "” has been saved to your Saved Space.", "ok")
     }
     function deleteItemAsk(it) {
         var doIt = function () { savedItems = removed(savedItems, it.id); savedItemDeleted(it.id); notify("Item deleted", it.title, "info") }
-        if (settings.confirmDelete) ask("Delete “" + it.title + "”?", "This removes the item from the in-memory Saved Space.", "Delete", true, doIt)
+        if (settings.confirmDelete) ask("Delete “" + it.title + "”?", "This removes the item from your Saved Space.", "Delete", true, doIt)
         else doIt()
     }
     function openCollDlg(mode, old) { collMode = mode; collOld = old || ""; collErr = ""; collName.text = old || ""; collDlg.open = true; Qt.callLater(function () { collName.input.forceActiveFocus() }) }
@@ -795,6 +798,7 @@ Item {
             if (savedColl === collOld) savedColl = n
         }
         collDlg.open = false
+        collectionsSaved(collections, savedItems)
         notify(collMode === "new" ? "Collection created" : "Collection renamed", n, "ok")
     }
     function deleteCollAsk(c) {
@@ -804,6 +808,7 @@ Item {
             var its = clone(savedItems); for (var k = 0; k < its.length; k++) if (its[k].collection === c) its[k].collection = ""
             savedItems = its
             if (savedColl === c) savedColl = ""
+            collectionsSaved(collections, savedItems)
             notify("Collection deleted", c, "info")
         })
     }
@@ -1668,9 +1673,17 @@ Item {
                                     Chip { visible: ic.it.type === "snippet"; text: root.trustLabel(ic.it.trust).toUpperCase(); tone: root.trustTone(ic.it.trust); dot: true }
                                     Spacer {}
                                     Btn { compact: true; kind: "ghost"; icon: ic.it.favorite ? "★" : "☆"; tint: ic.it.favorite ? th.amber : "transparent"
-                                          onClicked: root.savedItems = root.patched(root.savedItems, ic.it.id, { favorite: !ic.it.favorite }) }
+                                          onClicked: {
+                                              root.savedItems = root.patched(root.savedItems, ic.it.id, { favorite: !ic.it.favorite })
+                                              var updatedFav = root.byId(root.savedItems, ic.it.id)
+                                              if (updatedFav) root.savedItemSaved(updatedFav)
+                                          } }
                                     Btn { compact: true; kind: "ghost"; icon: "⚑"; tint: ic.it.pinned ? th.violet : "transparent"
-                                          onClicked: root.savedItems = root.patched(root.savedItems, ic.it.id, { pinned: !ic.it.pinned }) } }
+                                          onClicked: {
+                                              root.savedItems = root.patched(root.savedItems, ic.it.id, { pinned: !ic.it.pinned })
+                                              var updatedPin = root.byId(root.savedItems, ic.it.id)
+                                              if (updatedPin) root.savedItemSaved(updatedPin)
+                                          } } }
                                 Lbl { text: ic.it.title; font.pixelSize: 14; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; maximumLineCount: 2; Layout.fillWidth: true }
                                 Mono { visible: ic.it.type === "bookmark"; text: ic.it.url; color: th.cyan; Layout.fillWidth: true }
                                 Wrap { visible: ic.it.type === "note"; text: ic.it.content; maximumLineCount: 4 }

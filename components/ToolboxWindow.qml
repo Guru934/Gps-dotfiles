@@ -112,6 +112,8 @@ FloatingWindow {
                 integrationAvailable: backend.integrationAvailable
                 availableActionIds: backend.availableActionIds
                 showSampleData: backend.showSampleData
+                savedItems: backend.savedItems
+                collections: backend.collections
             }
         }
     }
