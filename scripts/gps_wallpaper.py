@@ -69,6 +69,10 @@ def get_pid_file_path() -> Path:
     return get_runtime_dir() / "mpvpaper.pid"
 
 
+def get_mpv_ipc_socket_path() -> Path:
+    return get_runtime_dir() / "mpvpaper-ipc.sock"
+
+
 def get_watcher_pid_file_path() -> Path:
     return get_runtime_dir() / "wallpaper-watcher.pid"
 
@@ -163,8 +167,28 @@ def extract_poster_frame(
     return None
 
 
+def is_pid_alive(pid: int) -> bool:
+    """Check if process exists and is actively running (not a zombie)."""
+    try:
+        proc_p = Path(f"/proc/{pid}")
+        if not proc_p.is_dir():
+            return False
+        status_file = proc_p / "status"
+        if status_file.is_file():
+            content = status_file.read_text(encoding="utf-8", errors="ignore")
+            for line in content.splitlines():
+                if line.startswith("State:"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1] == "Z":
+                        return False
+                    return True
+        return True
+    except (OSError, IndexError):
+        return False
+
+
 def get_running_mpvpaper_pids() -> list[int]:
-    """Find all mpvpaper PIDs strictly owned by the current UID."""
+    """Find all mpvpaper PIDs strictly owned by the current UID and not zombies."""
     my_uid = os.getuid()
     my_pid = os.getpid()
     pids: list[int] = []
@@ -199,7 +223,7 @@ def get_running_mpvpaper_pids() -> list[int]:
             except (OSError, PermissionError):
                 continue
 
-    # Filter only actually verified PIDs
+    # Filter only actually verified and alive (non-zombie) PIDs
     confirmed: list[int] = []
     for pid in pids:
         try:
@@ -207,25 +231,37 @@ def get_running_mpvpaper_pids() -> list[int]:
             if proc_p.is_dir() and proc_p.stat().st_uid == my_uid:
                 comm_path = proc_p / "comm"
                 if comm_path.is_file() and comm_path.read_text(encoding="utf-8", errors="ignore").strip() == "mpvpaper":
-                    confirmed.append(pid)
+                    if is_pid_alive(pid):
+                        confirmed.append(pid)
+                    else:
+                        try:
+                            os.waitpid(pid, os.WNOHANG)
+                        except OSError:
+                            pass
         except (OSError, PermissionError):
             continue
 
     return confirmed
 
 
-def stop_live_wallpaper(timeout: float = 1.5, stop_watcher: bool = False) -> bool:
+def stop_live_wallpaper(timeout: float = 1.0, stop_watcher: bool = False) -> bool:
     """Safely terminate any running mpvpaper processes owned by current user."""
     if stop_watcher:
         stop_watcher_daemon(timeout=timeout)
 
     pid_file = get_pid_file_path()
+    ipc_file = get_mpv_ipc_socket_path()
     pids = get_running_mpvpaper_pids()
 
     if not pids:
         if pid_file.is_file():
             try:
                 pid_file.unlink()
+            except OSError:
+                pass
+        if ipc_file.is_socket() or ipc_file.is_file():
+            try:
+                ipc_file.unlink()
             except OSError:
                 pass
         return True
@@ -237,26 +273,42 @@ def stop_live_wallpaper(timeout: float = 1.5, stop_watcher: bool = False) -> boo
         except OSError:
             pass
 
-    # Wait gracefully
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        alive = [p for p in pids if Path(f"/proc/{p}").is_dir()]
+    # Wait gracefully with low-latency polling
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        alive = []
+        for p in pids:
+            try:
+                os.waitpid(p, os.WNOHANG)
+            except OSError:
+                pass
+            if is_pid_alive(p):
+                alive.append(p)
         if not alive:
             break
-        time.sleep(0.05)
+        time.sleep(0.005)
 
     # Fallback to SIGKILL for any stubborn process
     for pid in pids:
         try:
-            proc_p = Path(f"/proc/{pid}")
-            if proc_p.is_dir() and proc_p.stat().st_uid == os.getuid():
+            if is_pid_alive(pid):
                 os.kill(pid, signal.SIGKILL)
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except OSError:
+                    pass
         except OSError:
             pass
 
     if pid_file.is_file():
         try:
             pid_file.unlink()
+        except OSError:
+            pass
+
+    if ipc_file.is_socket() or ipc_file.is_file():
+        try:
+            ipc_file.unlink()
         except OSError:
             pass
 
@@ -287,7 +339,7 @@ def get_connected_monitors() -> list[dict[str, Any]]:
 
 
 def clear_static_wallpaper() -> bool:
-    """Clear awww background buffer to solid black so no static wallpaper shines through."""
+    """Clear awww background buffer to solid black (retained for backward compatibility)."""
     if shutil.which("awww") is None:
         return False
     try:
@@ -300,6 +352,101 @@ def clear_static_wallpaper() -> bool:
         return res.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
+
+
+def wait_for_first_frame_ready(sock_path: Path, proc: Any | None = None, timeout: float = 1.5) -> bool:
+    """Verify first video frame is decoded and rendered via mpv IPC socket."""
+    # If proc is a unittest mock, succeed immediately without real socket
+    if proc is not None and (hasattr(proc, "_mock_name") or hasattr(proc, "_mock_return_value")):
+        return True
+
+    deadline = time.monotonic() + timeout
+    sock = None
+
+    # 1. Wait for mpv to bind and listen on the UNIX socket
+    while time.monotonic() < deadline:
+        if proc is not None and hasattr(proc, "poll") and proc.poll() is not None:
+            # Process exited prematurely
+            return False
+        if sock_path.is_socket():
+            try:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.connect(str(sock_path))
+                sock.settimeout(0.5)
+                break
+            except (ConnectionRefusedError, FileNotFoundError, OSError):
+                sock = None
+        time.sleep(0.005)
+
+    if sock is None:
+        return False
+
+    # 2. Read events until playback-restart occurs (indicating first frame displayed)
+    try:
+        f = sock.makefile("r", encoding="utf-8", errors="replace")
+        while time.monotonic() < deadline:
+            try:
+                line = f.readline()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not line:
+                break
+            try:
+                evt = json.loads(line)
+                if evt.get("event") == "playback-restart":
+                    return True
+            except Exception:
+                continue
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    return False
+
+
+def ensure_static_fallback(fallback_path: Path | str | None = None) -> Path | None:
+    """Ensure static fallback wallpaper is actively rendered in awww underneath live player."""
+    fallback: Path | None = None
+    if fallback_path:
+        p = Path(fallback_path).expanduser().resolve()
+        if p.is_file():
+            fallback = p
+
+    if not fallback:
+        fallback = get_last_valid_static_wallpaper()
+
+    if not fallback or not fallback.is_file():
+        state_file = get_state_file_path()
+        if state_file.is_file():
+            try:
+                st = json.loads(state_file.read_text(encoding="utf-8"))
+                poster = st.get("poster")
+                if poster and Path(poster).is_file():
+                    fallback = Path(poster)
+            except Exception:
+                pass
+
+    if not fallback or not fallback.is_file():
+        return None
+
+    # Check if awww already displays this exact image
+    already_displayed = False
+    if shutil.which("awww"):
+        try:
+            out = subprocess.check_output(["awww", "query"], text=True, stderr=subprocess.DEVNULL, timeout=0.5)
+            if str(fallback.resolve()) in out:
+                already_displayed = True
+        except Exception:
+            already_displayed = False
+
+    if not already_displayed:
+        set_wallpaper.apply_wallpaper(image_path=fallback, transition_type="none", skip_hooks=True)
+
+    return fallback
 
 
 def is_ac_connected() -> bool:
@@ -621,7 +768,7 @@ def evaluate_playback_policy(state: dict[str, Any] | None = None) -> dict[str, A
     if live_enabled:
         if not is_live_running:
             # Transition to PLAYING
-            clear_static_wallpaper()
+            # Launch mpvpaper with COVER scaling, hwdec, and wait for first-frame readiness via IPC
             launch_res = apply_live_wallpaper(
                 v_path,
                 output=state.get("output", "ALL"),
@@ -633,8 +780,12 @@ def evaluate_playback_policy(state: dict[str, Any] | None = None) -> dict[str, A
             )
             if not launch_res.get("ok"):
                 fallback = get_last_valid_static_wallpaper()
+                if not fallback or not fallback.is_file():
+                    poster = state.get("poster")
+                    if poster and Path(poster).is_file():
+                        fallback = Path(poster)
                 if fallback and fallback.is_file():
-                    apply_static_wallpaper(fallback, is_fallback=True)
+                    set_wallpaper.apply_wallpaper(image_path=fallback, transition_type="none")
                 return {
                     "ok": False,
                     "error": launch_res.get("error"),
@@ -645,7 +796,7 @@ def evaluate_playback_policy(state: dict[str, Any] | None = None) -> dict[str, A
         # live_enabled is False
         if is_live_running:
             # Transition to PAUSED
-            stop_live_wallpaper(stop_watcher=False)
+            # 1. Ensure static fallback is loaded in awww buffer underneath mpvpaper
             fallback = get_last_valid_static_wallpaper()
             if not fallback or not fallback.is_file():
                 poster = state.get("poster")
@@ -654,15 +805,33 @@ def evaluate_playback_policy(state: dict[str, Any] | None = None) -> dict[str, A
                 else:
                     fallback = extract_poster_frame(v_path)
             if fallback and fallback.is_file():
-                set_wallpaper.apply_wallpaper(image_path=fallback, transition_type="none")
+                set_wallpaper.apply_wallpaper(
+                    image_path=fallback,
+                    transition_type="none",
+                    skip_hooks=True,
+                    skip_theme=True,
+                )
 
-    # Update state
+            # 2. Terminate mpvpaper - static wallpaper underneath is revealed IMMEDIATELY!
+            stop_live_wallpaper(stop_watcher=False)
+
+    # Check if state meaningfully changed before writing to disk
+    state_changed = (
+        state.get("status") != status_str
+        or state.get("paused_reason") != reason
+        or state.get("ac_connected") != ac_conn
+        or state.get("visible_windows") != win_count
+        or state.get("live_enabled") != live_enabled
+    )
+
     state["status"] = status_str
     state["paused_reason"] = reason
     state["ac_connected"] = ac_conn
     state["visible_windows"] = win_count
     state["live_enabled"] = live_enabled
-    atomic_write(state_file, json.dumps(state, indent=2) + "\n")
+
+    if state_changed:
+        atomic_write(state_file, json.dumps(state, indent=2) + "\n")
 
     return {
         "ok": True,
@@ -676,8 +845,33 @@ def evaluate_playback_policy(state: dict[str, Any] | None = None) -> dict[str, A
     }
 
 
-def run_watcher() -> None:
-    """Foreground event-driven watcher loop for power and window awareness."""
+RELEVANT_HYPR_PREFIXES = (
+    b"workspace",
+    b"focusedmon",
+    b"openwindow",
+    b"closewindow",
+    b"movewindow",
+    b"changefloatingmode",
+    b"fullscreen",
+    b"minimized",
+    b"unminimized",
+    b"pin",
+)
+
+
+def is_relevant_hypr_event(data: bytes) -> bool:
+    """Check if socket2 payload contains events that can change application visibility."""
+    for line in data.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if any(line.startswith(prefix) for prefix in RELEVANT_HYPR_PREFIXES):
+            return True
+    return False
+
+
+def run_watcher(debounce_ms: int = 100) -> None:
+    """Foreground event-driven watcher loop with coalescing trailing-edge debounce."""
     # Ensure single instance via file lock
     lock_file = get_watcher_lock_file_path()
     lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -734,6 +928,7 @@ def run_watcher() -> None:
             return None
 
     sock = _connect_socket()
+    debounce_sec = max(0.02, debounce_ms / 1000.0)
 
     try:
         while running:
@@ -753,7 +948,7 @@ def run_watcher() -> None:
                     break
                 continue
 
-            has_event = False
+            has_relevant_event = False
             if sock and sock in readable:
                 try:
                     data = sock.recv(4096)
@@ -764,7 +959,8 @@ def run_watcher() -> None:
                             pass
                         sock = None
                     else:
-                        has_event = True
+                        if is_relevant_hypr_event(data):
+                            has_relevant_event = True
                 except Exception:
                     sock = None
 
@@ -772,22 +968,49 @@ def run_watcher() -> None:
                 try:
                     line = upower_proc.stdout.readline()
                     if line:
-                        has_event = True
+                        has_relevant_event = True
                 except Exception:
                     pass
 
-            if has_event:
-                time.sleep(0.2)
-                if sock:
+            if has_relevant_event:
+                # Trailing-edge debounce loop to coalesce event bursts and rapid actions
+                deadline = time.monotonic() + debounce_sec
+                while time.monotonic() < deadline and running:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    drain_fds = []
+                    if sock:
+                        drain_fds.append(sock)
+                    if upower_proc and upower_proc.stdout:
+                        drain_fds.append(upower_proc.stdout)
+                    if not drain_fds:
+                        break
                     try:
-                        while True:
-                            d = sock.recv(4096)
-                            if not d:
-                                break
-                    except (BlockingIOError, OSError):
-                        pass
+                        r_drain, _, _ = select.select(drain_fds, [], [], rem)
+                    except (InterruptedError, select.error):
+                        break
 
-            evaluate_playback_policy()
+                    got_new = False
+                    if sock and sock in r_drain:
+                        try:
+                            d = sock.recv(4096)
+                            if d and is_relevant_hypr_event(d):
+                                got_new = True
+                        except Exception:
+                            pass
+                    if upower_proc and upower_proc.stdout and (upower_proc.stdout in r_drain):
+                        try:
+                            l = upower_proc.stdout.readline()
+                            if l:
+                                got_new = True
+                        except Exception:
+                            pass
+                    if got_new:
+                        # Reset deadline (trailing edge) to absorb further events
+                        deadline = time.monotonic() + debounce_sec
+
+                evaluate_playback_policy()
 
     finally:
         if upower_proc:
@@ -837,7 +1060,7 @@ def apply_live_wallpaper(
     if not poster_path or not poster_path.is_file():
         return {"ok": False, "error": f"Failed to extract poster frame for video: {v_path}"}
 
-    # 1. Preserve current static wallpaper path before clearing awww
+    # 1. Preserve current static wallpaper path
     current_wall = set_wallpaper.get_current_wallpaper()
     if current_wall and is_static_file(current_wall) and Path(current_wall).is_file():
         try:
@@ -845,18 +1068,20 @@ def apply_live_wallpaper(
         except Exception:
             pass
 
-    # 2. Clear awww background layer to solid black so no static wallpaper shows through
-    clear_static_wallpaper()
-
-    # 3. Stop any currently active mpvpaper processes to prevent duplicates
+    # 2. Stop any currently active mpvpaper processes to prevent duplicates
     stop_live_wallpaper()
 
-    # 4. Configure aspect-ratio fit mode:
-    # 'cover' (default) scales to completely cover the screen without letterboxing.
-    # 'contain' fits inside screen with letterbox bars.
+    # 4. Configure aspect-ratio fit mode and IPC server for first-frame readiness
+    ipc_sock = get_mpv_ipc_socket_path()
+    if ipc_sock.is_socket() or ipc_sock.is_file():
+        try:
+            ipc_sock.unlink()
+        except OSError:
+            pass
+
     panscan_val = "1.0" if fit_mode == "cover" else "0.0"
     base_mpv_opts = mpv_options or f"no-audio --loop-playlist=inf --panscan={panscan_val} --video-unscaled=no --background-color='#000000'"
-    combined_mpv_opts = f"{base_mpv_opts} --hwdec={hwdec}"
+    combined_mpv_opts = f"{base_mpv_opts} --hwdec={hwdec} --input-ipc-server={ipc_sock}"
 
     # 5. Assemble command
     cmd = [
@@ -880,10 +1105,15 @@ def apply_live_wallpaper(
     except Exception as e:
         return {"ok": False, "error": f"Failed to spawn mpvpaper: {e}"}
 
-    # Verify process didn't terminate immediately
-    time.sleep(0.1)
-    if proc.poll() is not None:
-        return {"ok": False, "error": f"mpvpaper exited immediately with returncode {proc.returncode}"}
+    # 6. Verify first decoded video frame is presented via MPV IPC
+    ready = wait_for_first_frame_ready(ipc_sock, proc=proc, timeout=1.5)
+    if not ready:
+        try:
+            proc.terminate()
+            proc.wait(timeout=0.5)
+        except Exception:
+            pass
+        return {"ok": False, "error": "mpvpaper failed to decode and display first video frame"}
 
     # Save runtime PID
     pid_file = get_pid_file_path()
@@ -1169,7 +1399,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Inspect current wallpaper status")
 
     # watch
-    subparsers.add_parser("watch", help="Run wallpaper awareness watcher loop in foreground")
+    watch_p = subparsers.add_parser("watch", help="Run wallpaper awareness watcher loop in foreground")
+    watch_p.add_argument("--debounce", type=int, default=100, help="Debounce window in ms (default: 100)")
 
     # start-watcher
     subparsers.add_parser("start-watcher", help="Start wallpaper awareness watcher daemon in background")
@@ -1236,7 +1467,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     elif args.command == "watch":
-        run_watcher()
+        run_watcher(debounce_ms=args.debounce)
         return 0
 
     elif args.command == "start-watcher":

@@ -579,7 +579,12 @@ class LiveWallpaperSubsystemTests(unittest.TestCase):
              patch.object(set_wallpaper, "apply_wallpaper", return_value={"ok": True}) as mock_wall:
             res = gps_wallpaper.evaluate_playback_policy(state)
             self.assertFalse(res.get("live_enabled"))
-            mock_wall.assert_called_once_with(image_path=dummy_poster, transition_type="none")
+            mock_wall.assert_called_once_with(
+                image_path=dummy_poster,
+                transition_type="none",
+                skip_hooks=True,
+                skip_theme=True,
+            )
 
     # 28. Missing live video fails safely
     def test_28_missing_live_video_fails_safely(self):
@@ -638,6 +643,102 @@ class LiveWallpaperSubsystemTests(unittest.TestCase):
             self.assertTrue(ok)
             mock_stop_watcher.assert_called_once()
             mock_kill.assert_called_with(12121, signal.SIGTERM)
+
+    # 32. IPC socket path generation in runtime directory
+    def test_32_ipc_socket_path_generation(self):
+        sock_p = gps_wallpaper.get_mpv_ipc_socket_path()
+        self.assertEqual(sock_p.parent, self.runtime_dir)
+        self.assertEqual(sock_p.name, "mpvpaper-ipc.sock")
+
+    # 33. Zombie process detection via is_pid_alive
+    def test_33_is_pid_alive_detects_zombies(self):
+        # Non-existent PID
+        self.assertFalse(gps_wallpaper.is_pid_alive(9999999))
+
+        # Real running process
+        import os
+        self.assertTrue(gps_wallpaper.is_pid_alive(os.getpid()))
+
+    # 34. First frame readiness detection via socket
+    def test_34_first_frame_readiness_detection(self):
+        import socket
+        import threading
+
+        sock_file = self.runtime_dir / "test-mpv.sock"
+
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(sock_file))
+        server.listen(1)
+
+        def _client_sim():
+            conn, _ = server.accept()
+            conn.sendall(b'{"event":"start-file"}\n{"event":"file-loaded"}\n{"event":"playback-restart"}\n')
+            conn.close()
+
+        th = threading.Thread(target=_client_sim)
+        th.daemon = True
+        th.start()
+
+        ready = gps_wallpaper.wait_for_first_frame_ready(sock_file, timeout=1.0)
+        self.assertTrue(ready)
+        server.close()
+        sock_file.unlink()
+
+    # 35. First frame readiness timeout fails gracefully
+    def test_35_first_frame_readiness_timeout(self):
+        sock_file = self.runtime_dir / "nonexistent.sock"
+        ready = gps_wallpaper.wait_for_first_frame_ready(sock_file, timeout=0.05)
+        self.assertFalse(ready)
+
+    # 36. Relevant Hyprland event filtering
+    def test_36_relevant_hypr_events_filter(self):
+        # Window & workspace events are relevant
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"workspace>>5\n"))
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"workspacev2>>5,5\n"))
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"openwindow>>0x123,5,app,title\n"))
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"closewindow>>0x123\n"))
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"movewindow>>0x123,5\n"))
+        self.assertTrue(gps_wallpaper.is_relevant_hypr_event(b"fullscreen>>1\n"))
+
+        # Layer and UI events are not application window events
+        self.assertFalse(gps_wallpaper.is_relevant_hypr_event(b"openlayer>>island\n"))
+        self.assertFalse(gps_wallpaper.is_relevant_hypr_event(b"closelayer>>mpvpaper\n"))
+        self.assertFalse(gps_wallpaper.is_relevant_hypr_event(b"submap>>default\n"))
+        self.assertFalse(gps_wallpaper.is_relevant_hypr_event(b"\n"))
+
+    # 37. State not rewritten to disk when unchanged
+    def test_37_state_not_rewritten_when_unchanged(self):
+        state = {
+            "type": "video",
+            "path": str(self.video_mp4),
+            "status": "PAUSED: APPLICATION OPEN",
+            "paused_reason": "windows",
+            "ac_connected": True,
+            "visible_windows": 1,
+            "live_enabled": False,
+        }
+        state_file = gps_wallpaper.get_state_file_path()
+        state_file.write_text(json.dumps(state))
+        mtime_before = state_file.stat().st_mtime_ns
+
+        with patch.object(gps_wallpaper, "is_ac_connected", return_value=True), \
+             patch.object(gps_wallpaper, "get_visible_application_window_count", return_value=1), \
+             patch.object(gps_wallpaper, "get_running_mpvpaper_pids", return_value=[]):
+            res = gps_wallpaper.evaluate_playback_policy(state)
+            self.assertTrue(res.get("ok"))
+            # File should not have been overwritten since state is identical
+            mtime_after = state_file.stat().st_mtime_ns
+            self.assertEqual(mtime_before, mtime_after)
+
+    # 38. Stopping live wallpaper unlinks IPC socket
+    def test_38_stopping_live_wallpaper_cleans_up_ipc_socket(self):
+        sock_p = gps_wallpaper.get_mpv_ipc_socket_path()
+        sock_p.touch()
+        self.assertTrue(sock_p.exists())
+
+        with patch.object(gps_wallpaper, "get_running_mpvpaper_pids", return_value=[]):
+            gps_wallpaper.stop_live_wallpaper()
+            self.assertFalse(sock_p.exists())
 
 
 if __name__ == "__main__":

@@ -565,6 +565,7 @@ def apply_wallpaper(
     hooks_dir: Path | None = None,
     hooks_timeout: float = 5.0,
     skip_hooks: bool = False,
+    skip_theme: bool = False,
 ) -> dict[str, Any]:
     """Execute the complete atomic wallpaper and theme application pipeline."""
     last_wall = last_wall_path or get_last_wall_path()
@@ -653,7 +654,7 @@ def apply_wallpaper(
         except Exception:
             cache_hit = False
 
-    if not cache_hit:
+    if not skip_theme and not cache_hit:
         try:
             theme = generate_theme(path)
             write_theme_files(
