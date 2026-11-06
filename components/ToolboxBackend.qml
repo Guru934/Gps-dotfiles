@@ -56,6 +56,13 @@ Item {
     // Routine Builder & Workflows persistent state (Phase 6)
     property var routines: []
 
+    // Whitelist Actions persistent metadata for the Action Library
+    property var actionsData: []
+
+    // User settings persistence
+    property var settings: ({ defaultCollection: "", defaultDir: "", scriptsDir: "", toasts: true,
+                              confirmDelete: true, confirmRun: true, showDeviceChip: true, retention: 30, reduceMotion: false })
+
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
 
@@ -216,9 +223,41 @@ Item {
             onStreamFinished: {
                 try {
                     const res = JSON.parse(text)
-                    if (res && res.ok && Array.isArray(res.available_ids)) {
-                        root.availableActionIds = res.available_ids
-                        if (root.toolbox) root.toolbox.availableActionIds = res.available_ids
+                    if (res && res.ok) {
+                        if (Array.isArray(res.available_ids)) {
+                            root.availableActionIds = res.available_ids
+                            if (root.toolbox) root.toolbox.availableActionIds = res.available_ids
+                        }
+                        if (res.actions && typeof res.actions === "object") {
+                            const acts = []
+                            for (const id in res.actions) {
+                                const a = res.actions[id]
+                                const params = []
+                                if (a.param_schema) {
+                                    for (const pk in a.param_schema) {
+                                        params.push({ k: pk, v: "" })
+                                    }
+                                }
+                                acts.push({
+                                    id: id,
+                                    name: a.name || id,
+                                    category: a.category || "Desktop",
+                                    purpose: a.purpose || "",
+                                    description: a.purpose || "",
+                                    params: params,
+                                    trust: (a.destructive || a.confirm) ? "restricted" : "reviewed",
+                                    confirm: !!a.confirm,
+                                    enabled: true,
+                                    builtin: true,
+                                    ref: ((a.category || "desktop").toLowerCase().split(" ")[0]) + "." + id,
+                                    args: Array.isArray(a.executable) ? a.executable.join(" ") : "",
+                                    cwd: "",
+                                    sample: false
+                                })
+                            }
+                            root.actionsData = acts
+                            if (root.toolbox) root.toolbox.actionsData = acts
+                        }
                     }
                 } catch (e) {}
             }
@@ -589,6 +628,41 @@ Item {
         }
     }
 
+    Process {
+        id: getSettingsProc
+        command: [root.toolboxScript, "settings", "get"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && res.settings) {
+                        root.settings = res.settings
+                        if (root.toolbox) root.toolbox.settings = res.settings
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: saveSettingsProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && res.settings) {
+                        root.settings = res.settings
+                        if (root.toolbox) root.toolbox.settings = res.settings
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
     // --------------------------------------------------------------------------
     // Helper functions
     // --------------------------------------------------------------------------
@@ -639,6 +713,18 @@ Item {
         if (!listRoutinesProc.running) {
             listRoutinesProc.running = true
         }
+    }
+
+    function reloadSettings() {
+        if (!getSettingsProc.running) {
+            getSettingsProc.running = true
+        }
+    }
+
+    function saveSettings(s) {
+        if (!s) return
+        saveSettingsProc.command = [root.toolboxScript, "settings", "save", JSON.stringify(s)]
+        saveSettingsProc.running = true
     }
 
     function saveItem(item) {
@@ -762,6 +848,7 @@ Item {
         root.reloadAutomations()
         root.reloadPresets()
         root.reloadRoutines()
+        root.reloadSettings()
     }
 
     onToolboxChanged: {
@@ -769,12 +856,14 @@ Item {
             if (root.savedItems.length > 0) root.toolbox.savedItems = root.savedItems
             if (root.collections.length > 0) root.toolbox.collections = root.collections
             if (root.availableActionIds.length > 0) root.toolbox.availableActionIds = root.availableActionIds
+            if (root.actionsData.length > 0) root.toolbox.actionsData = root.actionsData
             if (root.activityEvents.length > 0) root.toolbox.activityEvents = root.activityEvents
             if (root.devices.length > 0) root.toolbox.devices = root.devices
             if (root.sharedLinks.length > 0) root.toolbox.sharedLinks = root.sharedLinks
             if (root.automations.length > 0) root.toolbox.automations = root.automations
             if (root.presets.length > 0) root.toolbox.presets = root.presets
             if (root.routines.length > 0) root.toolbox.routines = root.routines
+            if (root.settings) root.toolbox.settings = root.settings
             root.reloadSavedSpace()
             root.reloadActions()
             root.reloadActivity()
@@ -783,6 +872,7 @@ Item {
             root.reloadAutomations()
             root.reloadPresets()
             root.reloadRoutines()
+            root.reloadSettings()
         }
     }
 
@@ -870,6 +960,10 @@ Item {
         function onSharedLinkDismissed(id) {
             root.dismissSharedLink(id)
             root.playSound("notice")
+        }
+
+        function onSettingsSaved(settings) {
+            root.saveSettings(settings)
         }
     }
 }

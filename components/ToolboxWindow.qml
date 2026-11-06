@@ -120,6 +120,8 @@ FloatingWindow {
                 automations: backend.automations
                 presets: backend.presets
                 routines: backend.routines
+                actionsData: backend.actionsData
+                settings: backend.settings
             }
         }
     }

@@ -93,6 +93,7 @@ Item {
     signal presetActivateRequested(string id)
     signal deviceActionRequested(string deviceId, string action, var params)
     signal sharedLinkDismissed(string id)
+    signal settingsSaved(var settings)
     signal closeRequested()
 
     // ======================= INTERNAL STATE =================================
@@ -602,7 +603,7 @@ Item {
     }
     function shown(arr) { var o = []; for (var i = 0; i < arr.length; i++) if (!(arr[i].sample && !showSampleData)) o.push(arr[i]); return o }
     function copyText(s) { clipHelper.text = s; clipHelper.selectAll(); clipHelper.copy(); clipHelper.text = ""; copyRequested(s) }
-    function setSetting(k, v) { var s = clone(settings); s[k] = v; settings = s }
+    function setSetting(k, v) { var s = clone(settings); s[k] = v; settings = s; settingsSaved(s) }
     function go(i) { pageIndex = i; searchOpen = false; notifOpen = false }
     function ask(title, msg, label, danger, fn) { cfTitle = title; cfMsg = msg; cfLabel = label; cfDanger = danger; cfFn = fn; confirmDlg.open = true }
     function notify(title, msg, kind) {

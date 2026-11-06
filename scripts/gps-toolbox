@@ -82,6 +82,11 @@ def get_routines_path() -> Path:
     return get_state_dir() / "routines.json"
 
 
+def get_settings_path() -> Path:
+    """Return the path to settings.json."""
+    return get_state_dir() / "settings.json"
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON data to path using tempfile and os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1708,6 +1713,65 @@ def cmd_workflow_run(args: argparse.Namespace) -> int:
 
 
 # ==============================================================================
+# Settings (Preferences Persistence)
+# ==============================================================================
+
+def load_settings(path: Path | None = None) -> dict[str, Any]:
+    """Load settings from persistent state, returning defaults if not found."""
+    target = path or get_settings_path()
+    defaults = {
+        "defaultCollection": "",
+        "defaultDir": "",
+        "scriptsDir": "",
+        "toasts": True,
+        "confirmDelete": True,
+        "confirmRun": True,
+        "showDeviceChip": True,
+        "retention": 30,
+        "reduceMotion": False,
+    }
+    if not target.exists():
+        return defaults
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            defaults.update(parsed)
+        return defaults
+    except Exception:
+        return defaults
+
+
+def save_settings(data: dict[str, Any], path: Path | None = None) -> None:
+    """Save settings atomically."""
+    target = path or get_settings_path()
+    atomic_write_json(target, data)
+
+
+def cmd_settings_get(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    sys.stdout.write(json.dumps({"ok": True, "settings": settings}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_settings_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.settings_json)
+        if not isinstance(data, dict):
+            raise ValueError("Settings must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid settings JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    current = load_settings()
+    current.update(data)
+    save_settings(current)
+    sys.stdout.write(json.dumps({"ok": True, "settings": current}, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
 # Main Entry Point & CLI Parser
 # ==============================================================================
 
@@ -1825,6 +1889,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_wf_run = wf_sub.add_parser("run", help="Run a workflow sequentially")
     p_wf_run.add_argument("workflow_id", help="ID of workflow to run")
 
+    # 8. settings subcommand
+    settings_parser = subparsers.add_parser("settings", help="Toolbox Settings operations")
+    settings_sub = settings_parser.add_subparsers(dest="settings_action", required=True)
+
+    settings_sub.add_parser("get", help="Get current settings")
+
+    p_sett_save = settings_sub.add_parser("save", help="Save settings")
+    p_sett_save.add_argument("settings_json", help="JSON string representing settings to update")
+
     return parser
 
 
@@ -1899,6 +1972,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_workflow_delete(args)
         elif args.wf_action == "run":
             return cmd_workflow_run(args)
+
+    elif args.subcommand == "settings":
+        if args.settings_action == "get":
+            return cmd_settings_get(args)
+        elif args.settings_action == "save":
+            return cmd_settings_save(args)
 
     parser.print_help()
     return 1
