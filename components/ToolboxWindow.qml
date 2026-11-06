@@ -119,6 +119,7 @@ FloatingWindow {
                 sharedLinks: backend.sharedLinks
                 automations: backend.automations
                 presets: backend.presets
+                routines: backend.routines
             }
         }
     }

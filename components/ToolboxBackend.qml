@@ -53,6 +53,9 @@ Item {
     // Workspace Presets persistent state (Phase 5)
     property var presets: []
 
+    // Routine Builder & Workflows persistent state (Phase 6)
+    property var routines: []
+
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
 
@@ -503,6 +506,90 @@ Item {
     }
 
     // --------------------------------------------------------------------------
+    // Routine Builder & Workflows background processes (Phase 6)
+    // --------------------------------------------------------------------------
+
+    Process {
+        id: listRoutinesProc
+        command: [root.toolboxScript, "workflow", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.routines)) {
+                        root.routines = res.routines
+                        if (root.toolbox) root.toolbox.routines = res.routines
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: saveRoutineProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && res.workflow) {
+                        root.notify("Workflow Saved", "“" + res.workflow.name + "” stored to persistent state.", "ok")
+                        root.reloadRoutines()
+                    } else if (res && !res.ok) {
+                        root.notify("Save Failed", res.error || "Unknown error", "err")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: deleteRoutineProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        root.notify("Workflow Deleted", "Workflow definition removed.", "info")
+                        root.reloadRoutines()
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: runRoutineProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        root.notify("Workflow Finished", "Workflow “" + res.workflow + "” completed (" + res.steps_executed + " steps).", "ok")
+                        root.reloadRoutines()
+                        root.reloadActivity()
+                    } else if (res && !res.ok) {
+                        root.notify("Workflow Stopped", res.error || "Step execution encountered an error", "err")
+                        root.playSound("warn")
+                        root.reloadRoutines()
+                        root.reloadActivity()
+                    }
+                } catch (e) {
+                    root.reloadRoutines()
+                    root.reloadActivity()
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
     // Helper functions
     // --------------------------------------------------------------------------
 
@@ -545,6 +632,12 @@ Item {
     function reloadPresets() {
         if (!listPresetsProc.running) {
             listPresetsProc.running = true
+        }
+    }
+
+    function reloadRoutines() {
+        if (!listRoutinesProc.running) {
+            listRoutinesProc.running = true
         }
     }
 
@@ -628,6 +721,24 @@ Item {
         presetProc.running = true
     }
 
+    function saveRoutine(routine) {
+        if (!routine) return
+        saveRoutineProc.command = [root.toolboxScript, "workflow", "save", JSON.stringify(routine)]
+        saveRoutineProc.running = true
+    }
+
+    function deleteRoutine(id) {
+        if (!id) return
+        deleteRoutineProc.command = [root.toolboxScript, "workflow", "delete", String(id)]
+        deleteRoutineProc.running = true
+    }
+
+    function runWorkflow(id) {
+        if (!id) return
+        runRoutineProc.command = [root.toolboxScript, "workflow", "run", String(id)]
+        runRoutineProc.running = true
+    }
+
     // Sound effect trigger (reuses existing gps-sound script)
     function playSound(eventKind) {
         if (!root.repoRoot) return
@@ -650,6 +761,7 @@ Item {
         root.reloadSharedLinks()
         root.reloadAutomations()
         root.reloadPresets()
+        root.reloadRoutines()
     }
 
     onToolboxChanged: {
@@ -662,6 +774,7 @@ Item {
             if (root.sharedLinks.length > 0) root.toolbox.sharedLinks = root.sharedLinks
             if (root.automations.length > 0) root.toolbox.automations = root.automations
             if (root.presets.length > 0) root.toolbox.presets = root.presets
+            if (root.routines.length > 0) root.toolbox.routines = root.routines
             root.reloadSavedSpace()
             root.reloadActions()
             root.reloadActivity()
@@ -669,6 +782,7 @@ Item {
             root.reloadSharedLinks()
             root.reloadAutomations()
             root.reloadPresets()
+            root.reloadRoutines()
         }
     }
 
@@ -734,12 +848,12 @@ Item {
         }
 
         function onWorkflowSaved(routine) {
-            root.notify("Routine Builder", "Workflow '" + (routine && routine.name ? routine.name : "") + "' persistence will be wired in Phase 6.", "info")
+            root.saveRoutine(routine)
             root.playSound("notice")
         }
 
         function onWorkflowRunRequested(id) {
-            root.notify("Routine Builder", "Running workflow '" + id + "' will be wired in Phase 6.", "info")
+            root.runWorkflow(id)
             root.playSound("action")
         }
 

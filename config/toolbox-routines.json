@@ -1,0 +1,47 @@
+[
+  {
+    "id": "rt1",
+    "name": "Deep Work",
+    "description": "Dev workspace, focus timer, and Do Not Disturb.",
+    "trigger": "manual",
+    "schedule": "",
+    "onFail": "continue",
+    "enabled": false,
+    "sample": false,
+    "runs": 0,
+    "steps": [
+      { "id": "s1", "actionId": "open_dev_ws", "cond": "always", "note": "Launch VS Code" },
+      { "id": "s2", "actionId": "focus_start", "cond": "always", "note": "Start focus timer" },
+      { "id": "s3", "actionId": "dnd_enable", "cond": "always", "note": "Silence distractions" }
+    ]
+  },
+  {
+    "id": "rt2",
+    "name": "Bedtime Routine",
+    "description": "Wind-down reminder and session lock.",
+    "trigger": "manual",
+    "schedule": "Daily 22:45",
+    "onFail": "stop",
+    "enabled": false,
+    "sample": false,
+    "runs": 0,
+    "steps": [
+      { "id": "s1", "actionId": "show_reminder", "cond": "always", "note": "Gentle evening reminder" },
+      { "id": "s2", "actionId": "lock_screen", "cond": "prev_ok", "note": "Lock screen" }
+    ]
+  },
+  {
+    "id": "rt3",
+    "name": "Entertainment Setup",
+    "description": "Open Media Hub and relax.",
+    "trigger": "manual",
+    "schedule": "",
+    "onFail": "continue",
+    "enabled": false,
+    "sample": false,
+    "runs": 0,
+    "steps": [
+      { "id": "s1", "actionId": "open_media_hub", "cond": "always", "note": "Open Media Hub drawer" }
+    ]
+  }
+]

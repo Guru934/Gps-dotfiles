@@ -77,6 +77,11 @@ def get_presets_path() -> Path:
     return get_state_dir() / "presets.json"
 
 
+def get_routines_path() -> Path:
+    """Return the path to routines.json."""
+    return get_state_dir() / "routines.json"
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON data to path using tempfile and os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1517,6 +1522,192 @@ def cmd_preset_activate(args: argparse.Namespace) -> int:
 
 
 # ==============================================================================
+# Routine Builder & Workflows (Phase 6)
+# ==============================================================================
+
+def load_default_routines() -> list[dict[str, Any]]:
+    """Load default workflow routines from configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-routines.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_routines(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load workflows from persistent state, seeding defaults if missing."""
+    target = path or get_routines_path()
+    if not target.exists():
+        defaults = load_default_routines()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "routines" in parsed and isinstance(parsed["routines"], list):
+            return parsed["routines"]
+        raise ValueError("Invalid routines structure")
+    except Exception as exc:
+        sys.stderr.write(f"warn: Corrupt routines.json ({exc}); backing up.\n")
+        backup = target.with_suffix(f".corrupt-{int(time.time())}.json")
+        try:
+            target.rename(backup)
+        except OSError:
+            pass
+        defaults = load_default_routines()
+        atomic_write_json(target, defaults)
+        return defaults
+
+
+def save_routines(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save routines atomically."""
+    target = path or get_routines_path()
+    atomic_write_json(target, items)
+
+
+def cmd_workflow_list(args: argparse.Namespace) -> int:
+    routines = load_routines()
+    sys.stdout.write(json.dumps({"ok": True, "routines": routines}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_workflow_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.workflow_json)
+        if not isinstance(data, dict):
+            raise ValueError("Workflow must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid workflow JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    workflow_id = str(data.get("id", "")).strip()
+    if not workflow_id or not SAFE_ID_RE.match(workflow_id):
+        workflow_id = f"rt_{int(time.time()*1000)}"
+        data["id"] = workflow_id
+
+    data["sample"] = False
+    if "steps" not in data or not isinstance(data["steps"], list):
+        data["steps"] = []
+    if "runs" not in data:
+        data["runs"] = 0
+
+    routines = load_routines()
+    existing_idx = next((i for i, r in enumerate(routines) if r.get("id") == workflow_id), None)
+    if existing_idx is not None:
+        routines[existing_idx] = data
+    else:
+        routines.append(data)
+
+    save_routines(routines)
+    sys.stdout.write(json.dumps({"ok": True, "workflow": data}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_workflow_delete(args: argparse.Namespace) -> int:
+    workflow_id = args.workflow_id.strip()
+    routines = load_routines()
+    new_routines = [r for r in routines if r.get("id") != workflow_id]
+    if len(new_routines) == len(routines):
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Workflow '{workflow_id}' not found."}) + "\n")
+        return 1
+
+    save_routines(new_routines)
+    sys.stdout.write(json.dumps({"ok": True, "id": workflow_id}) + "\n")
+    return 0
+
+
+def cmd_workflow_run(args: argparse.Namespace) -> int:
+    workflow_id = args.workflow_id.strip()
+    routines = load_routines()
+    target = next((r for r in routines if r.get("id") == workflow_id), None)
+    if not target:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Workflow '{workflow_id}' not found."}) + "\n")
+        return 1
+
+    name = target.get("name", workflow_id)
+    steps = target.get("steps", [])
+    on_fail = target.get("onFail", "stop")
+    executed_steps = []
+    prev_ok = True
+    overall_ok = True
+    stopped_early = False
+
+    for idx, step in enumerate(steps):
+        act_id = step.get("actionId", "")
+        cond = step.get("cond", "always")
+        note = step.get("note", "")
+
+        # Evaluate condition
+        if cond == "prev_ok" and not prev_ok:
+            executed_steps.append({"index": idx + 1, "action": act_id, "skipped": True, "reason": "Previous step failed"})
+            continue
+
+        ok, res = execute_action(
+            action_id=act_id,
+            params={},
+            dry_run=False,
+            confirmed=True,
+            trigger="Workflow",
+            automation=name,
+        )
+        prev_ok = ok
+        executed_steps.append({
+            "index": idx + 1,
+            "action": act_id,
+            "ok": ok,
+            "note": note,
+            "duration": res.get("duration", "0.00s"),
+            "details": res.get("stdout") or res.get("stderr") or res.get("details", "")
+        })
+
+        if not ok:
+            overall_ok = False
+            if on_fail == "stop":
+                stopped_early = True
+                break
+
+    # Update runs count
+    target["runs"] = int(target.get("runs", 0)) + 1
+    target["lastRun"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    target["lastResult"] = f"Executed {len(executed_steps)} step(s)" + (" (stopped on error)" if stopped_early else "")
+    save_routines(routines)
+
+    # Log to history
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": f"Workflow: {name}",
+        "trigger": "Manual",
+        "result": "completed" if overall_ok else "failed",
+        "duration": "0.10s",
+        "category": "Workflows",
+        "automation": name,
+        "details": f"Ran {len(executed_steps)} steps" + (" with errors" if not overall_ok else " successfully"),
+    }
+    append_history_event(event)
+    send_notification("GPS Workflow", f"Workflow '{name}' " + ("completed" if overall_ok else "failed"))
+
+    sys.stdout.write(json.dumps({
+        "ok": overall_ok,
+        "workflow": name,
+        "steps_executed": len(executed_steps),
+        "steps": executed_steps,
+        "event": event,
+    }, ensure_ascii=False) + "\n")
+    return 0 if overall_ok else 1
+
+
+# ==============================================================================
 # Main Entry Point & CLI Parser
 # ==============================================================================
 
@@ -1619,6 +1810,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_preset_act = preset_sub.add_parser("activate", help="Activate a workspace preset")
     p_preset_act.add_argument("preset_id", help="ID of preset to activate")
 
+    # 7. workflow subcommand
+    wf_parser = subparsers.add_parser("workflow", help="Routine Builder & Workflow operations")
+    wf_sub = wf_parser.add_subparsers(dest="wf_action", required=True)
+
+    wf_sub.add_parser("list", help="List registered workflows")
+
+    p_wf_save = wf_sub.add_parser("save", help="Save or update a workflow")
+    p_wf_save.add_argument("workflow_json", help="JSON string representing the workflow")
+
+    p_wf_del = wf_sub.add_parser("delete", help="Delete a workflow by id")
+    p_wf_del.add_argument("workflow_id", help="ID of workflow to delete")
+
+    p_wf_run = wf_sub.add_parser("run", help="Run a workflow sequentially")
+    p_wf_run.add_argument("workflow_id", help="ID of workflow to run")
+
     return parser
 
 
@@ -1683,6 +1889,16 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_preset_list(args)
         elif args.preset_action == "activate":
             return cmd_preset_activate(args)
+
+    elif args.subcommand == "workflow":
+        if args.wf_action == "list":
+            return cmd_workflow_list(args)
+        elif args.wf_action == "save":
+            return cmd_workflow_save(args)
+        elif args.wf_action == "delete":
+            return cmd_workflow_delete(args)
+        elif args.wf_action == "run":
+            return cmd_workflow_run(args)
 
     parser.print_help()
     return 1

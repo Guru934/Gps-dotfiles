@@ -2047,6 +2047,7 @@ Item {
                         Btn { kind: "ghost"; icon: "⌫"; text: "Delete"; onClicked: root.delRoutineAsk(rp.r) }
                         Spacer {}
                         Btn { icon: "◎"; text: "Preview"; onClicked: root.previewRoutine(rp.r) }
+                        Btn { icon: "▶"; text: "Run"; onClicked: root.workflowRunRequested(rp.r.id) }
                         Btn { kind: "primary"; icon: "✓"; text: "Save workflow"; onClicked: { root.workflowSaved(rp.r); root.notify("Workflow saved (UI only)", rp.r.name + " is stored in memory.", "ok") } }
                     }
                 }

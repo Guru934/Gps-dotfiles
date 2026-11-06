@@ -39,6 +39,8 @@ PACKAGE_BINARIES: Dict[str, List[str]] = {
     "awatcher-bundle": ["awatcher"],
     "wireplumber": ["wpctl", "wireplumber"],
     "libpulse": ["parec", "pacat"],
+    "kdeconnect": ["kdeconnect-cli", "kdeconnectd"],
+    "scrcpy": ["scrcpy"],
 }
 
 # Known alternative providers for interchangeable session roles

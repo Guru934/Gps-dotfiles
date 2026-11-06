@@ -469,3 +469,18 @@ The user has reviewed and confirmed the following technical decisions:
    - Browser: Brave Browser (`brave` / `brave-browser`)
 4. **Device Bridge scrcpy Options**: Audio forwarding enabled by default when launching `scrcpy` (no `--no-audio` flag).
 
+---
+
+## 9. Implementation Rollout Summary
+
+All planned phases have been implemented, tested, and verified on the `feature/toolbox-integration` branch:
+
+- **Phase 0 (Analysis & Approval)**: Complete architectural analysis and user decision sign-off.
+- **Phase 1 (Controller Wiring & Status Strip)**: `ToolboxBackend.qml` created, live system facts wired from Hyprland and OS release, `Super+T` keybind established, and contract verified.
+- **Phase 2 (Saved Space Persistence)**: Atomic JSON persistence in `~/.local/state/gps/toolbox/saved_space.json`, corrupt backup safeguards, URL launching via `xdg-open` and clipboard copy via `wl-copy`.
+- **Phase 3 (Action Whitelist Engine & Activity Journal)**: Whitelist-only execution via `config/toolbox-actions.json`, strict parameter validation, confirmation safety windows for power actions, and append-only activity journal in `history.jsonl`.
+- **Phase 4 (Device Bridge Integration)**: Asynchronous non-blocking KDE Connect D-Bus introspection, adb device discovery, scrcpy integration with audio forwarding, and shared link inbox management.
+- **Phase 5 (Automations & Workspace Presets)**: `systemd --user` timer and service compilation (`gps-auto-<id>.timer`), non-root systemd activation/removal, and preset activation for Coding, Study, Entertainment, Presentation, and Clean Desktop.
+- **Phase 6 (Routine Builder & Workflows)**: Multi-step workflow sequencing with conditional step execution (`always`, `prev_ok`), error policy control (`stop` vs `continue`), packaging manifests updated in `packages/optional.txt` and `scripts/gps-deps`, and full hermetic test coverage.
+
+
