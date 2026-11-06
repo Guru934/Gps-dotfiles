@@ -1,0 +1,86 @@
+[
+  {
+    "id": "p1",
+    "name": "Coding",
+    "description": "VS Code, Kitty terminal and Brave browser.",
+    "apps": ["VS Code", "Kitty", "Brave"],
+    "dnd": false,
+    "timer": "none",
+    "sample": false,
+    "actions": ["open_dev_ws"],
+    "layout": [
+      { "x": 0, "y": 0, "w": 0.55, "h": 1, "label": "VS CODE" },
+      { "x": 0.55, "y": 0, "w": 0.45, "h": 0.5, "label": "BRAVE" },
+      { "x": 0.55, "y": 0.5, "w": 0.45, "h": 0.5, "label": "KITTY" }
+    ]
+  },
+  {
+    "id": "p2",
+    "name": "Study",
+    "description": "Learning material beside a focus timer.",
+    "apps": ["Notes", "Focus Timer"],
+    "dnd": true,
+    "timer": "25",
+    "sample": false,
+    "actions": ["focus_start", "dnd_enable"],
+    "layout": [
+      { "x": 0, "y": 0, "w": 0.6, "h": 1, "label": "NOTES" },
+      { "x": 0.6, "y": 0, "w": 0.4, "h": 0.4, "label": "TIMER" },
+      { "x": 0.6, "y": 0.4, "w": 0.4, "h": 0.6, "label": "DOCS" }
+    ]
+  },
+  {
+    "id": "p3",
+    "name": "Entertainment",
+    "description": "Media in front, relaxing workspace.",
+    "apps": ["Media Hub"],
+    "dnd": false,
+    "timer": "none",
+    "sample": false,
+    "actions": ["open_media_hub"],
+    "layout": [
+      { "x": 0, "y": 0, "w": 0.65, "h": 1, "label": "MEDIA" },
+      { "x": 0.65, "y": 0, "w": 0.35, "h": 1, "label": "CHAT" }
+    ]
+  },
+  {
+    "id": "p4",
+    "name": "Presentation",
+    "description": "One fullscreen window, notifications muted.",
+    "apps": ["Slides"],
+    "dnd": true,
+    "timer": "none",
+    "sample": false,
+    "actions": ["dnd_enable"],
+    "layout": [
+      { "x": 0, "y": 0, "w": 1, "h": 1, "label": "FULLSCREEN" }
+    ]
+  },
+  {
+    "id": "p5",
+    "name": "Communication",
+    "description": "Chat, mail and calendar together.",
+    "apps": ["Chat", "Mail", "Calendar"],
+    "dnd": false,
+    "timer": "none",
+    "sample": false,
+    "actions": ["open_browser"],
+    "layout": [
+      { "x": 0, "y": 0, "w": 0.5, "h": 1, "label": "CHAT" },
+      { "x": 0.5, "y": 0, "w": 0.5, "h": 0.5, "label": "MAIL" },
+      { "x": 0.5, "y": 0.5, "w": 0.5, "h": 0.5, "label": "CAL" }
+    ]
+  },
+  {
+    "id": "p6",
+    "name": "Clean Desktop",
+    "description": "No windows, minimal distractions.",
+    "apps": [],
+    "dnd": true,
+    "timer": "none",
+    "sample": false,
+    "actions": ["dnd_enable"],
+    "layout": []
+  }
+]
+

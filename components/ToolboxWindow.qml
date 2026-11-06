@@ -117,6 +117,8 @@ FloatingWindow {
                 activityEvents: backend.activityEvents
                 devices: backend.devices
                 sharedLinks: backend.sharedLinks
+                automations: backend.automations
+                presets: backend.presets
             }
         }
     }

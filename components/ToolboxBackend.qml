@@ -47,6 +47,12 @@ Item {
     property var devices: []
     property var sharedLinks: []
 
+    // Automations persistent state (Phase 5)
+    property var automations: []
+
+    // Workspace Presets persistent state (Phase 5)
+    property var presets: []
+
     // Internal tracker for sysinfo line parser
     property int _sysInfoLine: 0
 
@@ -350,6 +356,153 @@ Item {
     }
 
     // --------------------------------------------------------------------------
+    // Automations & Presets background processes (Phase 5)
+    // --------------------------------------------------------------------------
+
+    Process {
+        id: listAutomationsProc
+        command: [root.toolboxScript, "automation", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.automations)) {
+                        root.automations = res.automations
+                        if (root.toolbox) root.toolbox.automations = res.automations
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: saveAutomationProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && res.automation) {
+                        root.notify("Automation Saved", "“" + res.automation.name + "” saved and systemd timer synced.", "ok")
+                        root.reloadAutomations()
+                    } else if (res && !res.ok) {
+                        root.notify("Failed to Save Automation", res.error || "Unknown error", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: deleteAutomationProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        root.notify("Automation Deleted", "Automation removed and timer disabled.", "info")
+                        root.reloadAutomations()
+                    } else if (res && !res.ok) {
+                        root.notify("Delete Failed", res.error || "Unknown error", "err")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: autoStateProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        const isEn = res.state === "enabled"
+                        root.notify(isEn ? "Automation Enabled" : "Automation Paused",
+                                    isEn ? ("Systemd timer scheduled (" + (res.nextRun || "active") + ")") : "Timer stopped.",
+                                    isEn ? "ok" : "info")
+                        root.reloadAutomations()
+                    } else if (res && !res.ok) {
+                        root.notify("State Change Failed", res.error || "Unknown error", "err")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: autoTestProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok) {
+                        root.notify("Automation Test", res.result || "Test run succeeded.", "ok")
+                        root.reloadAutomations()
+                        root.reloadActivity()
+                    } else if (res && !res.ok) {
+                        root.notify("Automation Test Failed", res.result || res.error || "Actions failed", "err")
+                        root.playSound("warn")
+                        root.reloadAutomations()
+                        root.reloadActivity()
+                    }
+                } catch (e) {
+                    root.reloadAutomations()
+                    root.reloadActivity()
+                }
+            }
+        }
+    }
+
+    Process {
+        id: listPresetsProc
+        command: [root.toolboxScript, "preset", "list"]
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && Array.isArray(res.presets)) {
+                        root.presets = res.presets
+                        if (root.toolbox) root.toolbox.presets = res.presets
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    Process {
+        id: presetProc
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                try {
+                    const res = JSON.parse(text)
+                    if (res && res.ok && res.preset) {
+                        root.notify("Preset Activated", "“" + res.preset.name + "” activated.", "ok")
+                        root.reloadActivity()
+                    } else if (res && !res.ok) {
+                        root.notify("Preset Failed", res.error || "Activation failed", "err")
+                        root.playSound("warn")
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
     // Helper functions
     // --------------------------------------------------------------------------
 
@@ -380,6 +533,18 @@ Item {
     function reloadSharedLinks() {
         if (!listLinksProc.running) {
             listLinksProc.running = true
+        }
+    }
+
+    function reloadAutomations() {
+        if (!listAutomationsProc.running) {
+            listAutomationsProc.running = true
+        }
+    }
+
+    function reloadPresets() {
+        if (!listPresetsProc.running) {
+            listPresetsProc.running = true
         }
     }
 
@@ -433,6 +598,36 @@ Item {
         dismissLinkProc.running = true
     }
 
+    function saveAutomation(automation) {
+        if (!automation) return
+        saveAutomationProc.command = [root.toolboxScript, "automation", "save", JSON.stringify(automation)]
+        saveAutomationProc.running = true
+    }
+
+    function deleteAutomation(id) {
+        if (!id) return
+        deleteAutomationProc.command = [root.toolboxScript, "automation", "delete", String(id)]
+        deleteAutomationProc.running = true
+    }
+
+    function setAutomationState(id, enabled) {
+        if (!id) return
+        autoStateProc.command = [root.toolboxScript, "automation", "set-state", String(id), enabled ? "enabled" : "paused"]
+        autoStateProc.running = true
+    }
+
+    function testAutomation(id) {
+        if (!id) return
+        autoTestProc.command = [root.toolboxScript, "automation", "test", String(id)]
+        autoTestProc.running = true
+    }
+
+    function activatePreset(id) {
+        if (!id) return
+        presetProc.command = [root.toolboxScript, "preset", "activate", String(id)]
+        presetProc.running = true
+    }
+
     // Sound effect trigger (reuses existing gps-sound script)
     function playSound(eventKind) {
         if (!root.repoRoot) return
@@ -453,6 +648,8 @@ Item {
         root.reloadActivity()
         root.reloadDevices()
         root.reloadSharedLinks()
+        root.reloadAutomations()
+        root.reloadPresets()
     }
 
     onToolboxChanged: {
@@ -463,11 +660,15 @@ Item {
             if (root.activityEvents.length > 0) root.toolbox.activityEvents = root.activityEvents
             if (root.devices.length > 0) root.toolbox.devices = root.devices
             if (root.sharedLinks.length > 0) root.toolbox.sharedLinks = root.sharedLinks
+            if (root.automations.length > 0) root.toolbox.automations = root.automations
+            if (root.presets.length > 0) root.toolbox.presets = root.presets
             root.reloadSavedSpace()
             root.reloadActions()
             root.reloadActivity()
             root.reloadDevices()
             root.reloadSharedLinks()
+            root.reloadAutomations()
+            root.reloadPresets()
         }
     }
 
@@ -508,27 +709,27 @@ Item {
         }
 
         function onAutomationSaved(automation) {
-            root.notify("Automations", "Saving automation '" + (automation && automation.name ? automation.name : "") + "' will be wired in Phase 5.", "info")
+            root.saveAutomation(automation)
             root.playSound("notice")
         }
 
         function onAutomationDeleted(id) {
-            root.notify("Automations", "Deleting automation will be wired in Phase 5.", "info")
+            root.deleteAutomation(id)
             root.playSound("notice")
         }
 
         function onAutomationStateChangeRequested(id, enabled) {
-            root.notify("Automations", (enabled ? "Enabling" : "Pausing") + " automation will be wired in Phase 5.", "info")
+            root.setAutomationState(id, enabled)
             root.playSound("notice")
         }
 
         function onAutomationTestRequested(id) {
-            root.notify("Automations", "Testing automation '" + id + "' will be wired in Phase 5.", "info")
+            root.testAutomation(id)
             root.playSound("action")
         }
 
         function onScheduleCancelRequested(id) {
-            root.notify("Automations", "Cancelling schedule '" + id + "' will be wired in Phase 5.", "warn")
+            root.setAutomationState(id, false)
             root.playSound("warn")
         }
 
@@ -543,7 +744,7 @@ Item {
         }
 
         function onPresetActivateRequested(id) {
-            root.notify("Workspace Presets", "Activating preset '" + id + "' will be wired in Phase 5.", "info")
+            root.activatePreset(id)
             root.playSound("action")
         }
 

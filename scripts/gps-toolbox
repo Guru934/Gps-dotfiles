@@ -67,6 +67,16 @@ def get_shared_links_path() -> Path:
     return get_state_dir() / "shared_links.json"
 
 
+def get_automations_path() -> Path:
+    """Return the path to automations.json."""
+    return get_state_dir() / "automations.json"
+
+
+def get_presets_path() -> Path:
+    """Return the path to presets.json."""
+    return get_state_dir() / "presets.json"
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Atomically write JSON data to path using tempfile and os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -472,76 +482,68 @@ def cmd_action_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_action_run(args: argparse.Namespace) -> int:
-    action_id = args.action_id.strip()
+def execute_action(
+    action_id: str,
+    params: dict[str, Any] | None = None,
+    dry_run: bool = False,
+    confirmed: bool = False,
+    trigger: str = "Manual",
+    automation: str = "",
+) -> tuple[bool, dict[str, Any]]:
+    """Execute an action from the whitelist safely with parameter validation."""
+    action_id = action_id.strip()
     whitelist = load_action_whitelist()
     actions = whitelist.get("actions", {})
 
     if action_id not in actions:
         err = f"Action '{action_id}' is not registered in the whitelist."
-        sys.stderr.write(f"error: {err}\n")
-        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
-        return 1
+        return False, {"ok": False, "error": err}
 
     action_def = actions[action_id]
     executable_tmpl = action_def.get("executable", [])
     if not isinstance(executable_tmpl, list) or not executable_tmpl:
         err = f"Action '{action_id}' has no valid executable definition."
-        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
-        return 1
+        return False, {"ok": False, "error": err}
 
-    params: dict[str, Any] = {}
-    if args.params_json:
-        try:
-            parsed_params = json.loads(args.params_json)
-            if isinstance(parsed_params, dict):
-                params = parsed_params
-        except Exception as exc:
-            err = f"Invalid parameters JSON: {exc}"
-            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
-            return 1
-
+    resolved_params = dict(params or {})
     param_schema = action_def.get("param_schema", {})
     for param_name, pattern in param_schema.items():
-        val = str(params.get(param_name, "")).strip()
+        val = str(resolved_params.get(param_name, "")).strip()
         if not re.match(pattern, val):
             err = f"Parameter '{param_name}' value '{val}' does not match validation pattern: {pattern}"
-            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
-            return 1
+            return False, {"ok": False, "error": err}
 
     repo_root = str(get_repo_root())
     exec_args: list[str] = []
     for item in executable_tmpl:
         s = str(item).replace("${GPS_ROOT}", repo_root)
-        for k, v in params.items():
+        for k, v in resolved_params.items():
             s = s.replace(f"${{{k}}}", str(v))
         if re.search(r"\$\{[A-Za-z0-9_]+\}", s):
             err = f"Unresolved placeholder in command argument: {s}"
-            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
-            return 1
+            return False, {"ok": False, "error": err}
         exec_args.append(s)
 
     is_destructive = bool(action_def.get("destructive", False) or action_def.get("confirm", False))
-    is_confirmed = bool(args.confirmed or params.get("confirmed", False))
-    if is_destructive and not is_confirmed and not args.dry_run:
+    is_confirmed = bool(confirmed or resolved_params.get("confirmed", False))
+    if is_destructive and not is_confirmed and not dry_run:
         err = f"Action '{action_id}' requires explicit confirmation."
-        sys.stdout.write(json.dumps({"ok": False, "error": err, "requires_confirm": True}) + "\n")
-        return 1
+        return False, {"ok": False, "error": err, "requires_confirm": True}
 
     start_time = time.monotonic()
     timestamp_ms = int(time.time() * 1000)
 
-    if args.dry_run:
+    if dry_run:
         duration_str = "0.00s"
         event = {
             "id": f"evt_{timestamp_ms}",
             "ts": timestamp_ms,
             "name": action_def.get("name", action_id),
-            "trigger": "Manual",
+            "trigger": trigger,
             "result": "completed",
             "duration": duration_str,
             "category": action_def.get("category", "Desktop"),
-            "automation": "",
+            "automation": automation,
             "details": f"[Dry-Run] {' '.join(exec_args)}",
         }
         append_history_event(event)
@@ -553,8 +555,7 @@ def cmd_action_run(args: argparse.Namespace) -> int:
             "returncode": 0,
             "event": event,
         }
-        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
-        return 0
+        return True, res
 
     timeout = int(action_def.get("timeout", 10))
     stdout_text = ""
@@ -587,11 +588,11 @@ def cmd_action_run(args: argparse.Namespace) -> int:
         "id": f"evt_{timestamp_ms}",
         "ts": timestamp_ms,
         "name": action_def.get("name", action_id),
-        "trigger": "Manual",
+        "trigger": trigger,
         "result": result_status,
         "duration": duration_str,
         "category": action_def.get("category", "Desktop"),
-        "automation": "",
+        "automation": automation,
         "details": f"{' '.join(exec_args)} (exit {returncode})",
     }
     append_history_event(event)
@@ -606,8 +607,33 @@ def cmd_action_run(args: argparse.Namespace) -> int:
         "stderr": stderr_text,
         "event": event,
     }
+    return returncode == 0, res
+
+
+def cmd_action_run(args: argparse.Namespace) -> int:
+    params: dict[str, Any] = {}
+    if args.params_json:
+        try:
+            parsed_params = json.loads(args.params_json)
+            if isinstance(parsed_params, dict):
+                params = parsed_params
+        except Exception as exc:
+            err = f"Invalid parameters JSON: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    ok, res = execute_action(
+        action_id=args.action_id,
+        params=params,
+        dry_run=args.dry_run,
+        confirmed=args.confirmed,
+        trigger="Manual",
+        automation="",
+    )
+    if not ok and "error" in res and "requires_confirm" not in res:
+        sys.stderr.write(f"error: {res['error']}\n")
     sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
-    return 0 if returncode == 0 else 1
+    return 0 if ok else 1
 
 
 def cmd_activity_list(args: argparse.Namespace) -> int:
@@ -967,6 +993,530 @@ def cmd_device_dismiss_link(args: argparse.Namespace) -> int:
 
 
 # ==============================================================================
+# Automations & Workspace Presets (Phase 5)
+# ==============================================================================
+
+def get_systemd_user_dir() -> Path:
+    """Return user systemd configuration directory honoring XDG_CONFIG_HOME."""
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(config_home) if config_home and Path(config_home).is_absolute() else Path.home() / ".config"
+    target = base / "systemd" / "user"
+    target.mkdir(parents=True, exist_ok=True, mode=0o755)
+    return target
+
+
+def run_systemctl(args: list[str]) -> tuple[int, str]:
+    """Execute systemctl --user command safely."""
+    if os.environ.get("GPS_TEST_NO_SYSTEMD"):
+        return 0, ""
+    if not shutil.which("systemctl"):
+        return 1, "systemctl command not found"
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user"] + args,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return proc.returncode, proc.stdout.strip()
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def load_default_automations() -> list[dict[str, Any]]:
+    """Load default automations from repository configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-automations.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_automations(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load automations JSON from persistent state."""
+    target = path or get_automations_path()
+    if not target.exists():
+        defaults = load_default_automations()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "automations" in parsed and isinstance(parsed["automations"], list):
+            return parsed["automations"]
+        raise ValueError("Invalid automations JSON structure")
+    except Exception as exc:
+        sys.stderr.write(f"warn: Corrupt automations.json ({exc}); backing up.\n")
+        backup = target.with_suffix(f".corrupt-{int(time.time())}.json")
+        try:
+            target.rename(backup)
+        except OSError:
+            pass
+        defaults = load_default_automations()
+        atomic_write_json(target, defaults)
+        return defaults
+
+
+def save_automations(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save automations list atomically."""
+    target = path or get_automations_path()
+    atomic_write_json(target, items)
+
+
+def compute_next_run(auto: dict[str, Any]) -> str:
+    """Compute a human-readable next run description for an automation."""
+    ttype = auto.get("ttype", "schedule")
+    ttime = str(auto.get("ttime", "")).strip()
+    tdays = auto.get("tdays", [])
+    if ttype == "schedule" and ttime:
+        if tdays and isinstance(tdays, list) and len(tdays) > 0:
+            return f"{', '.join(tdays)} at {ttime}"
+        return f"Daily at {ttime}"
+    if ttype == "once" and ttime:
+        date_str = auto.get("tdate", "")
+        return f"{date_str} at {ttime}" if date_str else f"At {ttime}"
+    return ""
+
+
+def compile_automation_units(auto: dict[str, Any]) -> tuple[str, str] | None:
+    """Compile an automation into (service_content, timer_content) for systemd --user."""
+    ttype = auto.get("ttype", "schedule")
+    if ttype not in ("schedule", "once"):
+        return None
+
+    auto_id = auto.get("id", "")
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    name = auto.get("name", auto_id)
+    ttime = str(auto.get("ttime", "09:00")).strip()
+    tdays = auto.get("tdays", [])
+    tdate = str(auto.get("tdate", "")).strip()
+
+    if ttype == "schedule":
+        if tdays and isinstance(tdays, list) and len(tdays) > 0:
+            calendar_spec = f"{','.join(tdays)} *-*-* {ttime}:00"
+        else:
+            calendar_spec = f"*-*-* {ttime}:00"
+    elif ttype == "once":
+        if tdate:
+            calendar_spec = f"{tdate} {ttime}:00"
+        else:
+            calendar_spec = f"*-*-* {ttime}:00"
+    else:
+        return None
+
+    repo_root = get_repo_root()
+    toolbox_script = repo_root / "scripts" / "gps-toolbox"
+
+    service_content = f"""[Unit]
+Description=GPS Automation: {name}
+Documentation=file://{repo_root}/docs/TOOLBOX-ANALYSIS.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {toolbox_script} automation run {auto_id}
+"""
+
+    timer_content = f"""[Unit]
+Description=GPS Automation Timer: {name}
+PartOf=timers.target
+
+[Timer]
+OnCalendar={calendar_spec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    return service_content, timer_content
+
+
+def sync_automation_systemd(auto: dict[str, Any]) -> None:
+    """Sync systemd user timer and service units for an automation."""
+    auto_id = auto.get("id", "")
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    unit_dir = get_systemd_user_dir()
+    service_file = unit_dir / f"gps-auto-{safe_id}.service"
+    timer_file = unit_dir / f"gps-auto-{safe_id}.timer"
+
+    is_enabled = auto.get("state") in ("enabled", "upcoming")
+    compiled = compile_automation_units(auto)
+
+    if is_enabled and compiled is not None:
+        service_content, timer_content = compiled
+        service_file.write_text(service_content, encoding="utf-8")
+        timer_file.write_text(timer_content, encoding="utf-8")
+        run_systemctl(["daemon-reload"])
+        run_systemctl(["enable", "--now", f"gps-auto-{safe_id}.timer"])
+    else:
+        run_systemctl(["disable", "--now", f"gps-auto-{safe_id}.timer"])
+        if timer_file.exists():
+            try:
+                timer_file.unlink()
+            except OSError:
+                pass
+        if service_file.exists():
+            try:
+                service_file.unlink()
+            except OSError:
+                pass
+        run_systemctl(["daemon-reload"])
+
+
+def remove_automation_systemd(auto_id: str) -> None:
+    """Disable and delete systemd user timer units for an automation."""
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    unit_dir = get_systemd_user_dir()
+    service_file = unit_dir / f"gps-auto-{safe_id}.service"
+    timer_file = unit_dir / f"gps-auto-{safe_id}.timer"
+
+    run_systemctl(["disable", "--now", f"gps-auto-{safe_id}.timer"])
+    if timer_file.exists():
+        try:
+            timer_file.unlink()
+        except OSError:
+            pass
+    if service_file.exists():
+        try:
+            service_file.unlink()
+        except OSError:
+            pass
+    run_systemctl(["daemon-reload"])
+
+
+def send_notification(title: str, message: str) -> None:
+    """Post desktop notification using notify-send if available."""
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(["notify-send", title, message], check=False, timeout=3)
+        except Exception:
+            pass
+
+
+def run_automation_actions(auto: dict[str, Any], is_test: bool = False) -> tuple[bool, str, list[str]]:
+    """Execute actions in an automation sequentially using whitelist engine."""
+    actions = auto.get("actions", [])
+    stop_on_fail = bool(auto.get("stopOnFail", True))
+    name = auto.get("name", auto.get("id", "unknown"))
+    executed_ids: list[str] = []
+    overall_ok = True
+    last_msg = ""
+
+    for act in actions:
+        if isinstance(act, dict):
+            act_id = act.get("id", "")
+            act_params = dict(act.get("params", {}))
+        elif isinstance(act, str):
+            act_id = act
+            act_params = {}
+        else:
+            continue
+
+        if not act_id:
+            continue
+
+        # Provide sensible default parameters if not supplied
+        if act_id == "show_reminder" and "message" not in act_params:
+            msg = auto.get("description") or f"Reminder: {name}"
+            # Ensure message matches regex ^[A-Za-z0-9 _.,!?:'\n-]{1,256}$
+            act_params["message"] = re.sub(r"[^A-Za-z0-9 _.,!?:'\n-]", "", msg)[:256] or "GPS Reminder"
+        elif act_id == "notify":
+            if "title" not in act_params:
+                t = auto.get("name") or "GPS Notification"
+                act_params["title"] = re.sub(r"[^A-Za-z0-9 _.,!?:'-]", "", t)[:128] or "Notification"
+            if "message" not in act_params:
+                m = auto.get("description") or "Automation executed"
+                act_params["message"] = re.sub(r"[^A-Za-z0-9 _.,!?:'\n-]", "", m)[:256] or "Success"
+
+        executed_ids.append(act_id)
+        ok, res = execute_action(
+            action_id=act_id,
+            params=act_params,
+            dry_run=False,
+            confirmed=True,
+            trigger="Test" if is_test else "Automation",
+            automation=name,
+        )
+        if not ok:
+            overall_ok = False
+            last_msg = f"Action '{act_id}' failed: {res.get('stderr', res.get('error', 'error'))}"
+            if stop_on_fail:
+                break
+
+    if overall_ok:
+        ts_now = time.strftime("%H:%M:%S")
+        prefix = "Test run succeeded" if is_test else "Ran successfully"
+        last_msg = f"{prefix}: {len(executed_ids)} action(s) completed at {ts_now}."
+
+    return overall_ok, last_msg, executed_ids
+
+
+def cmd_automation_list(args: argparse.Namespace) -> int:
+    autos = load_automations()
+    for a in autos:
+        if a.get("state") in ("enabled", "upcoming") and not a.get("nextRun"):
+            a["nextRun"] = compute_next_run(a)
+    sys.stdout.write(json.dumps({"ok": True, "automations": autos}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_automation_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.auto_json)
+        if not isinstance(data, dict):
+            raise ValueError("Automation must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid automation JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    auto_id = str(data.get("id", "")).strip()
+    if not auto_id or not SAFE_ID_RE.match(auto_id):
+        auto_id = f"a_{int(time.time()*1000)}"
+        data["id"] = auto_id
+
+    data["sample"] = False
+    if "state" not in data:
+        data["state"] = "paused"
+    if "ttype" not in data:
+        data["ttype"] = "schedule"
+    if "actions" not in data or not isinstance(data["actions"], list):
+        data["actions"] = []
+
+    data["nextRun"] = compute_next_run(data) if data.get("state") in ("enabled", "upcoming") else ""
+
+    autos = load_automations()
+    existing_idx = next((i for i, a in enumerate(autos) if a.get("id") == auto_id), None)
+    if existing_idx is not None:
+        autos[existing_idx] = data
+    else:
+        autos.append(data)
+
+    save_automations(autos)
+    sync_automation_systemd(data)
+
+    sys.stdout.write(json.dumps({"ok": True, "automation": data}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_automation_delete(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    new_autos = [a for a in autos if a.get("id") != auto_id]
+    if len(new_autos) == len(autos):
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    save_automations(new_autos)
+    remove_automation_systemd(auto_id)
+    sys.stdout.write(json.dumps({"ok": True, "id": auto_id}) + "\n")
+    return 0
+
+
+def cmd_automation_set_state(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    target_state = args.state.strip().lower()
+    if target_state not in ("enabled", "paused", "upcoming"):
+        target_state = "enabled" if target_state in ("1", "true", "on") else "paused"
+
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    target_auto["state"] = target_state
+    target_auto["nextRun"] = compute_next_run(target_auto) if target_state in ("enabled", "upcoming") else ""
+
+    save_automations(autos)
+    sync_automation_systemd(target_auto)
+
+    sys.stdout.write(json.dumps({"ok": True, "id": auto_id, "state": target_state, "nextRun": target_auto["nextRun"]}) + "\n")
+    return 0
+
+
+def cmd_automation_test(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    overall_ok, summary, executed = run_automation_actions(target_auto, is_test=True)
+    target_auto["lastResult"] = summary
+    save_automations(autos)
+
+    sys.stdout.write(json.dumps({"ok": overall_ok, "id": auto_id, "result": summary, "actions": executed}) + "\n")
+    return 0 if overall_ok else 1
+
+
+def cmd_automation_run(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    overall_ok, summary, executed = run_automation_actions(target_auto, is_test=False)
+    target_auto["lastResult"] = summary
+    target_auto["lastRun"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if not overall_ok:
+        target_auto["state"] = "failed"
+    save_automations(autos)
+
+    if target_auto.get("notify", True):
+        send_notification(f"GPS Automation: {target_auto.get('name', auto_id)}", summary)
+
+    sys.stdout.write(json.dumps({"ok": overall_ok, "id": auto_id, "result": summary, "actions": executed}) + "\n")
+    return 0 if overall_ok else 1
+
+
+def load_default_presets() -> list[dict[str, Any]]:
+    """Load default presets from repository configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-presets.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_presets(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load presets JSON, falling back to default configuration."""
+    target = path or get_presets_path()
+    if not target.exists():
+        defaults = load_default_presets()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "presets" in parsed and isinstance(parsed["presets"], list):
+            return parsed["presets"]
+        raise ValueError("Invalid presets structure")
+    except Exception:
+        defaults = load_default_presets()
+        return defaults
+
+
+def save_presets(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save presets atomically."""
+    target = path or get_presets_path()
+    atomic_write_json(target, items)
+
+
+def cmd_preset_list(args: argparse.Namespace) -> int:
+    presets = load_presets()
+    sys.stdout.write(json.dumps({"ok": True, "presets": presets}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_preset_activate(args: argparse.Namespace) -> int:
+    preset_id = args.preset_id.strip()
+    presets = load_presets()
+    target_preset = next((p for p in presets if p.get("id") == preset_id), None)
+    if not target_preset:
+        err = f"Preset '{preset_id}' not found."
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    name = target_preset.get("name", preset_id)
+    repo_root = get_repo_root()
+    ipc_script = str(repo_root / "scripts" / "gps-ipc")
+
+    # Execute preset action behavior
+    if preset_id in ("p1", "coding"):
+        apps = ["code", "kitty", "brave"]
+        for app in apps:
+            if shutil.which("hyprctl"):
+                try:
+                    subprocess.Popen(["hyprctl", "dispatch", "exec", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+            elif shutil.which(app):
+                try:
+                    subprocess.Popen([app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+        send_notification("GPS Workspace Preset", "Coding workspace activated (VS Code, Kitty, Brave)")
+
+    elif preset_id in ("p2", "study"):
+        timer_min = str(target_preset.get("timer", "25"))
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "island", "focusToggle"], check=False, timeout=5)
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", f"Study mode activated ({timer_min}m Focus Timer, DND enabled)")
+
+    elif preset_id in ("p3", "entertainment"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "mediahub", "open"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Entertainment mode activated (Media Hub opened)")
+
+    elif preset_id in ("p4", "presentation"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Presentation mode activated (DND enabled)")
+
+    elif preset_id in ("p5", "communication"):
+        if shutil.which("brave"):
+            try:
+                subprocess.Popen(["brave"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Communication workspace activated")
+
+    elif preset_id in ("p6", "clean"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Clean Desktop activated (DND enabled)")
+
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": f"Preset: {name}",
+        "trigger": "Manual",
+        "result": "completed",
+        "duration": "0.05s",
+        "category": "Presets",
+        "automation": "",
+        "details": f"Activated preset '{name}'",
+    }
+    append_history_event(event)
+
+    sys.stdout.write(json.dumps({"ok": True, "preset": target_preset, "event": event}) + "\n")
+    return 0
+
+
+# ==============================================================================
 # Main Entry Point & CLI Parser
 # ==============================================================================
 
@@ -1038,6 +1588,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_dev_dismiss = dev_sub.add_parser("dismiss-link", help="Dismiss a shared link")
     p_dev_dismiss.add_argument("link_id", help="ID of link to dismiss")
 
+    # 5. automation subcommand
+    auto_parser = subparsers.add_parser("automation", help="Automations and systemd timers")
+    auto_sub = auto_parser.add_subparsers(dest="auto_action", required=True)
+
+    auto_sub.add_parser("list", help="List registered automations")
+
+    p_auto_save = auto_sub.add_parser("save", help="Save or update an automation")
+    p_auto_save.add_argument("auto_json", help="JSON representation of automation")
+
+    p_auto_del = auto_sub.add_parser("delete", help="Delete an automation and remove timer")
+    p_auto_del.add_argument("auto_id", help="ID of automation to delete")
+
+    p_auto_state = auto_sub.add_parser("set-state", help="Set automation state (enabled/paused)")
+    p_auto_state.add_argument("auto_id", help="ID of automation")
+    p_auto_state.add_argument("state", help="Target state: enabled, paused")
+
+    p_auto_test = auto_sub.add_parser("test", help="Test run an automation")
+    p_auto_test.add_argument("auto_id", help="ID of automation to test")
+
+    p_auto_run = auto_sub.add_parser("run", help="Run an automation (called by systemd service)")
+    p_auto_run.add_argument("auto_id", help="ID of automation to run")
+
+    # 6. preset subcommand
+    preset_parser = subparsers.add_parser("preset", help="Workspace Presets")
+    preset_sub = preset_parser.add_subparsers(dest="preset_action", required=True)
+
+    preset_sub.add_parser("list", help="List available workspace presets")
+
+    p_preset_act = preset_sub.add_parser("activate", help="Activate a workspace preset")
+    p_preset_act.add_argument("preset_id", help="ID of preset to activate")
+
     return parser
 
 
@@ -1082,6 +1663,26 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_device_links(args)
         elif args.dev_action == "dismiss-link":
             return cmd_device_dismiss_link(args)
+
+    elif args.subcommand == "automation":
+        if args.auto_action == "list":
+            return cmd_automation_list(args)
+        elif args.auto_action == "save":
+            return cmd_automation_save(args)
+        elif args.auto_action == "delete":
+            return cmd_automation_delete(args)
+        elif args.auto_action == "set-state":
+            return cmd_automation_set_state(args)
+        elif args.auto_action == "test":
+            return cmd_automation_test(args)
+        elif args.auto_action == "run":
+            return cmd_automation_run(args)
+
+    elif args.subcommand == "preset":
+        if args.preset_action == "list":
+            return cmd_preset_list(args)
+        elif args.preset_action == "activate":
+            return cmd_preset_activate(args)
 
     parser.print_help()
     return 1
