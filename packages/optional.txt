@@ -46,6 +46,8 @@ pipewire-pulse [feature] # PulseAudio daemon replacement for PipeWire audio spec
 hyprlock [feature] # Hyprland screen lock utility invoked by scripts/gps-lock
 hypridle [feature] # Hyprland idle daemon managed by scripts/gps-idle for display sleep policies
 python-pillow [feature] # Image processing library used by set_wallpaper.py for palette extraction
+kdeconnect [feature] # Multi-device synchronization daemon powering GPS Toolbox Device Bridge
+scrcpy [feature] # High-performance Android screen mirroring and control for GPS Toolbox
 
 # Typography & Glyphs
 ttf-jetbrains-mono-nerd [feature] # Primary monospace font and Nerd Font symbol glyphs for all UI icons

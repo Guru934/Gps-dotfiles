@@ -309,6 +309,16 @@ class DoctorCliContractTests(HermeticTestCase):
         self.assertIn("secrets-service", check_names)
         self.assertIn("system-tray", check_names)
         self.assertIn("notifications", check_names)
+        self.assertIn("gps-bridge", check_names)
+
+    def test_gps_bridge_doctor_check(self):
+        """Verifies gps-doctor checks the GPS Bridge health (whitelist, describe, and status)."""
+        res = self.hermetic.run([str(DOCTOR_SCRIPT), "--json"], capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        bridge = next((c for c in data["checks"] if c["name"] == "gps-bridge"), None)
+        self.assertIsNotNone(bridge, "gps-bridge check must be present in doctor checks")
+        self.assertEqual(bridge.get("status"), "OK")
+        self.assertIn("voice-accessible actions", bridge.get("details", ""))
 
     def test_gps_ipc_doctor_command(self):
         res = self.hermetic.run([str(GPS_IPC_SCRIPT), "health", "--json"], capture_output=True, text=True)

@@ -21,7 +21,8 @@
 5. [Directory & File Organization](#5-directory--file-organization)
 6. [Critical Workarounds & System Invariants](#6-critical-workarounds--system-invariants)
 7. [How to Launch & Restart](#7-how-to-launch--restart)
-8. [Verification Snapshot](#8-verification-snapshot)
+8. [GPS Bridge: Voice Assistant Desktop Integration](#8-gps-bridge-voice-assistant-desktop-integration)
+9. [Verification Snapshot](#9-verification-snapshot)
 
 ---
 
@@ -373,7 +374,23 @@ QS_LOG_LEVEL=debug quickshell -p <path-to-gps-repo>/shell.qml
 
 ---
 
-## 8. Verification Snapshot (2026-10-18)
+## 8. GPS Bridge: Voice Assistant Desktop Integration
+
+The GPS desktop provides a hardened, whitelist-driven RPC and introspection layer for voice assistants (such as `cat-talker` / Chibi):
+
+- **Desktop Introspection (`gps-toolbox status --json`)**: Conversational JSON state aggregating workspaces, active application class, DND mode, focus session remaining time, volume, brightness, wallpaper, screen recording, and phone device connectivity.
+- **Action Catalog (`gps-toolbox describe --json`)**: Action discovery API exposing action IDs, display titles, risk levels (`safe`, `medium`, `destructive`), parameter regex schemas, and security flags (`assistant_allowed`, `ui_only`).
+- **Action Execution (`gps-toolbox action run <id>`)**:
+  - Requires `assistant_allowed: true` for `--source assistant`. Power actions (`suspend`, `reboot`, `shutdown`) are permanently blocked from the assistant.
+  - Medium-risk actions (`lock_screen`, `record`, `scrcpy_launch`) require spoken voice confirmation (`--confirmed`).
+  - Session taint enforcement: when `--tainted` is passed, non-UI actions are rejected (dual-layer defense-in-depth).
+  - Parameter validation: values must match the action's regex `param_schema`.
+  - All actions are logged to `~/.config/quickshell/history.jsonl` with full caller attribution (`source: "assistant"` or `"manual"`).
+- **Diagnostics (`gps-doctor --json`)**: Audits the bridge health, verifying repository resolution, whitelist integrity, and status/describe functional readiness.
+
+---
+
+## 9. Verification Snapshot (2026-10-18)
 
 - `qmllint` over every `.qml`: 0 errors. Python scripts compile; fish/bash scripts pass syntax checks.
 - Live E2E on the production config: drawer open/close (Super+D, IPC, edge sensor with 800ms re-arm), all four tabs rendered with live data, dashboard/popup mutual exclusion both directions, Super+N / Super+W / Super+comma binds (previously dead — see invariant 6), Print → slurp → Esc cancel (nothing written, swappy never spawned), spectrum process lifecycle 1 → 0 on pane unload, NotifCenter open/close, 0 QML runtime errors in the final shell log.

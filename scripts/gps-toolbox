@@ -1,0 +1,2378 @@
+#!/usr/bin/env python3
+"""GPS Toolbox CLI and backend helper.
+
+Provides persistent state management, action whitelist execution, device bridge
+integration, and system integration for the GPS Toolbox desktop surface.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
+DEFAULT_COLLECTIONS = ["Development", "Linux", "Websites", "Personal"]
+MAX_HISTORY_ENTRIES = 5000
+
+VALID_ITEM_TYPES = {"bookmark", "note", "snippet"}
+VALID_TRUST_LEVELS = {"", "reviewed", "needs-review", "restricted"}
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-.:]{0,63}\Z")
+
+
+def get_repo_root() -> Path:
+    """Return the GPS repository root directory."""
+    configured = os.environ.get("GPS_ROOT") or os.environ.get("GPS_DESKTOP_ROOT")
+    if configured and Path(configured).is_dir():
+        return Path(configured).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def get_config_dir() -> Path:
+    """Return user configuration directory honoring XDG_CONFIG_HOME."""
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(config_home) if config_home and Path(config_home).is_absolute() else Path.home() / ".config"
+    return base / "gps"
+
+
+def get_state_dir() -> Path:
+    """Return the state directory for GPS Toolbox honoring XDG_STATE_HOME."""
+    state_home = os.environ.get("XDG_STATE_HOME")
+    base = Path(state_home) if state_home and Path(state_home).is_absolute() else Path.home() / ".local" / "state"
+    target = base / "gps" / "toolbox"
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return target
+
+
+def get_saved_space_path() -> Path:
+    """Return the path to saved_space.json."""
+    return get_state_dir() / "saved_space.json"
+
+
+def get_history_path() -> Path:
+    """Return the path to history.jsonl."""
+    return get_state_dir() / "history.jsonl"
+
+
+def get_shared_links_path() -> Path:
+    """Return the path to shared_links.json."""
+    return get_state_dir() / "shared_links.json"
+
+
+def get_automations_path() -> Path:
+    """Return the path to automations.json."""
+    return get_state_dir() / "automations.json"
+
+
+def get_presets_path() -> Path:
+    """Return the path to presets.json."""
+    return get_state_dir() / "presets.json"
+
+
+def get_routines_path() -> Path:
+    """Return the path to routines.json."""
+    return get_state_dir() / "routines.json"
+
+
+def get_settings_path() -> Path:
+    """Return the path to settings.json."""
+    return get_state_dir() / "settings.json"
+
+
+def atomic_write_json(path: Path, data: Any) -> None:
+    """Atomically write JSON data to path using tempfile and os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    raw = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    finally:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+
+
+# ==============================================================================
+# Saved Space logic (Phase 2)
+# ==============================================================================
+
+def create_default_saved_space() -> dict[str, Any]:
+    """Return a pristine Saved Space dictionary."""
+    return {
+        "version": SCHEMA_VERSION,
+        "collections": list(DEFAULT_COLLECTIONS),
+        "items": [],
+    }
+
+
+def load_saved_space(path: Path | None = None) -> dict[str, Any]:
+    """Load Saved Space JSON, backing up corrupt files and returning valid state."""
+    target = path or get_saved_space_path()
+    default_state = create_default_saved_space()
+
+    if not target.exists():
+        atomic_write_json(target, default_state)
+        return default_state
+
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict) or "items" not in parsed or not isinstance(parsed["items"], list):
+            raise ValueError("Invalid Saved Space schema structure")
+        if "collections" not in parsed or not isinstance(parsed["collections"], list):
+            parsed["collections"] = list(DEFAULT_COLLECTIONS)
+        if "version" not in parsed:
+            parsed["version"] = SCHEMA_VERSION
+        return parsed
+    except Exception as exc:
+        timestamp = time.time_ns()
+        backup = target.with_name(f"{target.stem}.corrupt-{timestamp}.json")
+        try:
+            os.replace(target, backup)
+            sys.stderr.write(f"warn: Corrupt saved_space.json preserved as {backup.name}: {exc}\n")
+        except OSError as backup_err:
+            sys.stderr.write(f"warn: Failed to preserve corrupt saved_space.json: {backup_err}\n")
+
+        atomic_write_json(target, default_state)
+        return default_state
+
+
+def validate_url(raw_url: str) -> str:
+    """Strictly validate that a URL is http/https with a valid host."""
+    url = raw_url.strip()
+    if not url:
+        raise ValueError("URL cannot be empty")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError(f"URL scheme '{parsed.scheme}' not allowed. Only http and https are permitted.")
+    if not parsed.netloc or not parsed.hostname:
+        raise ValueError("URL must have a valid domain / hostname")
+    if any(ord(c) < 32 or ord(c) == 127 for c in url):
+        raise ValueError("URL contains control characters")
+    return url
+
+
+def validate_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Validate and sanitize a single Saved Space item."""
+    if not isinstance(item, dict):
+        raise ValueError("Item must be a JSON object")
+
+    item_id = str(item.get("id") or "").strip()
+    if not item_id or not SAFE_ID_RE.match(item_id):
+        item_id = f"s_{int(time.time() * 1000)}"
+
+    item_type = str(item.get("type") or "bookmark").strip().lower()
+    if item_type not in VALID_ITEM_TYPES:
+        raise ValueError(f"Invalid item type '{item_type}'. Must be one of: {VALID_ITEM_TYPES}")
+
+    title = str(item.get("title") or "").strip()
+    if not title:
+        raise ValueError("Item title is required")
+    title = title[:256]
+
+    url = ""
+    if item_type == "bookmark":
+        raw_url = str(item.get("url") or item.get("content") or "").strip()
+        url = validate_url(raw_url)
+
+    content = str(item.get("content") or "").strip()
+    if item_type in {"note", "snippet"} and not content:
+        raise ValueError(f"A {item_type} requires non-empty content")
+
+    description = str(item.get("description") or "").strip()[:1024]
+    notes = str(item.get("notes") or "").strip()[:1024]
+    collection = str(item.get("collection") or "").strip()[:64]
+
+    raw_tags = item.get("tags") or []
+    if isinstance(raw_tags, str):
+        raw_tags = [t.strip().lstrip("#") for t in raw_tags.split(",") if t.strip()]
+    elif isinstance(raw_tags, list):
+        raw_tags = [str(t).strip().lstrip("#") for t in raw_tags if str(t).strip()]
+    else:
+        raw_tags = []
+    tags: list[str] = []
+    for tag in raw_tags[:32]:
+        clean = tag[:32]
+        if clean and clean not in tags:
+            tags.append(clean)
+
+    pinned = bool(item.get("pinned", False))
+    favorite = bool(item.get("favorite", False))
+    trust = str(item.get("trust") or "").strip().lower()
+    if trust not in VALID_TRUST_LEVELS:
+        trust = "needs-review" if item_type == "snippet" else ""
+
+    return {
+        "id": item_id,
+        "type": item_type,
+        "title": title,
+        "url": url,
+        "content": content if item_type != "bookmark" else "",
+        "description": description,
+        "notes": notes,
+        "collection": collection,
+        "tags": tags,
+        "pinned": pinned,
+        "favorite": favorite,
+        "trust": trust,
+        "sample": False,
+    }
+
+
+def cmd_saved_space_list(args: argparse.Namespace) -> int:
+    state = load_saved_space()
+    result = {
+        "ok": True,
+        "version": state.get("version", SCHEMA_VERSION),
+        "collections": state.get("collections", DEFAULT_COLLECTIONS),
+        "items": state.get("items", []),
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_save_item(args: argparse.Namespace) -> int:
+    try:
+        raw_data = json.loads(args.item_json)
+        item = validate_item(raw_data)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid item data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    updated = False
+    for idx, existing in enumerate(items):
+        if existing.get("id") == item["id"]:
+            items[idx] = item
+            updated = True
+            break
+    if not updated:
+        items.insert(0, item)
+
+    state["items"] = items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "action": "updated" if updated else "created",
+        "item": item,
+        "items": items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_delete_item(args: argparse.Namespace) -> int:
+    item_id = str(args.item_id).strip()
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    new_items = [it for it in items if it.get("id") != item_id]
+    state["items"] = new_items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "deleted": item_id,
+        "count": len(new_items),
+        "items": new_items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_patch_item(args: argparse.Namespace) -> int:
+    item_id = str(args.item_id).strip()
+    try:
+        patch = json.loads(args.patch_json)
+        if not isinstance(patch, dict):
+            raise ValueError("Patch must be a JSON object")
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid patch data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    items: list[dict[str, Any]] = state.get("items", [])
+
+    found_idx = -1
+    for idx, existing in enumerate(items):
+        if existing.get("id") == item_id:
+            found_idx = idx
+            break
+
+    if found_idx < 0:
+        err = f"Item with id '{item_id}' not found"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    current = dict(items[found_idx])
+    current.update(patch)
+    try:
+        validated = validate_item(current)
+    except Exception as exc:
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    items[found_idx] = validated
+    state["items"] = items
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "item": validated,
+        "items": items,
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_save_collections(args: argparse.Namespace) -> int:
+    try:
+        colls_raw = json.loads(args.collections_json)
+        if not isinstance(colls_raw, list):
+            raise ValueError("Collections must be a JSON array of strings")
+        collections = []
+        for c in colls_raw:
+            name = str(c).strip()
+            if name and name not in collections:
+                collections.append(name[:64])
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid collections data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    state = load_saved_space()
+    state["collections"] = collections
+
+    if args.items_json:
+        try:
+            items_raw = json.loads(args.items_json)
+            if isinstance(items_raw, list):
+                state["items"] = items_raw
+        except Exception:
+            pass
+
+    atomic_write_json(get_saved_space_path(), state)
+
+    result = {
+        "ok": True,
+        "collections": collections,
+        "items": state.get("items", []),
+    }
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_saved_space_open_url(args: argparse.Namespace) -> int:
+    try:
+        url = validate_url(args.url)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid URL: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        sys.stdout.write(json.dumps({"ok": True, "url": url}) + "\n")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"error: Failed to execute xdg-open: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+
+def cmd_saved_space_copy(args: argparse.Namespace) -> int:
+    text = args.text
+    try:
+        proc = subprocess.Popen(
+            ["wl-copy"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        proc.communicate(input=text.encode("utf-8"), timeout=2)
+        sys.stdout.write(json.dumps({"ok": True}) + "\n")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"error: Failed to copy to clipboard: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+
+# ==============================================================================
+# Action Whitelist & History Journal Logic (Phase 3)
+# ==============================================================================
+
+def load_action_whitelist() -> dict[str, Any]:
+    """Load the action whitelist config, checking user config then repo default."""
+    user_config = get_config_dir() / "toolbox-actions.json"
+    repo_config = get_repo_root() / "config" / "toolbox-actions.json"
+
+    target = user_config if user_config.is_file() else repo_config
+    if not target.is_file():
+        return {"version": 1, "actions": {}}
+
+    try:
+        parsed = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict) and "actions" in parsed and isinstance(parsed["actions"], dict):
+            return parsed
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to read actions whitelist from {target}: {exc}\n")
+
+    return {"version": 1, "actions": {}}
+
+
+def append_history_event(event: dict[str, Any]) -> None:
+    """Append an event to history.jsonl, rotating if entry count exceeds limit."""
+    hist_path = get_history_path()
+    hist_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    line = json.dumps(event, ensure_ascii=False) + "\n"
+    try:
+        lines: list[str] = []
+        if hist_path.is_file():
+            lines = hist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines.append(line.strip())
+        if len(lines) > MAX_HISTORY_ENTRIES:
+            lines = lines[-MAX_HISTORY_ENTRIES:]
+        temp = hist_path.with_suffix(".tmp")
+        temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.replace(temp, hist_path)
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to write to activity history: {exc}\n")
+
+
+def cmd_action_list(args: argparse.Namespace) -> int:
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    available_ids = sorted(list(actions.keys()))
+
+    res = {
+        "ok": True,
+        "available_ids": available_ids,
+        "actions": actions,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_describe(args: argparse.Namespace) -> int:
+    """Describe actions for external integrations (assistant) without leaking executables."""
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    described: list[dict[str, Any]] = []
+
+    for action_id in sorted(actions.keys()):
+        raw = actions[action_id]
+        if not isinstance(raw, dict):
+            continue
+        destructive = bool(raw.get("destructive", False))
+        confirm = bool(raw.get("confirm", False))
+        default_risk = "destructive" if destructive else ("medium" if confirm else "safe")
+        risk = str(raw.get("risk") or default_risk).lower().strip()
+        assistant_allowed = bool(raw.get("assistant_allowed", False))
+        ui_only = bool(raw.get("ui_only", False))
+
+        described.append({
+            "id": action_id,
+            "title": str(raw.get("name") or raw.get("title") or action_id).strip(),
+            "description": str(raw.get("purpose") or raw.get("description") or "").strip(),
+            "category": str(raw.get("category") or "General").strip(),
+            "param_schema": raw.get("param_schema", {}),
+            "risk": risk,
+            "confirm": confirm,
+            "assistant_allowed": assistant_allowed,
+            "ui_only": ui_only,
+        })
+
+    res = {
+        "ok": True,
+        "count": len(described),
+        "actions": described,
+    }
+    sys.stdout.write(json.dumps(res, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+def execute_action(
+    action_id: str,
+    params: dict[str, Any] | None = None,
+    dry_run: bool = False,
+    confirmed: bool = False,
+    trigger: str = "Manual",
+    automation: str = "",
+    source: str = "manual",
+    tainted: bool = False,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute an action from the whitelist safely with parameter validation."""
+    action_id = action_id.strip()
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+
+    def _log_blocked(reason: str) -> None:
+        if source == "assistant":
+            ts_ms = int(time.time() * 1000)
+            name_val = action_def.get("name", action_id) if action_id in actions else action_id
+            cat_val = action_def.get("category", "Desktop") if action_id in actions else "Desktop"
+            evt = {
+                "id": f"evt_{ts_ms}",
+                "ts": ts_ms,
+                "name": name_val,
+                "trigger": "Assistant",
+                "source": "assistant",
+                "result": "blocked",
+                "duration": "0.00s",
+                "category": cat_val,
+                "automation": automation,
+                "details": f"via assistant: {reason}",
+            }
+            append_history_event(evt)
+
+    if action_id not in actions:
+        err = f"Action '{action_id}' is not registered in the whitelist."
+        _log_blocked(f"unknown action '{action_id}'")
+        return False, {"ok": False, "error": err}
+
+    action_def = actions[action_id]
+    if source == "assistant":
+        if not bool(action_def.get("assistant_allowed", False)):
+            err = f"Action '{action_id}' is not permitted for assistant execution."
+            is_power = action_id in ("suspend", "reboot", "shutdown") or str(action_def.get("risk", "")).lower() == "destructive" or str(action_def.get("category", "")).lower() == "power"
+            _log_blocked("power action not permitted" if is_power else "action not permitted for assistant")
+            return False, {"ok": False, "error": err, "assistant_rejected": True}
+        trigger = "Assistant"
+
+    if tainted and not bool(action_def.get("ui_only", False)):
+        err = f"Action '{action_id}' is blocked: session is tainted by untrusted content and action is not ui_only."
+        _log_blocked("tainted session: non-ui_only action")
+        return False, {"ok": False, "error": err, "taint_blocked": True}
+
+    executable_tmpl = action_def.get("executable", [])
+    if not isinstance(executable_tmpl, list) or not executable_tmpl:
+        err = f"Action '{action_id}' has no valid executable definition."
+        return False, {"ok": False, "error": err}
+
+    resolved_params = dict(params or {})
+    param_schema = action_def.get("param_schema", {})
+    if source == "assistant":
+        for k in resolved_params:
+            if k not in param_schema:
+                err = f"Unknown parameter '{k}' provided for action '{action_id}'."
+                _log_blocked(f"unknown param '{k}'")
+                return False, {"ok": False, "error": err}
+
+    for param_name, pattern in param_schema.items():
+        if param_name not in resolved_params:
+            err = f"Missing required parameter '{param_name}' for action '{action_id}'."
+            _log_blocked(f"missing required param '{param_name}'")
+            return False, {"ok": False, "error": err}
+        val = str(resolved_params.get(param_name, "")).strip()
+        if not re.match(pattern, val):
+            err = f"Parameter '{param_name}' value '{val}' does not match validation pattern: {pattern}"
+            _log_blocked(f"invalid param value '{param_name}'")
+            return False, {"ok": False, "error": err}
+
+    repo_root = str(get_repo_root())
+    exec_args: list[str] = []
+    for item in executable_tmpl:
+        s = str(item).replace("${GPS_ROOT}", repo_root)
+        for k, v in resolved_params.items():
+            s = s.replace(f"${{{k}}}", str(v))
+        if re.search(r"\$\{[A-Za-z0-9_]+\}", s):
+            err = f"Unresolved placeholder in command argument: {s}"
+            return False, {"ok": False, "error": err}
+        exec_args.append(s)
+
+    is_destructive = bool(action_def.get("destructive", False) or action_def.get("confirm", False))
+    if source == "assistant":
+        is_confirmed = bool(confirmed)
+    else:
+        is_confirmed = bool(confirmed or resolved_params.get("confirmed", False))
+    if is_destructive and not is_confirmed and not dry_run:
+        err = f"Action '{action_id}' requires explicit confirmation."
+        _log_blocked("confirmation required")
+        return False, {"ok": False, "error": err, "requires_confirm": True}
+
+    start_time = time.monotonic()
+    timestamp_ms = int(time.time() * 1000)
+
+    details_prefix = "[Dry-Run] " if dry_run else ""
+    if dry_run:
+        duration_str = "0.00s"
+        details_str = f"via assistant: {details_prefix}{' '.join(exec_args)}" if source == "assistant" else f"{details_prefix}{' '.join(exec_args)}"
+        event = {
+            "id": f"evt_{timestamp_ms}",
+            "ts": timestamp_ms,
+            "name": action_def.get("name", action_id),
+            "trigger": trigger,
+            "source": source,
+            "result": "completed",
+            "duration": duration_str,
+            "category": action_def.get("category", "Desktop"),
+            "automation": automation,
+            "details": details_str,
+        }
+        append_history_event(event)
+        res = {
+            "ok": True,
+            "dry_run": True,
+            "action": action_id,
+            "duration": duration_str,
+            "returncode": 0,
+            "event": event,
+        }
+        return True, res
+
+    timeout = int(action_def.get("timeout", 10))
+    stdout_text = ""
+    stderr_text = ""
+    returncode = 0
+    try:
+        proc = subprocess.run(
+            exec_args,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            start_new_session=True,
+        )
+        returncode = proc.returncode
+        stdout_text = proc.stdout.strip()
+        stderr_text = proc.stderr.strip()
+    except subprocess.TimeoutExpired:
+        returncode = 124
+        stderr_text = f"Action timed out after {timeout} seconds."
+    except Exception as exc:
+        returncode = 1
+        stderr_text = str(exc)
+
+    duration = time.monotonic() - start_time
+    duration_str = f"{duration:.2f}s"
+    result_status = "completed" if returncode == 0 else "failed"
+
+    details_str = f"via assistant: {' '.join(exec_args)}" if source == "assistant" else " ".join(exec_args)
+    if returncode != 0:
+        details_str += f" (exit {returncode})"
+
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": action_def.get("name", action_id),
+        "trigger": trigger,
+        "source": source,
+        "result": result_status,
+        "duration": duration_str,
+        "category": action_def.get("category", "Desktop"),
+        "automation": automation,
+        "details": details_str,
+    }
+    append_history_event(event)
+
+    res = {
+        "ok": returncode == 0,
+        "action": action_id,
+        "result": result_status,
+        "duration": duration_str,
+        "returncode": returncode,
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "event": event,
+    }
+    return returncode == 0, res
+
+
+def cmd_action_run(args: argparse.Namespace) -> int:
+    params: dict[str, Any] = {}
+    params_str = getattr(args, "params_json_flag", None) or getattr(args, "params_json", None) or ""
+    if params_str:
+        try:
+            parsed_params = json.loads(params_str)
+            if isinstance(parsed_params, dict):
+                params = parsed_params
+        except Exception as exc:
+            err = f"Invalid parameters JSON: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    source = str(getattr(args, "source", "manual") or "manual").strip().lower()
+    trigger = "Assistant" if source == "assistant" else "Manual"
+
+    ok, res = execute_action(
+        action_id=args.action_id,
+        params=params,
+        dry_run=args.dry_run,
+        confirmed=args.confirmed,
+        trigger=trigger,
+        automation="",
+        source=source,
+        tainted=bool(getattr(args, "tainted", False)),
+    )
+    if not ok and "error" in res and "requires_confirm" not in res and not res.get("assistant_rejected") and not res.get("taint_blocked"):
+        sys.stderr.write(f"error: {res['error']}\n")
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0 if ok else 1
+
+
+def cmd_action_log_blocked(args: argparse.Namespace) -> int:
+    action_id = str(args.action_id).strip()
+    reason = str(getattr(args, "reason", "blocked") or "blocked").strip()
+    source = str(getattr(args, "source", "assistant") or "assistant").strip().lower()
+    trigger = "Assistant" if source == "assistant" else "Manual"
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    action_def = actions.get(action_id, {})
+    name = action_def.get("name", action_id)
+    category = action_def.get("category", "Desktop")
+
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": name,
+        "trigger": trigger,
+        "source": source,
+        "result": "blocked",
+        "duration": "0.00s",
+        "category": category,
+        "automation": "",
+        "details": f"via assistant: {reason}" if source == "assistant" else reason,
+    }
+    append_history_event(event)
+    sys.stdout.write(json.dumps({"ok": True, "action": action_id, "result": "blocked", "event": event}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_activity_list(args: argparse.Namespace) -> int:
+    hist_path = get_history_path()
+    events: list[dict[str, Any]] = []
+
+    if hist_path.is_file():
+        try:
+            lines = hist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in reversed(lines):
+                clean = line.strip()
+                if not clean:
+                    continue
+                try:
+                    ev = json.loads(clean)
+                    if isinstance(ev, dict) and "name" in ev:
+                        events.append(ev)
+                except Exception:
+                    pass
+                if len(events) >= args.limit:
+                    break
+        except Exception as exc:
+            sys.stderr.write(f"warn: Failed to read history: {exc}\n")
+
+    res = {
+        "ok": True,
+        "count": len(events),
+        "events": events,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_activity_log(args: argparse.Namespace) -> int:
+    try:
+        event = json.loads(args.event_json)
+        if not isinstance(event, dict):
+            raise ValueError("Event must be a JSON object")
+        if "id" not in event:
+            event["id"] = f"evt_{int(time.time() * 1000)}"
+        if "ts" not in event:
+            event["ts"] = int(time.time() * 1000)
+    except Exception as exc:
+        sys.stderr.write(f"error: Invalid event data: {exc}\n")
+        sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+        return 1
+
+    append_history_event(event)
+    sys.stdout.write(json.dumps({"ok": True, "event": event}) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Device Bridge Logic (Phase 4)
+# ==============================================================================
+
+def load_shared_links() -> list[dict[str, Any]]:
+    """Load shared links from shared_links.json."""
+    links_path = get_shared_links_path()
+    if not links_path.is_file():
+        atomic_write_json(links_path, {"version": 1, "links": []})
+        return []
+    try:
+        data = json.loads(links_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("links"), list):
+            return data["links"]
+    except Exception as exc:
+        sys.stderr.write(f"warn: Failed to read shared links: {exc}\n")
+    return []
+
+
+def save_shared_links(links: list[dict[str, Any]]) -> None:
+    """Save shared links list atomically."""
+    links_path = get_shared_links_path()
+    atomic_write_json(links_path, {"version": 1, "links": links})
+
+
+def query_devices() -> list[dict[str, Any]]:
+    """Query connected and paired devices from KDE Connect (D-Bus) and ADB."""
+    devices: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    # 1. Query KDE Connect over D-Bus
+    try:
+        tree = subprocess.run(
+            ["busctl", "--user", "tree", "org.kde.kdeconnect"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        if tree.returncode == 0:
+            dev_ids = re.findall(r"/modules/kdeconnect/devices/([a-zA-Z0-9_-]+)", tree.stdout)
+            for dev_id in dev_ids:
+                if dev_id in seen_ids:
+                    continue
+                seen_ids.add(dev_id)
+                path = f"/modules/kdeconnect/devices/{dev_id}"
+                intro = subprocess.run(
+                    ["busctl", "--user", "introspect", "org.kde.kdeconnect", path, "org.kde.kdeconnect.device"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                )
+                name_m = re.search(r'\.name\s+property\s+s\s+"([^"]+)"', intro.stdout)
+                paired_m = re.search(r"\.isPaired\s+property\s+b\s+(true|false)", intro.stdout)
+                reachable_m = re.search(r"\.isReachable\s+property\s+b\s+(true|false)", intro.stdout)
+
+                name = name_m.group(1) if name_m else dev_id
+                paired = paired_m.group(1) == "true" if paired_m else False
+                reachable = reachable_m.group(1) == "true" if reachable_m else False
+
+                state = "connected" if reachable else ("disconnected" if paired else "unavailable")
+
+                battery = -1
+                if reachable:
+                    intro_batt = subprocess.run(
+                        ["busctl", "--user", "introspect", "org.kde.kdeconnect", path, "org.kde.kdeconnect.device.battery"],
+                        capture_output=True,
+                        text=True,
+                        timeout=1.5,
+                    )
+                    charge_m = re.search(r"\.charge\s+property\s+i\s+([0-9]+)", intro_batt.stdout)
+                    if charge_m:
+                        battery = int(charge_m.group(1))
+
+                devices.append({
+                    "id": dev_id,
+                    "name": name,
+                    "state": state,
+                    "battery": battery,
+                    "lastSeen": "Paired device" if paired else "Known device",
+                    "capabilities": ["mirror", "file", "share", "find", "notifications"],
+                })
+    except Exception as exc:
+        sys.stderr.write(f"warn: KDE Connect D-Bus query failed: {exc}\n")
+
+    # 2. Query ADB devices
+    try:
+        p = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=1.5)
+        if p.returncode == 0:
+            lines = p.stdout.strip().splitlines()
+            for line in lines[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[1] == "device":
+                    serial = parts[0]
+                    adb_id = f"adb_{serial}"
+                    if adb_id not in seen_ids:
+                        seen_ids.add(adb_id)
+                        devices.append({
+                            "id": adb_id,
+                            "name": f"Android ({serial})",
+                            "state": "connected",
+                            "battery": -1,
+                            "lastSeen": "USB/ADB connected",
+                            "capabilities": ["mirror"],
+                        })
+    except Exception:
+        pass
+
+    return devices
+
+
+def cmd_device_list(args: argparse.Namespace) -> int:
+    devices = query_devices()
+    res = {
+        "ok": True,
+        "count": len(devices),
+        "devices": devices,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Live Desktop Status Probes (GPS Bridge Phase 1)
+# ==============================================================================
+
+def probe_hyprland() -> dict[str, Any]:
+    if not shutil.which("hyprctl"):
+        return {"available": False, "reason": "hyprctl executable not found"}
+    try:
+        ws_res = subprocess.run(["hyprctl", "activeworkspace", "-j"], capture_output=True, text=True, timeout=2)
+        win_res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=2)
+        all_ws = subprocess.run(["hyprctl", "workspaces", "-j"], capture_output=True, text=True, timeout=2)
+
+        ws_data = json.loads(ws_res.stdout) if ws_res.returncode == 0 and ws_res.stdout.strip() else {}
+        win_data = json.loads(win_res.stdout) if win_res.returncode == 0 and win_res.stdout.strip() else {}
+        workspaces = json.loads(all_ws.stdout) if all_ws.returncode == 0 and all_ws.stdout.strip() else []
+
+        ws_id = ws_data.get("id", ws_data.get("workspaceID", 1))
+        ws_name = str(ws_data.get("name", str(ws_id)))
+        win_class = str(win_data.get("class", ""))
+        win_title = str(win_data.get("title", ""))
+
+        return {
+            "available": True,
+            "workspace": {"id": ws_id, "name": ws_name},
+            "window": {"class": win_class, "title": win_title},
+            "workspace_count": len(workspaces) if isinstance(workspaces, list) and workspaces else 1,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_notifications() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    ipc_script = repo_root / "scripts" / "gps-ipc"
+    if not ipc_script.is_file():
+        return {"available": False, "reason": "gps-ipc not found"}
+    try:
+        res = subprocess.run([str(ipc_script), "notify", "status"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {
+                "available": True,
+                "dnd": bool(data.get("dnd", False)),
+                "dndMode": str(data.get("dndMode", "off")),
+                "unread": int(data.get("totalStored", 0)),
+                "held": int(data.get("heldCount", 0)),
+                "activeToasts": int(data.get("activeToasts", 0)),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "notify status failed"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_focus() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    ipc_script = repo_root / "scripts" / "gps-ipc"
+    if not ipc_script.is_file():
+        return {"available": False, "reason": "gps-ipc not found"}
+    try:
+        res = subprocess.run([str(ipc_script), "island", "focusState"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {
+                "available": True,
+                "active": bool(data.get("focusOn", False)),
+                "paused": bool(data.get("paused", False)),
+                "isBreak": bool(data.get("isBreak", False)),
+                "remaining": int(data.get("remaining", -1)),
+                "sessionIndex": int(data.get("sessionIndex", 0)),
+                "sessionCount": int(data.get("sessionCount", 0)),
+                "title": str(data.get("title", "")),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "focus state query failed"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_wallpaper() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    wall_script = repo_root / "scripts" / "gps_wallpaper.py"
+    if not wall_script.is_file():
+        return {"available": False, "reason": "gps_wallpaper.py not found"}
+    try:
+        res = subprocess.run([sys.executable, str(wall_script), "inspect"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            raw_path = str(data.get("path") or "")
+            name = Path(raw_path).name if raw_path else ""
+            return {
+                "available": True,
+                "name": name,
+                "path": raw_path,
+                "type": str(data.get("type", "static")),
+                "status": str(data.get("status", "STATIC")),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "wallpaper inspect exited non-zero"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_audio() -> dict[str, Any]:
+    vol = -1
+    muted = False
+    now_playing = ""
+    if shutil.which("wpctl"):
+        try:
+            res = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                out = res.stdout.strip()
+                parts = out.split()
+                if len(parts) >= 2:
+                    try:
+                        vol = int(round(float(parts[1]) * 100))
+                    except ValueError:
+                        pass
+                muted = "[MUTED]" in out
+        except Exception:
+            pass
+
+    if shutil.which("playerctl"):
+        try:
+            res = subprocess.run(["playerctl", "metadata", "--format", "{{title}} - {{artist}}"], capture_output=True, text=True, timeout=1)
+            if res.returncode == 0 and res.stdout.strip():
+                now_playing = res.stdout.strip()
+        except Exception:
+            pass
+
+    if vol >= 0:
+        return {
+            "available": True,
+            "volume": vol,
+            "muted": muted,
+            "now_playing": now_playing,
+        }
+    return {"available": False, "reason": "audio volume probe unavailable"}
+
+
+def probe_brightness() -> dict[str, Any]:
+    if shutil.which("brightnessctl"):
+        try:
+            res = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                line = res.stdout.strip().splitlines()[0]
+                fields = line.split(",")
+                if len(fields) >= 4:
+                    pct_str = fields[3].replace("%", "").strip()
+                    return {"available": True, "percent": int(pct_str)}
+        except Exception as exc:
+            return {"available": False, "reason": str(exc)}
+    return {"available": False, "reason": "brightnessctl not available"}
+
+
+def probe_recording() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    rec_script = repo_root / "scripts" / "gps-record"
+    if not rec_script.is_file():
+        return {"available": False, "reason": "gps-record not found"}
+    try:
+        res = subprocess.run([str(rec_script), "status"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {"available": True, "active": bool(data.get("recording", False))}
+        return {"available": False, "reason": "recording status query returned non-zero"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_devices() -> dict[str, Any]:
+    try:
+        devs = query_devices()
+        reachable = sum(1 for d in devs if str(d.get("state", "")).lower() in ("reachable", "connected"))
+        return {
+            "available": True,
+            "count": len(devs),
+            "reachable_count": reachable,
+            "devices": devs,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_quickshell() -> dict[str, Any]:
+    try:
+        repo_root = get_repo_root()
+        ipc_script = repo_root / "scripts" / "gps-ipc"
+        shell_ok = False
+        island_ok = False
+        if ipc_script.is_file():
+            chk_shell = subprocess.run([str(ipc_script), "check", "shell"], capture_output=True, text=True, timeout=1)
+            shell_ok = (chk_shell.returncode == 0)
+            chk_island = subprocess.run([str(ipc_script), "check", "island"], capture_output=True, text=True, timeout=1)
+            island_ok = (chk_island.returncode == 0)
+        return {
+            "available": True,
+            "shell": shell_ok,
+            "island": island_ok,
+            "settings": False,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_lock() -> dict[str, Any]:
+    try:
+        res = subprocess.run(["pidof", "hyprlock"], capture_output=True, text=True, timeout=1)
+        return {"available": True, "locked": (res.returncode == 0)}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Aggregate live desktop state with per-field fault isolation."""
+    result = {
+        "ok": True,
+        "timestamp": int(time.time()),
+        "hyprland": probe_hyprland(),
+        "notifications": probe_notifications(),
+        "focus": probe_focus(),
+        "wallpaper": probe_wallpaper(),
+        "audio": probe_audio(),
+        "brightness": probe_brightness(),
+        "recording": probe_recording(),
+        "devices": probe_devices(),
+        "quickshell": probe_quickshell(),
+        "lock": probe_lock(),
+    }
+    sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_device_action(args: argparse.Namespace) -> int:
+    device_id = args.device_id.strip()
+    action = args.action.strip()
+    params: dict[str, Any] = {}
+    if args.params_json:
+        try:
+            params = json.loads(args.params_json)
+        except Exception:
+            pass
+
+    # Handle mirror action
+    if action == "mirror":
+        scrcpy_cmd = ["scrcpy", "--turn-screen-off", "--stay-awake"]
+        if device_id.startswith("adb_"):
+            serial = device_id.split("_", 1)[1]
+            scrcpy_cmd.extend(["-s", serial])
+        try:
+            subprocess.Popen(
+                scrcpy_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            event = {
+                "id": f"evt_{int(time.time() * 1000)}",
+                "ts": int(time.time() * 1000),
+                "name": "Launch Device Mirror",
+                "trigger": "Manual",
+                "result": "completed",
+                "duration": "0.10s",
+                "category": "Phone & Devices",
+                "automation": "",
+                "details": f"Launched scrcpy on device {device_id}",
+            }
+            append_history_event(event)
+            sys.stdout.write(json.dumps({"ok": True, "action": action, "device_id": device_id}) + "\n")
+            return 0
+        except Exception as exc:
+            err = f"Failed to launch scrcpy: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    # Handle find phone (ring)
+    elif action == "find":
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--ring"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            res_status = "completed" if proc.returncode == 0 else "failed"
+            event = {
+                "id": f"evt_{int(time.time() * 1000)}",
+                "ts": int(time.time() * 1000),
+                "name": "Find Phone",
+                "trigger": "Manual",
+                "result": res_status,
+                "duration": "0.20s",
+                "category": "Phone & Devices",
+                "automation": "",
+                "details": f"Sent ring command to {device_id}",
+            }
+            append_history_event(event)
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            err = f"Failed to ring phone: {exc}"
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+
+    # Handle share URL or text
+    elif action == "share":
+        share_content = params.get("text") or params.get("url") or ""
+        if not share_content:
+            err = "Share action requires 'text' or 'url' in params."
+            sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+            return 1
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--share-text", str(share_content)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle send file
+    elif action == "file":
+        file_path = params.get("path")
+        if not file_path:
+            # Launch zenity or kdialog file picker asynchronously
+            try:
+                subprocess.Popen(
+                    ["kdialog", "--getopenfilename"] if shutil.which("kdialog") else ["zenity", "--file-selection"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                sys.stdout.write(json.dumps({"ok": True, "action": action, "picker": True}) + "\n")
+                return 0
+            except Exception as exc:
+                sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+                return 1
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--share", str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "device_id": device_id}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle device settings
+    elif action == "settings":
+        try:
+            subprocess.Popen(
+                ["kdeconnect-app"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            sys.stdout.write(json.dumps({"ok": True, "action": action, "device_id": device_id}) + "\n")
+            return 0
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    # Handle notifications summary
+    elif action == "notifications":
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "--device", device_id, "--list-notifications"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            sys.stdout.write(json.dumps({"ok": proc.returncode == 0, "action": action, "output": proc.stdout.strip()}) + "\n")
+            return proc.returncode
+        except Exception as exc:
+            sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}) + "\n")
+            return 1
+
+    err = f"Unknown device action: {action}"
+    sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+    return 1
+
+
+def cmd_device_links(args: argparse.Namespace) -> int:
+    links = load_shared_links()
+    res = {
+        "ok": True,
+        "count": len(links),
+        "links": links,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_device_dismiss_link(args: argparse.Namespace) -> int:
+    link_id = args.link_id.strip()
+    links = load_shared_links()
+    updated = [lnk for lnk in links if lnk.get("id") != link_id]
+    save_shared_links(updated)
+    res = {
+        "ok": True,
+        "deleted": link_id,
+        "count": len(updated),
+        "links": updated,
+    }
+    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Automations & Workspace Presets (Phase 5)
+# ==============================================================================
+
+def get_systemd_user_dir() -> Path:
+    """Return user systemd configuration directory honoring XDG_CONFIG_HOME."""
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(config_home) if config_home and Path(config_home).is_absolute() else Path.home() / ".config"
+    target = base / "systemd" / "user"
+    target.mkdir(parents=True, exist_ok=True, mode=0o755)
+    return target
+
+
+def run_systemctl(args: list[str]) -> tuple[int, str]:
+    """Execute systemctl --user command safely."""
+    if os.environ.get("GPS_TEST_NO_SYSTEMD"):
+        return 0, ""
+    if not shutil.which("systemctl"):
+        return 1, "systemctl command not found"
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user"] + args,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return proc.returncode, proc.stdout.strip()
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def load_default_automations() -> list[dict[str, Any]]:
+    """Load default automations from repository configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-automations.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_automations(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load automations JSON from persistent state."""
+    target = path or get_automations_path()
+    if not target.exists():
+        defaults = load_default_automations()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "automations" in parsed and isinstance(parsed["automations"], list):
+            return parsed["automations"]
+        raise ValueError("Invalid automations JSON structure")
+    except Exception as exc:
+        sys.stderr.write(f"warn: Corrupt automations.json ({exc}); backing up.\n")
+        backup = target.with_suffix(f".corrupt-{int(time.time())}.json")
+        try:
+            target.rename(backup)
+        except OSError:
+            pass
+        defaults = load_default_automations()
+        atomic_write_json(target, defaults)
+        return defaults
+
+
+def save_automations(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save automations list atomically."""
+    target = path or get_automations_path()
+    atomic_write_json(target, items)
+
+
+def compute_next_run(auto: dict[str, Any]) -> str:
+    """Compute a human-readable next run description for an automation."""
+    ttype = auto.get("ttype", "schedule")
+    ttime = str(auto.get("ttime", "")).strip()
+    tdays = auto.get("tdays", [])
+    if ttype == "schedule" and ttime:
+        if tdays and isinstance(tdays, list) and len(tdays) > 0:
+            return f"{', '.join(tdays)} at {ttime}"
+        return f"Daily at {ttime}"
+    if ttype == "once" and ttime:
+        date_str = auto.get("tdate", "")
+        return f"{date_str} at {ttime}" if date_str else f"At {ttime}"
+    return ""
+
+
+def compile_automation_units(auto: dict[str, Any]) -> tuple[str, str] | None:
+    """Compile an automation into (service_content, timer_content) for systemd --user."""
+    ttype = auto.get("ttype", "schedule")
+    if ttype not in ("schedule", "once"):
+        return None
+
+    auto_id = auto.get("id", "")
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    name = auto.get("name", auto_id)
+    ttime = str(auto.get("ttime", "09:00")).strip()
+    tdays = auto.get("tdays", [])
+    tdate = str(auto.get("tdate", "")).strip()
+
+    if ttype == "schedule":
+        if tdays and isinstance(tdays, list) and len(tdays) > 0:
+            calendar_spec = f"{','.join(tdays)} *-*-* {ttime}:00"
+        else:
+            calendar_spec = f"*-*-* {ttime}:00"
+    elif ttype == "once":
+        if tdate:
+            calendar_spec = f"{tdate} {ttime}:00"
+        else:
+            calendar_spec = f"*-*-* {ttime}:00"
+    else:
+        return None
+
+    repo_root = get_repo_root()
+    toolbox_script = repo_root / "scripts" / "gps-toolbox"
+
+    service_content = f"""[Unit]
+Description=GPS Automation: {name}
+Documentation=file://{repo_root}/docs/TOOLBOX-ANALYSIS.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {toolbox_script} automation run {auto_id}
+"""
+
+    timer_content = f"""[Unit]
+Description=GPS Automation Timer: {name}
+PartOf=timers.target
+
+[Timer]
+OnCalendar={calendar_spec}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    return service_content, timer_content
+
+
+def sync_automation_systemd(auto: dict[str, Any]) -> None:
+    """Sync systemd user timer and service units for an automation."""
+    auto_id = auto.get("id", "")
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    unit_dir = get_systemd_user_dir()
+    service_file = unit_dir / f"gps-auto-{safe_id}.service"
+    timer_file = unit_dir / f"gps-auto-{safe_id}.timer"
+
+    is_enabled = auto.get("state") in ("enabled", "upcoming")
+    compiled = compile_automation_units(auto)
+
+    if is_enabled and compiled is not None:
+        service_content, timer_content = compiled
+        service_file.write_text(service_content, encoding="utf-8")
+        timer_file.write_text(timer_content, encoding="utf-8")
+        run_systemctl(["daemon-reload"])
+        run_systemctl(["enable", "--now", f"gps-auto-{safe_id}.timer"])
+    else:
+        run_systemctl(["disable", "--now", f"gps-auto-{safe_id}.timer"])
+        if timer_file.exists():
+            try:
+                timer_file.unlink()
+            except OSError:
+                pass
+        if service_file.exists():
+            try:
+                service_file.unlink()
+            except OSError:
+                pass
+        run_systemctl(["daemon-reload"])
+
+
+def remove_automation_systemd(auto_id: str) -> None:
+    """Disable and delete systemd user timer units for an automation."""
+    safe_id = re.sub(r"[^A-Za-z0-9_\-]", "_", auto_id)
+    unit_dir = get_systemd_user_dir()
+    service_file = unit_dir / f"gps-auto-{safe_id}.service"
+    timer_file = unit_dir / f"gps-auto-{safe_id}.timer"
+
+    run_systemctl(["disable", "--now", f"gps-auto-{safe_id}.timer"])
+    if timer_file.exists():
+        try:
+            timer_file.unlink()
+        except OSError:
+            pass
+    if service_file.exists():
+        try:
+            service_file.unlink()
+        except OSError:
+            pass
+    run_systemctl(["daemon-reload"])
+
+
+def send_notification(title: str, message: str) -> None:
+    """Post desktop notification using notify-send if available."""
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(["notify-send", title, message], check=False, timeout=3)
+        except Exception:
+            pass
+
+
+def run_automation_actions(auto: dict[str, Any], is_test: bool = False) -> tuple[bool, str, list[str]]:
+    """Execute actions in an automation sequentially using whitelist engine."""
+    actions = auto.get("actions", [])
+    stop_on_fail = bool(auto.get("stopOnFail", True))
+    name = auto.get("name", auto.get("id", "unknown"))
+    executed_ids: list[str] = []
+    overall_ok = True
+    last_msg = ""
+
+    for act in actions:
+        if isinstance(act, dict):
+            act_id = act.get("id", "")
+            act_params = dict(act.get("params", {}))
+        elif isinstance(act, str):
+            act_id = act
+            act_params = {}
+        else:
+            continue
+
+        if not act_id:
+            continue
+
+        # Provide sensible default parameters if not supplied
+        if act_id == "show_reminder" and "message" not in act_params:
+            msg = auto.get("description") or f"Reminder: {name}"
+            # Ensure message matches regex ^[A-Za-z0-9 _.,!?:'\n-]{1,256}$
+            act_params["message"] = re.sub(r"[^A-Za-z0-9 _.,!?:'\n-]", "", msg)[:256] or "GPS Reminder"
+        elif act_id == "notify":
+            if "title" not in act_params:
+                t = auto.get("name") or "GPS Notification"
+                act_params["title"] = re.sub(r"[^A-Za-z0-9 _.,!?:'-]", "", t)[:128] or "Notification"
+            if "message" not in act_params:
+                m = auto.get("description") or "Automation executed"
+                act_params["message"] = re.sub(r"[^A-Za-z0-9 _.,!?:'\n-]", "", m)[:256] or "Success"
+
+        executed_ids.append(act_id)
+        ok, res = execute_action(
+            action_id=act_id,
+            params=act_params,
+            dry_run=False,
+            confirmed=True,
+            trigger="Test" if is_test else "Automation",
+            automation=name,
+        )
+        if not ok:
+            overall_ok = False
+            last_msg = f"Action '{act_id}' failed: {res.get('stderr', res.get('error', 'error'))}"
+            if stop_on_fail:
+                break
+
+    if overall_ok:
+        ts_now = time.strftime("%H:%M:%S")
+        prefix = "Test run succeeded" if is_test else "Ran successfully"
+        last_msg = f"{prefix}: {len(executed_ids)} action(s) completed at {ts_now}."
+
+    return overall_ok, last_msg, executed_ids
+
+
+def cmd_automation_list(args: argparse.Namespace) -> int:
+    autos = load_automations()
+    for a in autos:
+        if a.get("state") in ("enabled", "upcoming") and not a.get("nextRun"):
+            a["nextRun"] = compute_next_run(a)
+    sys.stdout.write(json.dumps({"ok": True, "automations": autos}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_automation_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.auto_json)
+        if not isinstance(data, dict):
+            raise ValueError("Automation must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid automation JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    auto_id = str(data.get("id", "")).strip()
+    if not auto_id or not SAFE_ID_RE.match(auto_id):
+        auto_id = f"a_{int(time.time()*1000)}"
+        data["id"] = auto_id
+
+    data["sample"] = False
+    if "state" not in data:
+        data["state"] = "paused"
+    if "ttype" not in data:
+        data["ttype"] = "schedule"
+    if "actions" not in data or not isinstance(data["actions"], list):
+        data["actions"] = []
+
+    data["nextRun"] = compute_next_run(data) if data.get("state") in ("enabled", "upcoming") else ""
+
+    autos = load_automations()
+    existing_idx = next((i for i, a in enumerate(autos) if a.get("id") == auto_id), None)
+    if existing_idx is not None:
+        autos[existing_idx] = data
+    else:
+        autos.append(data)
+
+    save_automations(autos)
+    sync_automation_systemd(data)
+
+    sys.stdout.write(json.dumps({"ok": True, "automation": data}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_automation_delete(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    new_autos = [a for a in autos if a.get("id") != auto_id]
+    if len(new_autos) == len(autos):
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    save_automations(new_autos)
+    remove_automation_systemd(auto_id)
+    sys.stdout.write(json.dumps({"ok": True, "id": auto_id}) + "\n")
+    return 0
+
+
+def cmd_automation_set_state(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    target_state = args.state.strip().lower()
+    if target_state not in ("enabled", "paused", "upcoming"):
+        target_state = "enabled" if target_state in ("1", "true", "on") else "paused"
+
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    target_auto["state"] = target_state
+    target_auto["nextRun"] = compute_next_run(target_auto) if target_state in ("enabled", "upcoming") else ""
+
+    save_automations(autos)
+    sync_automation_systemd(target_auto)
+
+    sys.stdout.write(json.dumps({"ok": True, "id": auto_id, "state": target_state, "nextRun": target_auto["nextRun"]}) + "\n")
+    return 0
+
+
+def cmd_automation_test(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    overall_ok, summary, executed = run_automation_actions(target_auto, is_test=True)
+    target_auto["lastResult"] = summary
+    save_automations(autos)
+
+    sys.stdout.write(json.dumps({"ok": overall_ok, "id": auto_id, "result": summary, "actions": executed}) + "\n")
+    return 0 if overall_ok else 1
+
+
+def cmd_automation_run(args: argparse.Namespace) -> int:
+    auto_id = args.auto_id.strip()
+    autos = load_automations()
+    target_auto = next((a for a in autos if a.get("id") == auto_id), None)
+    if not target_auto:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Automation '{auto_id}' not found."}) + "\n")
+        return 1
+
+    overall_ok, summary, executed = run_automation_actions(target_auto, is_test=False)
+    target_auto["lastResult"] = summary
+    target_auto["lastRun"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if not overall_ok:
+        target_auto["state"] = "failed"
+    save_automations(autos)
+
+    if target_auto.get("notify", True):
+        send_notification(f"GPS Automation: {target_auto.get('name', auto_id)}", summary)
+
+    sys.stdout.write(json.dumps({"ok": overall_ok, "id": auto_id, "result": summary, "actions": executed}) + "\n")
+    return 0 if overall_ok else 1
+
+
+def load_default_presets() -> list[dict[str, Any]]:
+    """Load default presets from repository configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-presets.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_presets(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load presets JSON, falling back to default configuration."""
+    target = path or get_presets_path()
+    if not target.exists():
+        defaults = load_default_presets()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "presets" in parsed and isinstance(parsed["presets"], list):
+            return parsed["presets"]
+        raise ValueError("Invalid presets structure")
+    except Exception:
+        defaults = load_default_presets()
+        return defaults
+
+
+def save_presets(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save presets atomically."""
+    target = path or get_presets_path()
+    atomic_write_json(target, items)
+
+
+def cmd_preset_list(args: argparse.Namespace) -> int:
+    presets = load_presets()
+    sys.stdout.write(json.dumps({"ok": True, "presets": presets}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_preset_activate(args: argparse.Namespace) -> int:
+    preset_id = args.preset_id.strip()
+    presets = load_presets()
+    target_preset = next((p for p in presets if p.get("id") == preset_id), None)
+    if not target_preset:
+        err = f"Preset '{preset_id}' not found."
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    name = target_preset.get("name", preset_id)
+    repo_root = get_repo_root()
+    ipc_script = str(repo_root / "scripts" / "gps-ipc")
+
+    # Execute preset action behavior
+    if preset_id in ("p1", "coding"):
+        apps = ["code", "kitty", "brave"]
+        for app in apps:
+            if shutil.which("hyprctl"):
+                try:
+                    subprocess.Popen(["hyprctl", "dispatch", "exec", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+            elif shutil.which(app):
+                try:
+                    subprocess.Popen([app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+        send_notification("GPS Workspace Preset", "Coding workspace activated (VS Code, Kitty, Brave)")
+
+    elif preset_id in ("p2", "study"):
+        timer_min = str(target_preset.get("timer", "25"))
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "island", "focusToggle"], check=False, timeout=5)
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", f"Study mode activated ({timer_min}m Focus Timer, DND enabled)")
+
+    elif preset_id in ("p3", "entertainment"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "mediahub", "open"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Entertainment mode activated (Media Hub opened)")
+
+    elif preset_id in ("p4", "presentation"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Presentation mode activated (DND enabled)")
+
+    elif preset_id in ("p5", "communication"):
+        if shutil.which("brave"):
+            try:
+                subprocess.Popen(["brave"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Communication workspace activated")
+
+    elif preset_id in ("p6", "clean"):
+        if shutil.which(ipc_script):
+            try:
+                subprocess.run([ipc_script, "notify", "dnd", "on"], check=False, timeout=5)
+            except Exception:
+                pass
+        send_notification("GPS Workspace Preset", "Clean Desktop activated (DND enabled)")
+
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": f"Preset: {name}",
+        "trigger": "Manual",
+        "result": "completed",
+        "duration": "0.05s",
+        "category": "Presets",
+        "automation": "",
+        "details": f"Activated preset '{name}'",
+    }
+    append_history_event(event)
+
+    sys.stdout.write(json.dumps({"ok": True, "preset": target_preset, "event": event}) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Routine Builder & Workflows (Phase 6)
+# ==============================================================================
+
+def load_default_routines() -> list[dict[str, Any]]:
+    """Load default workflow routines from configuration."""
+    config_default = get_repo_root() / "config" / "toolbox-routines.json"
+    if config_default.is_file():
+        try:
+            parsed = json.loads(config_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    return []
+
+
+def load_routines(path: Path | None = None) -> list[dict[str, Any]]:
+    """Load workflows from persistent state, seeding defaults if missing."""
+    target = path or get_routines_path()
+    if not target.exists():
+        defaults = load_default_routines()
+        if defaults:
+            atomic_write_json(target, defaults)
+            return defaults
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and "routines" in parsed and isinstance(parsed["routines"], list):
+            return parsed["routines"]
+        raise ValueError("Invalid routines structure")
+    except Exception as exc:
+        sys.stderr.write(f"warn: Corrupt routines.json ({exc}); backing up.\n")
+        backup = target.with_suffix(f".corrupt-{int(time.time())}.json")
+        try:
+            target.rename(backup)
+        except OSError:
+            pass
+        defaults = load_default_routines()
+        atomic_write_json(target, defaults)
+        return defaults
+
+
+def save_routines(items: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Save routines atomically."""
+    target = path or get_routines_path()
+    atomic_write_json(target, items)
+
+
+def cmd_workflow_list(args: argparse.Namespace) -> int:
+    routines = load_routines()
+    sys.stdout.write(json.dumps({"ok": True, "routines": routines}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_workflow_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.workflow_json)
+        if not isinstance(data, dict):
+            raise ValueError("Workflow must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid workflow JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    workflow_id = str(data.get("id", "")).strip()
+    if not workflow_id or not SAFE_ID_RE.match(workflow_id):
+        workflow_id = f"rt_{int(time.time()*1000)}"
+        data["id"] = workflow_id
+
+    data["sample"] = False
+    if "steps" not in data or not isinstance(data["steps"], list):
+        data["steps"] = []
+    if "runs" not in data:
+        data["runs"] = 0
+
+    routines = load_routines()
+    existing_idx = next((i for i, r in enumerate(routines) if r.get("id") == workflow_id), None)
+    if existing_idx is not None:
+        routines[existing_idx] = data
+    else:
+        routines.append(data)
+
+    save_routines(routines)
+    sys.stdout.write(json.dumps({"ok": True, "workflow": data}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_workflow_delete(args: argparse.Namespace) -> int:
+    workflow_id = args.workflow_id.strip()
+    routines = load_routines()
+    new_routines = [r for r in routines if r.get("id") != workflow_id]
+    if len(new_routines) == len(routines):
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Workflow '{workflow_id}' not found."}) + "\n")
+        return 1
+
+    save_routines(new_routines)
+    sys.stdout.write(json.dumps({"ok": True, "id": workflow_id}) + "\n")
+    return 0
+
+
+def cmd_workflow_run(args: argparse.Namespace) -> int:
+    workflow_id = args.workflow_id.strip()
+    routines = load_routines()
+    target = next((r for r in routines if r.get("id") == workflow_id), None)
+    if not target:
+        sys.stdout.write(json.dumps({"ok": False, "error": f"Workflow '{workflow_id}' not found."}) + "\n")
+        return 1
+
+    name = target.get("name", workflow_id)
+    steps = target.get("steps", [])
+    on_fail = target.get("onFail", "stop")
+    executed_steps = []
+    prev_ok = True
+    overall_ok = True
+    stopped_early = False
+
+    for idx, step in enumerate(steps):
+        act_id = step.get("actionId", "")
+        cond = step.get("cond", "always")
+        note = step.get("note", "")
+
+        # Evaluate condition
+        if cond == "prev_ok" and not prev_ok:
+            executed_steps.append({"index": idx + 1, "action": act_id, "skipped": True, "reason": "Previous step failed"})
+            continue
+
+        ok, res = execute_action(
+            action_id=act_id,
+            params={},
+            dry_run=False,
+            confirmed=True,
+            trigger="Workflow",
+            automation=name,
+        )
+        prev_ok = ok
+        executed_steps.append({
+            "index": idx + 1,
+            "action": act_id,
+            "ok": ok,
+            "note": note,
+            "duration": res.get("duration", "0.00s"),
+            "details": res.get("stdout") or res.get("stderr") or res.get("details", "")
+        })
+
+        if not ok:
+            overall_ok = False
+            if on_fail == "stop":
+                stopped_early = True
+                break
+
+    # Update runs count
+    target["runs"] = int(target.get("runs", 0)) + 1
+    target["lastRun"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    target["lastResult"] = f"Executed {len(executed_steps)} step(s)" + (" (stopped on error)" if stopped_early else "")
+    save_routines(routines)
+
+    # Log to history
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": f"Workflow: {name}",
+        "trigger": "Manual",
+        "result": "completed" if overall_ok else "failed",
+        "duration": "0.10s",
+        "category": "Workflows",
+        "automation": name,
+        "details": f"Ran {len(executed_steps)} steps" + (" with errors" if not overall_ok else " successfully"),
+    }
+    append_history_event(event)
+    send_notification("GPS Workflow", f"Workflow '{name}' " + ("completed" if overall_ok else "failed"))
+
+    sys.stdout.write(json.dumps({
+        "ok": overall_ok,
+        "workflow": name,
+        "steps_executed": len(executed_steps),
+        "steps": executed_steps,
+        "event": event,
+    }, ensure_ascii=False) + "\n")
+    return 0 if overall_ok else 1
+
+
+# ==============================================================================
+# Settings (Preferences Persistence)
+# ==============================================================================
+
+def load_settings(path: Path | None = None) -> dict[str, Any]:
+    """Load settings from persistent state, returning defaults if not found."""
+    target = path or get_settings_path()
+    defaults = {
+        "defaultCollection": "",
+        "defaultDir": "",
+        "scriptsDir": "",
+        "toasts": True,
+        "confirmDelete": True,
+        "confirmRun": True,
+        "showDeviceChip": True,
+        "retention": 30,
+        "reduceMotion": False,
+    }
+    if not target.exists():
+        return defaults
+    try:
+        content = target.read_text(encoding="utf-8")
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            defaults.update(parsed)
+        return defaults
+    except Exception:
+        return defaults
+
+
+def save_settings(data: dict[str, Any], path: Path | None = None) -> None:
+    """Save settings atomically."""
+    target = path or get_settings_path()
+    atomic_write_json(target, data)
+
+
+def cmd_settings_get(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    sys.stdout.write(json.dumps({"ok": True, "settings": settings}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_settings_save(args: argparse.Namespace) -> int:
+    try:
+        data = json.loads(args.settings_json)
+        if not isinstance(data, dict):
+            raise ValueError("Settings must be a JSON object")
+    except Exception as exc:
+        err = f"Invalid settings JSON: {exc}"
+        sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
+        return 1
+
+    current = load_settings()
+    current.update(data)
+    save_settings(current)
+    sys.stdout.write(json.dumps({"ok": True, "settings": current}, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Main Entry Point & CLI Parser
+# ==============================================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="gps-toolbox", description="GPS Toolbox backend helper")
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # 1. saved-space subcommand
+    ss_parser = subparsers.add_parser("saved-space", help="Saved Space operations")
+    ss_sub = ss_parser.add_subparsers(dest="ss_action", required=True)
+
+    ss_sub.add_parser("list", help="List Saved Space items and collections")
+
+    p_save = ss_sub.add_parser("save-item", help="Save or update an item")
+    p_save.add_argument("item_json", help="JSON string representing item")
+
+    p_del = ss_sub.add_parser("delete-item", help="Delete an item by id")
+    p_del.add_argument("item_id", help="ID of item to delete")
+
+    p_patch = ss_sub.add_parser("patch-item", help="Patch item fields (favorite, pinned, etc.)")
+    p_patch.add_argument("item_id", help="ID of item to patch")
+    p_patch.add_argument("patch_json", help="JSON string of fields to update")
+
+    p_colls = ss_sub.add_parser("save-collections", help="Save collections list")
+    p_colls.add_argument("collections_json", help="JSON array of collection names")
+    p_colls.add_argument("items_json", nargs="?", default=None, help="Optional JSON array of updated items")
+
+    p_open = ss_sub.add_parser("open-url", help="Open a web link via xdg-open safely")
+    p_open.add_argument("url", help="http or https URL to open")
+
+    p_copy = ss_sub.add_parser("copy", help="Copy text to Wayland clipboard using wl-copy")
+    p_copy.add_argument("text", help="Text to copy")
+
+    # 2. action subcommand
+    act_parser = subparsers.add_parser("action", help="Action whitelist operations")
+    act_sub = act_parser.add_subparsers(dest="act_action", required=True)
+
+    act_sub.add_parser("list", help="List all registered actions and available IDs")
+
+    p_act_desc = act_sub.add_parser("describe", help="Describe available actions")
+    p_act_desc.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+
+    p_act_run = act_sub.add_parser("run", help="Run a whitelisted action safely")
+    p_act_run.add_argument("action_id", help="ID of whitelisted action to run")
+    p_act_run.add_argument("params_json", nargs="?", default=None, help="Optional JSON string of parameters")
+    p_act_run.add_argument("--params-json", dest="params_json_flag", default="", help="JSON string representing parameter dictionary")
+    p_act_run.add_argument("--dry-run", action="store_true", help="Simulate execution without running subprocess")
+    p_act_run.add_argument("--confirmed", action="store_true", help="Confirm execution of destructive action")
+    p_act_run.add_argument("--source", default="manual", help="Source of execution (manual, assistant)")
+    p_act_run.add_argument("--tainted", action="store_true", help="Session is tainted; only allow ui_only actions")
+
+    p_act_log_blocked = act_sub.add_parser("log-blocked", help="Log a blocked action attempt to history")
+    p_act_log_blocked.add_argument("action_id", help="Action ID that was blocked")
+    p_act_log_blocked.add_argument("--reason", default="blocked", help="Reason for blockage")
+    p_act_log_blocked.add_argument("--source", default="assistant", help="Source of attempt")
+
+    # 2b. describe subcommand (direct alias)
+    desc_parser = subparsers.add_parser("describe", help="Describe actions for integrations and assistant")
+    desc_parser.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+
+    # 2c. status subcommand (direct alias)
+    status_parser = subparsers.add_parser("status", help="Aggregate live desktop status")
+    status_parser.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+
+    # 3. activity subcommand
+    hist_parser = subparsers.add_parser("activity", help="Activity journal operations")
+    hist_sub = hist_parser.add_subparsers(dest="hist_action", required=True)
+
+    p_hist_list = hist_sub.add_parser("list", help="List recent activity events")
+    p_hist_list.add_argument("--limit", type=int, default=100, help="Maximum number of events to return")
+
+    p_hist_log = hist_sub.add_parser("log", help="Append a custom event to history")
+    p_hist_log.add_argument("event_json", help="JSON string representing the activity event")
+
+    # 4. device subcommand
+    dev_parser = subparsers.add_parser("device", help="Device Bridge operations")
+    dev_sub = dev_parser.add_subparsers(dest="dev_action", required=True)
+
+    dev_sub.add_parser("list", help="Query connected and paired devices")
+
+    p_dev_act = dev_sub.add_parser("action", help="Execute device bridge action")
+    p_dev_act.add_argument("device_id", help="ID of target device")
+    p_dev_act.add_argument("action", help="Action name (mirror, find, share, file, settings, notifications)")
+    p_dev_act.add_argument("params_json", nargs="?", default=None, help="Optional JSON params")
+
+    dev_sub.add_parser("links", help="List shared link inbox items")
+
+    p_dev_dismiss = dev_sub.add_parser("dismiss-link", help="Dismiss a shared link")
+    p_dev_dismiss.add_argument("link_id", help="ID of link to dismiss")
+
+    # 5. automation subcommand
+    auto_parser = subparsers.add_parser("automation", help="Automations and systemd timers")
+    auto_sub = auto_parser.add_subparsers(dest="auto_action", required=True)
+
+    auto_sub.add_parser("list", help="List registered automations")
+
+    p_auto_save = auto_sub.add_parser("save", help="Save or update an automation")
+    p_auto_save.add_argument("auto_json", help="JSON representation of automation")
+
+    p_auto_del = auto_sub.add_parser("delete", help="Delete an automation and remove timer")
+    p_auto_del.add_argument("auto_id", help="ID of automation to delete")
+
+    p_auto_state = auto_sub.add_parser("set-state", help="Set automation state (enabled/paused)")
+    p_auto_state.add_argument("auto_id", help="ID of automation")
+    p_auto_state.add_argument("state", help="Target state: enabled, paused")
+
+    p_auto_test = auto_sub.add_parser("test", help="Test run an automation")
+    p_auto_test.add_argument("auto_id", help="ID of automation to test")
+
+    p_auto_run = auto_sub.add_parser("run", help="Run an automation (called by systemd service)")
+    p_auto_run.add_argument("auto_id", help="ID of automation to run")
+
+    # 6. preset subcommand
+    preset_parser = subparsers.add_parser("preset", help="Workspace Presets")
+    preset_sub = preset_parser.add_subparsers(dest="preset_action", required=True)
+
+    preset_sub.add_parser("list", help="List available workspace presets")
+
+    p_preset_act = preset_sub.add_parser("activate", help="Activate a workspace preset")
+    p_preset_act.add_argument("preset_id", help="ID of preset to activate")
+
+    # 7. workflow subcommand
+    wf_parser = subparsers.add_parser("workflow", help="Routine Builder & Workflow operations")
+    wf_sub = wf_parser.add_subparsers(dest="wf_action", required=True)
+
+    wf_sub.add_parser("list", help="List registered workflows")
+
+    p_wf_save = wf_sub.add_parser("save", help="Save or update a workflow")
+    p_wf_save.add_argument("workflow_json", help="JSON string representing the workflow")
+
+    p_wf_del = wf_sub.add_parser("delete", help="Delete a workflow by id")
+    p_wf_del.add_argument("workflow_id", help="ID of workflow to delete")
+
+    p_wf_run = wf_sub.add_parser("run", help="Run a workflow sequentially")
+    p_wf_run.add_argument("workflow_id", help="ID of workflow to run")
+
+    # 8. settings subcommand
+    settings_parser = subparsers.add_parser("settings", help="Toolbox Settings operations")
+    settings_sub = settings_parser.add_subparsers(dest="settings_action", required=True)
+
+    settings_sub.add_parser("get", help="Get current settings")
+
+    p_sett_save = settings_sub.add_parser("save", help="Save settings")
+    p_sett_save.add_argument("settings_json", help="JSON string representing settings to update")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.subcommand == "describe":
+        return cmd_describe(args)
+
+    elif args.subcommand == "status":
+        return cmd_status(args)
+
+    elif args.subcommand == "saved-space":
+        if args.ss_action == "list":
+            return cmd_saved_space_list(args)
+        elif args.ss_action == "save-item":
+            return cmd_saved_space_save_item(args)
+        elif args.ss_action == "delete-item":
+            return cmd_saved_space_delete_item(args)
+        elif args.ss_action == "patch-item":
+            return cmd_saved_space_patch_item(args)
+        elif args.ss_action == "save-collections":
+            return cmd_saved_space_save_collections(args)
+        elif args.ss_action == "open-url":
+            return cmd_saved_space_open_url(args)
+        elif args.ss_action == "copy":
+            return cmd_saved_space_copy(args)
+
+    elif args.subcommand == "action":
+        if args.act_action == "list":
+            return cmd_action_list(args)
+        elif args.act_action == "describe":
+            return cmd_describe(args)
+        elif args.act_action == "run":
+            return cmd_action_run(args)
+        elif args.act_action == "log-blocked":
+            return cmd_action_log_blocked(args)
+
+    elif args.subcommand == "activity":
+        if args.hist_action == "list":
+            return cmd_activity_list(args)
+        elif args.hist_action == "log":
+            return cmd_activity_log(args)
+
+    elif args.subcommand == "device":
+        if args.dev_action == "list":
+            return cmd_device_list(args)
+        elif args.dev_action == "action":
+            return cmd_device_action(args)
+        elif args.dev_action == "links":
+            return cmd_device_links(args)
+        elif args.dev_action == "dismiss-link":
+            return cmd_device_dismiss_link(args)
+
+    elif args.subcommand == "automation":
+        if args.auto_action == "list":
+            return cmd_automation_list(args)
+        elif args.auto_action == "save":
+            return cmd_automation_save(args)
+        elif args.auto_action == "delete":
+            return cmd_automation_delete(args)
+        elif args.auto_action == "set-state":
+            return cmd_automation_set_state(args)
+        elif args.auto_action == "test":
+            return cmd_automation_test(args)
+        elif args.auto_action == "run":
+            return cmd_automation_run(args)
+
+    elif args.subcommand == "preset":
+        if args.preset_action == "list":
+            return cmd_preset_list(args)
+        elif args.preset_action == "activate":
+            return cmd_preset_activate(args)
+
+    elif args.subcommand == "workflow":
+        if args.wf_action == "list":
+            return cmd_workflow_list(args)
+        elif args.wf_action == "save":
+            return cmd_workflow_save(args)
+        elif args.wf_action == "delete":
+            return cmd_workflow_delete(args)
+        elif args.wf_action == "run":
+            return cmd_workflow_run(args)
+
+    elif args.subcommand == "settings":
+        if args.settings_action == "get":
+            return cmd_settings_get(args)
+        elif args.settings_action == "save":
+            return cmd_settings_save(args)
+
+    parser.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

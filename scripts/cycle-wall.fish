@@ -12,13 +12,33 @@ if test (count $walls) -eq 0
     exit 0
 end
 
-set state_file "/tmp/gps_wall_idx_$USER"
-set idx 1
-if test -f "$state_file"
-    set idx (math (cat "$state_file") + 1)
+set direction "next"
+if test (count $argv) -gt 0
+    if test "$argv[1]" = "prev" -o "$argv[1]" = "previous" -o "$argv[1]" = "--prev"
+        set direction "prev"
+    end
 end
-if test $idx -gt (count $walls)
-    set idx 1
+
+set state_file "/tmp/gps_wall_idx_$USER"
+set total (count $walls)
+set idx 1
+
+if test "$direction" = "prev"
+    if test -f "$state_file"
+        set idx (math (cat "$state_file") - 1)
+    else
+        set idx $total
+    end
+    if test $idx -lt 1
+        set idx $total
+    end
+else
+    if test -f "$state_file"
+        set idx (math (cat "$state_file") + 1)
+    end
+    if test $idx -gt $total
+        set idx 1
+    end
 end
 echo $idx > "$state_file"
 

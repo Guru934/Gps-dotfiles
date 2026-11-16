@@ -45,3 +45,10 @@
   - [x] **K3 — Safe Idempotent Installer & Recovery**: Advisory per-user lock, durable transaction journal, pre-apply backup with SHA-256 verification, atomic symlinks, template preservation, signal rollback, and restartable uninstaller.
   - [x] **K4 — Packaging Documentation**: Authoritative installation and recovery manual (`docs/installation.md`), expanded dependency reference (`packages/README.md`), navigable root README (`README.md`), troubleshooting matrix, and clean-account trial procedures.
   - Full packaging test suite passing: 73 packaging tests (location independence, dependency checker, installer), 664 tests total.
+- [x] **GPS Bridge — Voice Assistant Integration**: Completed.
+  - Branch: `feature/gps-bridge` (on top of `feature/toolbox-integration`).
+  - Added `scripts/gps-toolbox describe --json` and `status --json` RPC endpoints.
+  - Hardened action execution with `--source assistant`, `--confirmed`, `--tainted`, and parameter regex schemas.
+  - Added session taint defense-in-depth and blocked reason logging in `history.jsonl`.
+  - Added `gps-doctor` health check for repository resolution, whitelist validity, and describe/status readiness.
+  - Hermetic tests in `tests/test_toolbox_bridge_contract.py` and `tests/test_gps_doctor.py` (96/96 tests passing).
