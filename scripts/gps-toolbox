@@ -590,13 +590,12 @@ def execute_action(
 
     resolved_params = dict(params or {})
     param_schema = action_def.get("param_schema", {})
-    for k in resolved_params:
-        if k == "confirmed" and source != "assistant":
-            continue
-        if k not in param_schema:
-            err = f"Unknown parameter '{k}' provided for action '{action_id}'."
-            _log_blocked(f"unknown param '{k}'")
-            return False, {"ok": False, "error": err}
+    if source == "assistant":
+        for k in resolved_params:
+            if k not in param_schema:
+                err = f"Unknown parameter '{k}' provided for action '{action_id}'."
+                _log_blocked(f"unknown param '{k}'")
+                return False, {"ok": False, "error": err}
 
     for param_name, pattern in param_schema.items():
         if param_name not in resolved_params:

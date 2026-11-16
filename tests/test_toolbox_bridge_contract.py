@@ -292,6 +292,32 @@ class ToolboxBridgeContractTests(unittest.TestCase):
         self.assertEqual(orig_content, new_content, "toolbox-actions.json content must never be mutated")
         self.assertEqual(orig_mtime, new_mtime, "toolbox-actions.json mtime must remain unchanged")
 
+    def test_ui_originated_action_call_shapes_manual_source(self):
+        """Verifies that all action call shapes originated from the Toolbox UI (Toolbox.qml /
+        ToolboxBackend.qml) succeed in dry-run with source=manual without unknown-param rejections."""
+        ui_calls = [
+            ("lock_screen", {}),
+            ("open_terminal", {}),
+            ("open_dev_ws", {}),
+            ("focus_start", {"minutes": "25"}),
+            ("scrcpy_launch", {"profile": "default"}),
+            ("audio_controls", {}),
+            ("set_volume", {"level": "40"}),
+            ("set_brightness", {"percent": "60"}),
+            ("show_reminder", {"message": "Meeting soon"}),
+            ("dnd_enable", {}),
+            ("open_browser", {}),
+            ("open_media_hub", {}),
+            ("suspend", {"confirmed": True}),
+            ("shutdown", {"confirmed": True}),
+            ("reboot", {"confirmed": True}),
+        ]
+        for act_id, p in ui_calls:
+            res = self.run_cli("action", "run", act_id, json.dumps(p), "--source", "manual", "--dry-run")
+            self.assertEqual(res.returncode, 0, f"UI call shape failed for {act_id} with params {p}: {res.stderr or res.stdout}")
+            data = json.loads(res.stdout)
+            self.assertTrue(data.get("ok"), f"UI call shape returned ok=False for {act_id}: {data}")
+
     def test_all_whitelist_actions_validity(self):
         """Verifies every action in config/toolbox-actions.json defines valid attributes."""
         config = json.loads(TOOLBOX_ACTIONS_CONFIG.read_text(encoding="utf-8"))

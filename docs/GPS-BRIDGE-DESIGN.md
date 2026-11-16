@@ -380,20 +380,60 @@ If resolution fails, every tool returns an honest `"GPS rice not available: coul
 
 ---
 
-## 6. Prompt-Injection & Untrusted Data Defenses
+## 6. Security Model, Taint Lifecycle & Known Limits
 
-1. **Session-Scoped Taint Tracking**:
-   - When `fetch_webpage` or `web_search` succeeds, `tainted` is set to `True`.
-   - The taint flag persists across turns and only clears when the assistant enters sleep/wake (F2/voice) or after 10 minutes of inactivity.
-   - While tainted, `gps_run_action` strictly allows actions flagged `"ui_only": true`. All other actions (terminals, browser, scrcpy, lock, record, screenshot, picker, notify, dev workspace, power) are refused.
-2. **Whitelist-Only Action IDs**:
-   Action IDs must match `^[A-Za-z0-9][A-Za-z0-9_\-.:]{0,63}\Z` and be explicitly marked with `"assistant_allowed": true` in `config/toolbox-actions.json`.
-3. **Regex Parameter Validation**:
-   Parameters are checked against the regex `param_schema` before execution.
-4. **Argv-Only Subprocess Spawning**:
-   Commands are passed as explicit `list[str]` arguments to `subprocess.run(..., shell=False)`.
-5. **Per-Turn Execution Budget**:
-   A maximum of 3 `gps_run_action` calls per turn prevents recursive or runaway loops.
+### 6.1. Security Architecture & Threat Model
+The GPS Bridge operates under a zero-trust model regarding external inputs. The voice assistant interacts with untrusted external text (web searches, downloaded pages, clipboard data, screen pixels, video titles, filenames). Without isolation, an indirect prompt injection payload could instruct the assistant to execute arbitrary actions.
+
+To counter this:
+1. **Single Source of Truth**: The assistant has zero free-form shell execution capability. It interacts exclusively via `scripts/gps-toolbox action run` using pre-vetted action IDs from `config/toolbox-actions.json`.
+2. **Whitelist Immobility**: Actions must have `"assistant_allowed": true` shipped in `toolbox-actions.json`. Destructive power actions (`suspend`, `reboot`, `shutdown`) are permanently excluded (`"assistant_allowed": false`).
+3. **Argv-Only Isolation & Regex Validation**: Subprocess calls use explicit parameter arrays (`shell=False`) with strict timeouts. Parameters must match pre-compiled regex schemas (`param_schema`).
+
+### 6.2. Session-Scoped Taint Lifecycle & Audit
+The taint mechanism prevents untrusted data ingested by the assistant from driving disruptive desktop actions.
+
+- **User-Facing Lifecycle**:
+  - **Setting**: Any tool that returns external or third-party authored text sets `_SESSION_TAINTED = True` with timestamp recording.
+  - **Clearing**: Taint is cleared when the user triggers **sleep/wake** (pressing `F2` twice or saying sleep/wake) or automatically after **10 minutes** of inactivity.
+  - **Scope**: Taint is session-scoped and persists across individual dialogue turns until cleared or expired.
+
+- **Systematic Tool Taint Audit**:
+  - **Tainting Tools**:
+    - `fetch_webpage`, `web_search`: arbitrary web page HTML and search snippet text.
+    - `take_screenshot`, `inspect_screen`: visual screen pixels and OCR text.
+    - `get_clipboard`: arbitrary user/web copied clipboard text.
+    - `search_and_play_youtube`: external video titles and metadata.
+    - `run_coding_task`, `run_coding_task_with_verification`: external coding worker logs and diffs.
+    - `list_directory`: attacker-chosen filenames in user directories (e.g. `~/Downloads`).
+    - `media_action(command="metadata")`: track and artist metadata.
+  - **Untainted Tools (Carefully Bounded)**:
+    - `get_active_window`: deliberately returns class/app name only (e.g. `Active window: kitty`); window titles are web-authored and omitted to stay untainted.
+    - `media_action(command="status")`: returns fixed playback states ("Playing", "Paused", "Stopped").
+    - `open_website`, `open_file`: return fixed launch confirmation strings without reading or parsing content.
+    - `gps_status`: adheres to strict privacy allowlists (workspace, class name, DND, volume, brightness); window titles, paths, device IDs, and clipboard contents are completely dropped.
+
+### 6.3. Dual-Layer Defense-in-Depth (`--tainted`)
+- While tainted, `gps_run_action` permits only actions with `"ui_only": true` in the whitelist (e.g. `toggle_toolbox`, `toggle_media_hub`, `dashboard_toggle`, `notif_center_toggle`, `clipboard_toggle`, `wallpaper_next`, `wallpaper_prev`, `set_volume`, `set_brightness`, `dnd_enable`, `dnd_disable`).
+- Non-UI actions (terminals, browser, scrcpy, lock, record, dev workspace, notifications) are refused with an honest voice explanation.
+- **Dual-Layer Enforcement**: The assistant passes `--tainted` to `gps-toolbox action run`. The rice CLI validates `--tainted` against the whitelist independently. The `--tainted` flag is defense-in-depth, not a substitute for client-side gating.
+
+### 6.4. Audio Injection Boundary
+- Audio spoken by the user lacks digital provenance metadata; ambient room audio or background media playback could potentially utter injection phrases.
+- Consequently, medium-risk actions (`lock_screen`, `record`, `scrcpy_launch`) cannot rely solely on absence of taint. They strictly mandate a **spoken human confirmation** ("Do you confirm I should lock the screen?").
+- The assistant's `_handle_risky` flow pauses execution until the user speaks an explicit affirmative ("yes"). The `--confirmed` CLI flag is appended ONLY by `confirm_action()` upon receiving the spoken confirmation.
+
+### 6.5. Current Coverage & Known Limits
+**Taint currently gates only `gps_run_action`.** Other side-effect tools in `ALL_TOOLS` are NOT currently gated by the session taint flag:
+- `press_key`, `type_text`, `click_screen`: computer-use primitives; protected today by system instruction guidance and per-turn budgets, without taint gating.
+- `open_application`: launches desktop apps; protected by desktop file resolution, without taint gating.
+- `open_website`: opens browser URLs; without taint gating.
+- `run_coding_task`: protected by human confirmation gate (`_handle_risky`) and hermetic execution sandbox.
+
+#### Proposed Options for Extending Taint Gating (Future Work):
+- **Option A (Strict Computer-Use Freeze)**: Disallow `press_key`, `type_text`, and `click_screen` entirely while the session is tainted.
+- **Option B (Universal Spoken Confirmation)**: Automatically elevate all non-UI side-effect tools to require explicit spoken confirmation while tainted.
+- **Option C (Domain Allowlist for Navigation)**: Restrict `open_website` to a configurable allowlist of domains while tainted.
 
 ---
 

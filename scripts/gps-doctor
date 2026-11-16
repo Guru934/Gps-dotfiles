@@ -521,6 +521,51 @@ def audit_session(repo_root=None, runner=subprocess.run):
         "action": None,
     })
 
+    # GPS Bridge (Assistant integration)
+    bridge_ok = False
+    bridge_details = "not available"
+    toolbox_script = root / "scripts" / "gps-toolbox"
+    actions_cfg = root / "config" / "toolbox-actions.json"
+
+    if not root.is_dir():
+        bridge_details = "GPS repository root not found"
+    elif not toolbox_script.is_file() or not actions_cfg.is_file():
+        bridge_details = "gps-toolbox script or config/toolbox-actions.json missing"
+    else:
+        try:
+            with open(actions_cfg, "r", encoding="utf-8") as f:
+                cfg_data = json.load(f)
+            actions = cfg_data.get("actions", {})
+            asst_actions = [aid for aid, a in actions.items() if isinstance(a, dict) and a.get("assistant_allowed")]
+
+            desc_res = runner([sys.executable, str(toolbox_script), "describe", "--json"], capture_output=True, text=True, timeout=5)
+            stat_res = runner([sys.executable, str(toolbox_script), "status", "--json"], capture_output=True, text=True, timeout=5)
+
+            if desc_res.returncode == 0 and stat_res.returncode == 0:
+                try:
+                    desc_data = json.loads(desc_res.stdout) if desc_res.stdout.strip() else {"ok": True}
+                    stat_data = json.loads(stat_res.stdout) if stat_res.stdout.strip() else {"ok": True}
+                except Exception:
+                    desc_data, stat_data = {}, {}
+                if desc_data.get("ok") and stat_data.get("ok"):
+                    bridge_ok = True
+                    bridge_details = f"ready ({len(asst_actions)} voice-accessible actions, status/describe functional)"
+                else:
+                    bridge_details = "describe or status returned ok=false"
+            else:
+                bridge_details = f"command failed (describe rc={desc_res.returncode}, status rc={stat_res.returncode})"
+        except Exception as e:
+            bridge_details = f"probe exception: {e}"
+
+    checks.append({
+        "name": "gps-bridge",
+        "label": "GPS Bridge",
+        "status": "OK" if bridge_ok else "WARN",
+        "essential": False,
+        "details": bridge_details,
+        "action": None if bridge_ok else "verify scripts/gps-toolbox describe and status --json",
+    })
+
     # Environment versions
     env_info = {
         "hyprland_version": get_hyprland_version(runner=runner),
