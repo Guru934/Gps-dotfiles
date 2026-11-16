@@ -492,6 +492,44 @@ def cmd_action_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_describe(args: argparse.Namespace) -> int:
+    """Describe actions for external integrations (assistant) without leaking executables."""
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    described: list[dict[str, Any]] = []
+
+    for action_id in sorted(actions.keys()):
+        raw = actions[action_id]
+        if not isinstance(raw, dict):
+            continue
+        destructive = bool(raw.get("destructive", False))
+        confirm = bool(raw.get("confirm", False))
+        default_risk = "destructive" if destructive else ("medium" if confirm else "safe")
+        risk = str(raw.get("risk") or default_risk).lower().strip()
+        assistant_allowed = bool(raw.get("assistant_allowed", False))
+        ui_only = bool(raw.get("ui_only", False))
+
+        described.append({
+            "id": action_id,
+            "title": str(raw.get("name") or raw.get("title") or action_id).strip(),
+            "description": str(raw.get("purpose") or raw.get("description") or "").strip(),
+            "category": str(raw.get("category") or "General").strip(),
+            "param_schema": raw.get("param_schema", {}),
+            "risk": risk,
+            "confirm": confirm,
+            "assistant_allowed": assistant_allowed,
+            "ui_only": ui_only,
+        })
+
+    res = {
+        "ok": True,
+        "count": len(described),
+        "actions": described,
+    }
+    sys.stdout.write(json.dumps(res, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
 def execute_action(
     action_id: str,
     params: dict[str, Any] | None = None,
@@ -499,6 +537,7 @@ def execute_action(
     confirmed: bool = False,
     trigger: str = "Manual",
     automation: str = "",
+    source: str = "manual",
 ) -> tuple[bool, dict[str, Any]]:
     """Execute an action from the whitelist safely with parameter validation."""
     action_id = action_id.strip()
@@ -510,6 +549,12 @@ def execute_action(
         return False, {"ok": False, "error": err}
 
     action_def = actions[action_id]
+    if source == "assistant":
+        if not bool(action_def.get("assistant_allowed", False)):
+            err = f"Action '{action_id}' is not permitted for assistant execution."
+            return False, {"ok": False, "error": err, "assistant_rejected": True}
+        trigger = "Assistant"
+
     executable_tmpl = action_def.get("executable", [])
     if not isinstance(executable_tmpl, list) or not executable_tmpl:
         err = f"Action '{action_id}' has no valid executable definition."
@@ -543,18 +588,21 @@ def execute_action(
     start_time = time.monotonic()
     timestamp_ms = int(time.time() * 1000)
 
+    details_prefix = "[Dry-Run] " if dry_run else ""
     if dry_run:
         duration_str = "0.00s"
+        details_str = f"via assistant: {details_prefix}{' '.join(exec_args)}" if source == "assistant" else f"{details_prefix}{' '.join(exec_args)}"
         event = {
             "id": f"evt_{timestamp_ms}",
             "ts": timestamp_ms,
             "name": action_def.get("name", action_id),
             "trigger": trigger,
+            "source": source,
             "result": "completed",
             "duration": duration_str,
             "category": action_def.get("category", "Desktop"),
             "automation": automation,
-            "details": f"[Dry-Run] {' '.join(exec_args)}",
+            "details": details_str,
         }
         append_history_event(event)
         res = {
@@ -594,16 +642,21 @@ def execute_action(
     duration_str = f"{duration:.2f}s"
     result_status = "completed" if returncode == 0 else "failed"
 
+    details_str = f"via assistant: {' '.join(exec_args)}" if source == "assistant" else " ".join(exec_args)
+    if returncode != 0:
+        details_str += f" (exit {returncode})"
+
     event = {
         "id": f"evt_{timestamp_ms}",
         "ts": timestamp_ms,
         "name": action_def.get("name", action_id),
         "trigger": trigger,
+        "source": source,
         "result": result_status,
         "duration": duration_str,
         "category": action_def.get("category", "Desktop"),
         "automation": automation,
-        "details": f"{' '.join(exec_args)} (exit {returncode})",
+        "details": details_str,
     }
     append_history_event(event)
 
@@ -632,15 +685,19 @@ def cmd_action_run(args: argparse.Namespace) -> int:
             sys.stdout.write(json.dumps({"ok": False, "error": err}) + "\n")
             return 1
 
+    source = str(getattr(args, "source", "manual") or "manual").strip().lower()
+    trigger = "Assistant" if source == "assistant" else "Manual"
+
     ok, res = execute_action(
         action_id=args.action_id,
         params=params,
         dry_run=args.dry_run,
         confirmed=args.confirmed,
-        trigger="Manual",
+        trigger=trigger,
         automation="",
+        source=source,
     )
-    if not ok and "error" in res and "requires_confirm" not in res:
+    if not ok and "error" in res and "requires_confirm" not in res and not res.get("assistant_rejected"):
         sys.stderr.write(f"error: {res['error']}\n")
     sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
     return 0 if ok else 1
@@ -814,6 +871,236 @@ def cmd_device_list(args: argparse.Namespace) -> int:
         "devices": devices,
     }
     sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    return 0
+
+
+# ==============================================================================
+# Live Desktop Status Probes (GPS Bridge Phase 1)
+# ==============================================================================
+
+def probe_hyprland() -> dict[str, Any]:
+    if not shutil.which("hyprctl"):
+        return {"available": False, "reason": "hyprctl executable not found"}
+    try:
+        ws_res = subprocess.run(["hyprctl", "activeworkspace", "-j"], capture_output=True, text=True, timeout=2)
+        win_res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=2)
+        all_ws = subprocess.run(["hyprctl", "workspaces", "-j"], capture_output=True, text=True, timeout=2)
+
+        ws_data = json.loads(ws_res.stdout) if ws_res.returncode == 0 and ws_res.stdout.strip() else {}
+        win_data = json.loads(win_res.stdout) if win_res.returncode == 0 and win_res.stdout.strip() else {}
+        workspaces = json.loads(all_ws.stdout) if all_ws.returncode == 0 and all_ws.stdout.strip() else []
+
+        ws_id = ws_data.get("id", ws_data.get("workspaceID", 1))
+        ws_name = str(ws_data.get("name", str(ws_id)))
+        win_class = str(win_data.get("class", ""))
+        win_title = str(win_data.get("title", ""))
+
+        return {
+            "available": True,
+            "workspace": {"id": ws_id, "name": ws_name},
+            "window": {"class": win_class, "title": win_title},
+            "workspace_count": len(workspaces) if isinstance(workspaces, list) and workspaces else 1,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_notifications() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    ipc_script = repo_root / "scripts" / "gps-ipc"
+    if not ipc_script.is_file():
+        return {"available": False, "reason": "gps-ipc not found"}
+    try:
+        res = subprocess.run([str(ipc_script), "notify", "status"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {
+                "available": True,
+                "dnd": bool(data.get("dnd", False)),
+                "dndMode": str(data.get("dndMode", "off")),
+                "unread": int(data.get("totalStored", 0)),
+                "held": int(data.get("heldCount", 0)),
+                "activeToasts": int(data.get("activeToasts", 0)),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "notify status failed"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_focus() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    ipc_script = repo_root / "scripts" / "gps-ipc"
+    if not ipc_script.is_file():
+        return {"available": False, "reason": "gps-ipc not found"}
+    try:
+        res = subprocess.run([str(ipc_script), "island", "focusState"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {
+                "available": True,
+                "active": bool(data.get("focusOn", False)),
+                "paused": bool(data.get("paused", False)),
+                "isBreak": bool(data.get("isBreak", False)),
+                "remaining": int(data.get("remaining", -1)),
+                "sessionIndex": int(data.get("sessionIndex", 0)),
+                "sessionCount": int(data.get("sessionCount", 0)),
+                "title": str(data.get("title", "")),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "focus state query failed"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_wallpaper() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    wall_script = repo_root / "scripts" / "gps_wallpaper.py"
+    if not wall_script.is_file():
+        return {"available": False, "reason": "gps_wallpaper.py not found"}
+    try:
+        res = subprocess.run([sys.executable, str(wall_script), "inspect"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            raw_path = str(data.get("path") or "")
+            name = Path(raw_path).name if raw_path else ""
+            return {
+                "available": True,
+                "name": name,
+                "path": raw_path,
+                "type": str(data.get("type", "static")),
+                "status": str(data.get("status", "STATIC")),
+            }
+        return {"available": False, "reason": res.stderr.strip() or "wallpaper inspect exited non-zero"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_audio() -> dict[str, Any]:
+    vol = -1
+    muted = False
+    now_playing = ""
+    if shutil.which("wpctl"):
+        try:
+            res = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                out = res.stdout.strip()
+                parts = out.split()
+                if len(parts) >= 2:
+                    try:
+                        vol = int(round(float(parts[1]) * 100))
+                    except ValueError:
+                        pass
+                muted = "[MUTED]" in out
+        except Exception:
+            pass
+
+    if shutil.which("playerctl"):
+        try:
+            res = subprocess.run(["playerctl", "metadata", "--format", "{{title}} - {{artist}}"], capture_output=True, text=True, timeout=1)
+            if res.returncode == 0 and res.stdout.strip():
+                now_playing = res.stdout.strip()
+        except Exception:
+            pass
+
+    if vol >= 0:
+        return {
+            "available": True,
+            "volume": vol,
+            "muted": muted,
+            "now_playing": now_playing,
+        }
+    return {"available": False, "reason": "audio volume probe unavailable"}
+
+
+def probe_brightness() -> dict[str, Any]:
+    if shutil.which("brightnessctl"):
+        try:
+            res = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                line = res.stdout.strip().splitlines()[0]
+                fields = line.split(",")
+                if len(fields) >= 4:
+                    pct_str = fields[3].replace("%", "").strip()
+                    return {"available": True, "percent": int(pct_str)}
+        except Exception as exc:
+            return {"available": False, "reason": str(exc)}
+    return {"available": False, "reason": "brightnessctl not available"}
+
+
+def probe_recording() -> dict[str, Any]:
+    repo_root = get_repo_root()
+    rec_script = repo_root / "scripts" / "gps-record"
+    if not rec_script.is_file():
+        return {"available": False, "reason": "gps-record not found"}
+    try:
+        res = subprocess.run([str(rec_script), "status"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            return {"available": True, "active": bool(data.get("recording", False))}
+        return {"available": False, "reason": "recording status query returned non-zero"}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_devices() -> dict[str, Any]:
+    try:
+        devs = query_devices()
+        reachable = sum(1 for d in devs if str(d.get("state", "")).lower() in ("reachable", "connected"))
+        return {
+            "available": True,
+            "count": len(devs),
+            "reachable_count": reachable,
+            "devices": devs,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_quickshell() -> dict[str, Any]:
+    try:
+        repo_root = get_repo_root()
+        ipc_script = repo_root / "scripts" / "gps-ipc"
+        shell_ok = False
+        island_ok = False
+        if ipc_script.is_file():
+            chk_shell = subprocess.run([str(ipc_script), "check", "shell"], capture_output=True, text=True, timeout=1)
+            shell_ok = (chk_shell.returncode == 0)
+            chk_island = subprocess.run([str(ipc_script), "check", "island"], capture_output=True, text=True, timeout=1)
+            island_ok = (chk_island.returncode == 0)
+        return {
+            "available": True,
+            "shell": shell_ok,
+            "island": island_ok,
+            "settings": False,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def probe_lock() -> dict[str, Any]:
+    try:
+        res = subprocess.run(["pidof", "hyprlock"], capture_output=True, text=True, timeout=1)
+        return {"available": True, "locked": (res.returncode == 0)}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Aggregate live desktop state with per-field fault isolation."""
+    result = {
+        "ok": True,
+        "timestamp": int(time.time()),
+        "hyprland": probe_hyprland(),
+        "notifications": probe_notifications(),
+        "focus": probe_focus(),
+        "wallpaper": probe_wallpaper(),
+        "audio": probe_audio(),
+        "brightness": probe_brightness(),
+        "recording": probe_recording(),
+        "devices": probe_devices(),
+        "quickshell": probe_quickshell(),
+        "lock": probe_lock(),
+    }
+    sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     return 0
 
 
@@ -1811,11 +2098,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     act_sub.add_parser("list", help="List all registered actions and available IDs")
 
+    p_act_desc = act_sub.add_parser("describe", help="Describe available actions")
+    p_act_desc.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+
     p_act_run = act_sub.add_parser("run", help="Run a whitelisted action safely")
     p_act_run.add_argument("action_id", help="ID of whitelisted action to run")
     p_act_run.add_argument("params_json", nargs="?", default=None, help="Optional JSON string of parameters")
     p_act_run.add_argument("--dry-run", action="store_true", help="Simulate execution without running subprocess")
     p_act_run.add_argument("--confirmed", action="store_true", help="Confirm execution of destructive action")
+    p_act_run.add_argument("--source", default="manual", help="Source of execution (manual, assistant)")
+
+    # 2b. describe subcommand (direct alias)
+    desc_parser = subparsers.add_parser("describe", help="Describe actions for integrations and assistant")
+    desc_parser.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
+
+    # 2c. status subcommand (direct alias)
+    status_parser = subparsers.add_parser("status", help="Aggregate live desktop status")
+    status_parser.add_argument("--json", action="store_true", default=True, help="Output as JSON (default)")
 
     # 3. activity subcommand
     hist_parser = subparsers.add_parser("activity", help="Activity journal operations")
@@ -1905,7 +2204,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.subcommand == "saved-space":
+    if args.subcommand == "describe":
+        return cmd_describe(args)
+
+    elif args.subcommand == "status":
+        return cmd_status(args)
+
+    elif args.subcommand == "saved-space":
         if args.ss_action == "list":
             return cmd_saved_space_list(args)
         elif args.ss_action == "save-item":
@@ -1924,6 +2229,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.subcommand == "action":
         if args.act_action == "list":
             return cmd_action_list(args)
+        elif args.act_action == "describe":
+            return cmd_describe(args)
         elif args.act_action == "run":
             return cmd_action_run(args)
 

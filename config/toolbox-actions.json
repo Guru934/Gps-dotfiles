@@ -6,8 +6,11 @@
       "category": "Desktop",
       "purpose": "Locks the current desktop session immediately.",
       "executable": ["${GPS_ROOT}/scripts/gps-lock"],
-      "confirm": false,
+      "confirm": true,
       "destructive": false,
+      "risk": "medium",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 10
     },
     "open_terminal": {
@@ -17,6 +20,9 @@
       "executable": ["kitty"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "open_browser": {
@@ -26,6 +32,9 @@
       "executable": ["brave"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "open_dev_ws": {
@@ -35,6 +44,9 @@
       "executable": ["code"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "focus_start": {
@@ -44,6 +56,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-ipc", "island", "focusToggle"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "audio_controls": {
@@ -53,6 +68,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-ipc", "mediahub", "toggle"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
       "timeout": 5
     },
     "open_media_hub": {
@@ -62,6 +80,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-ipc", "mediahub", "toggle"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
       "timeout": 5
     },
     "scrcpy_launch": {
@@ -69,8 +90,11 @@
       "category": "Phone & Devices",
       "purpose": "Starts screen mirroring with active display and audio forwarding.",
       "executable": ["scrcpy", "--turn-screen-off", "--stay-awake"],
-      "confirm": false,
+      "confirm": true,
       "destructive": false,
+      "risk": "medium",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "set_volume": {
@@ -83,6 +107,9 @@
       },
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
       "timeout": 5
     },
     "set_brightness": {
@@ -95,6 +122,9 @@
       },
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
       "timeout": 5
     },
     "dnd_enable": {
@@ -104,6 +134,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-ipc", "notify", "dnd", "toggle"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
       "timeout": 5
     },
     "notify": {
@@ -117,6 +150,9 @@
       },
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "show_reminder": {
@@ -129,6 +165,9 @@
       },
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 5
     },
     "screenshot": {
@@ -138,6 +177,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-shot", "region"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 30
     },
     "record": {
@@ -145,8 +187,11 @@
       "category": "Desktop",
       "purpose": "Starts or stops native screen recording.",
       "executable": ["${GPS_ROOT}/scripts/gps-record", "toggle"],
-      "confirm": false,
+      "confirm": true,
       "destructive": false,
+      "risk": "medium",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 10
     },
     "picker": {
@@ -156,6 +201,9 @@
       "executable": ["${GPS_ROOT}/scripts/gps-picker"],
       "confirm": false,
       "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": false,
       "timeout": 30
     },
     "suspend": {
@@ -165,6 +213,9 @@
       "executable": ["systemctl", "suspend"],
       "confirm": true,
       "destructive": true,
+      "risk": "destructive",
+      "assistant_allowed": false,
+      "ui_only": false,
       "grace": 30,
       "timeout": 10
     },
@@ -175,6 +226,9 @@
       "executable": ["systemctl", "reboot"],
       "confirm": true,
       "destructive": true,
+      "risk": "destructive",
+      "assistant_allowed": false,
+      "ui_only": false,
       "grace": 30,
       "timeout": 10
     },
@@ -185,9 +239,167 @@
       "executable": ["systemctl", "poweroff"],
       "confirm": true,
       "destructive": true,
+      "risk": "destructive",
+      "assistant_allowed": false,
+      "ui_only": false,
       "grace": 30,
       "timeout": 10
+    },
+    "toggle_toolbox": {
+      "name": "Toggle Toolbox",
+      "category": "Desktop",
+      "purpose": "Toggles the GPS Toolbox window.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "toolbox", "toggle"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "open_toolbox": {
+      "name": "Open Toolbox",
+      "category": "Desktop",
+      "purpose": "Opens the GPS Toolbox window.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "toolbox", "open"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "close_toolbox": {
+      "name": "Close Toolbox",
+      "category": "Desktop",
+      "purpose": "Closes the GPS Toolbox window.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "toolbox", "close"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "toggle_media_hub": {
+      "name": "Toggle Media Hub",
+      "category": "Media",
+      "purpose": "Toggles the GPS Media Hub drawer.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "mediahub", "toggle"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "close_media_hub": {
+      "name": "Close Media Hub",
+      "category": "Media",
+      "purpose": "Closes the GPS Media Hub drawer.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "mediahub", "close"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "toggle_dashboard": {
+      "name": "Toggle Dashboard",
+      "category": "Desktop",
+      "purpose": "Toggles the GPS Dashboard drawer.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "shell", "dashboard", "toggle"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "open_dashboard": {
+      "name": "Open Dashboard",
+      "category": "Desktop",
+      "purpose": "Opens the GPS Dashboard drawer.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "shell", "dashboard", "open"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "close_dashboard": {
+      "name": "Close Dashboard",
+      "category": "Desktop",
+      "purpose": "Closes the GPS Dashboard drawer.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "shell", "dashboard", "close"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "toggle_notif_center": {
+      "name": "Toggle Notification Center",
+      "category": "Desktop",
+      "purpose": "Toggles the Notification Center panel.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "shell", "notifcenter", "toggle"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "toggle_clipboard": {
+      "name": "Toggle Clipboard",
+      "category": "Desktop",
+      "purpose": "Toggles the Clipboard history picker.",
+      "executable": ["${GPS_ROOT}/scripts/gps-ipc", "clipboard", "toggle"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "open_wallpaper_picker": {
+      "name": "Open Wallpaper Picker",
+      "category": "Desktop",
+      "purpose": "Opens the rofi wallpaper picker dialog.",
+      "executable": ["${GPS_ROOT}/scripts/pick-wall.fish"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 15
+    },
+    "wallpaper_next": {
+      "name": "Next Wallpaper",
+      "category": "Desktop",
+      "purpose": "Switches to the next wallpaper in the collection.",
+      "executable": ["${GPS_ROOT}/scripts/cycle-wall.fish", "next"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
+    },
+    "wallpaper_prev": {
+      "name": "Previous Wallpaper",
+      "category": "Desktop",
+      "purpose": "Switches to the previous wallpaper in the collection.",
+      "executable": ["${GPS_ROOT}/scripts/cycle-wall.fish", "prev"],
+      "confirm": false,
+      "destructive": false,
+      "risk": "safe",
+      "assistant_allowed": true,
+      "ui_only": true,
+      "timeout": 5
     }
   }
 }
-

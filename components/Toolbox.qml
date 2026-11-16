@@ -2233,7 +2233,7 @@ Item {
                                 Rectangle { width: 8; height: 8; radius: 4; color: root.resTone(er.e.result) }
                                 Lbl { text: er.e.name; font.weight: Font.DemiBold; Layout.fillWidth: true }
                                 Chip { visible: !!er.e.sample; text: "SAMPLE"; tone: th.mute }
-                                Mono { visible: root.width > 760; text: er.e.trigger; color: th.mute }
+                                Mono { visible: root.width > 760; text: (er.e.source === "assistant" || er.e.trigger === "Assistant") ? "via assistant" : er.e.trigger; color: th.mute }
                                 Chip { text: root.resLabel(er.e.result).toUpperCase(); tone: root.resTone(er.e.result) }
                                 Mono { visible: root.width > 760 && er.e.duration !== ""; text: er.e.duration; color: th.mute }
                                 Mono { text: root.fmtTs(er.e.ts); color: th.mute }
@@ -2247,7 +2247,7 @@ Item {
                             ColumnLayout { id: ed2; x: 26; width: parent.width - 34; spacing: 2
                                 Wrap { text: er.e.details !== "" ? er.e.details : "No further details were supplied." }
                                 Mono { color: th.mute; Layout.fillWidth: true
-                                    text: "Category: " + er.e.category + (er.e.automation ? " · Automation: " + er.e.automation : "") } }
+                                    text: "Category: " + er.e.category + (er.e.automation ? " · Automation: " + er.e.automation : "") + (er.e.source === "assistant" ? " · Source: assistant" : "") } }
                         }
                     }
                 }
