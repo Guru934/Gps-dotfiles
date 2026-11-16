@@ -538,22 +538,49 @@ def execute_action(
     trigger: str = "Manual",
     automation: str = "",
     source: str = "manual",
+    tainted: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """Execute an action from the whitelist safely with parameter validation."""
     action_id = action_id.strip()
     whitelist = load_action_whitelist()
     actions = whitelist.get("actions", {})
 
+    def _log_blocked(err_msg: str) -> None:
+        if source == "assistant":
+            ts_ms = int(time.time() * 1000)
+            name_val = action_def.get("name", action_id) if action_id in actions else action_id
+            cat_val = action_def.get("category", "Desktop") if action_id in actions else "Desktop"
+            evt = {
+                "id": f"evt_{ts_ms}",
+                "ts": ts_ms,
+                "name": name_val,
+                "trigger": "Assistant",
+                "source": "assistant",
+                "result": "blocked",
+                "duration": "0.00s",
+                "category": cat_val,
+                "automation": automation,
+                "details": f"via assistant: blocked ({err_msg})",
+            }
+            append_history_event(evt)
+
     if action_id not in actions:
         err = f"Action '{action_id}' is not registered in the whitelist."
+        _log_blocked(err)
         return False, {"ok": False, "error": err}
 
     action_def = actions[action_id]
     if source == "assistant":
         if not bool(action_def.get("assistant_allowed", False)):
             err = f"Action '{action_id}' is not permitted for assistant execution."
+            _log_blocked(err)
             return False, {"ok": False, "error": err, "assistant_rejected": True}
         trigger = "Assistant"
+
+    if tainted and not bool(action_def.get("ui_only", False)):
+        err = f"Action '{action_id}' is blocked: session is tainted by untrusted content and action is not ui_only."
+        _log_blocked(err)
+        return False, {"ok": False, "error": err, "taint_blocked": True}
 
     executable_tmpl = action_def.get("executable", [])
     if not isinstance(executable_tmpl, list) or not executable_tmpl:
@@ -562,10 +589,23 @@ def execute_action(
 
     resolved_params = dict(params or {})
     param_schema = action_def.get("param_schema", {})
+    for k in resolved_params:
+        if k == "confirmed" and source != "assistant":
+            continue
+        if k not in param_schema:
+            err = f"Unknown parameter '{k}' provided for action '{action_id}'."
+            _log_blocked(err)
+            return False, {"ok": False, "error": err}
+
     for param_name, pattern in param_schema.items():
+        if param_name not in resolved_params:
+            err = f"Missing required parameter '{param_name}' for action '{action_id}'."
+            _log_blocked(err)
+            return False, {"ok": False, "error": err}
         val = str(resolved_params.get(param_name, "")).strip()
         if not re.match(pattern, val):
             err = f"Parameter '{param_name}' value '{val}' does not match validation pattern: {pattern}"
+            _log_blocked(err)
             return False, {"ok": False, "error": err}
 
     repo_root = str(get_repo_root())
@@ -580,9 +620,13 @@ def execute_action(
         exec_args.append(s)
 
     is_destructive = bool(action_def.get("destructive", False) or action_def.get("confirm", False))
-    is_confirmed = bool(confirmed or resolved_params.get("confirmed", False))
+    if source == "assistant":
+        is_confirmed = bool(confirmed)
+    else:
+        is_confirmed = bool(confirmed or resolved_params.get("confirmed", False))
     if is_destructive and not is_confirmed and not dry_run:
         err = f"Action '{action_id}' requires explicit confirmation."
+        _log_blocked(err)
         return False, {"ok": False, "error": err, "requires_confirm": True}
 
     start_time = time.monotonic()
@@ -675,9 +719,10 @@ def execute_action(
 
 def cmd_action_run(args: argparse.Namespace) -> int:
     params: dict[str, Any] = {}
-    if args.params_json:
+    params_str = getattr(args, "params_json_flag", None) or getattr(args, "params_json", None) or ""
+    if params_str:
         try:
-            parsed_params = json.loads(args.params_json)
+            parsed_params = json.loads(params_str)
             if isinstance(parsed_params, dict):
                 params = parsed_params
         except Exception as exc:
@@ -696,11 +741,41 @@ def cmd_action_run(args: argparse.Namespace) -> int:
         trigger=trigger,
         automation="",
         source=source,
+        tainted=bool(getattr(args, "tainted", False)),
     )
-    if not ok and "error" in res and "requires_confirm" not in res and not res.get("assistant_rejected"):
+    if not ok and "error" in res and "requires_confirm" not in res and not res.get("assistant_rejected") and not res.get("taint_blocked"):
         sys.stderr.write(f"error: {res['error']}\n")
     sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
     return 0 if ok else 1
+
+
+def cmd_action_log_blocked(args: argparse.Namespace) -> int:
+    action_id = str(args.action_id).strip()
+    reason = str(getattr(args, "reason", "blocked") or "blocked").strip()
+    source = str(getattr(args, "source", "assistant") or "assistant").strip().lower()
+    trigger = "Assistant" if source == "assistant" else "Manual"
+    whitelist = load_action_whitelist()
+    actions = whitelist.get("actions", {})
+    action_def = actions.get(action_id, {})
+    name = action_def.get("name", action_id)
+    category = action_def.get("category", "Desktop")
+
+    timestamp_ms = int(time.time() * 1000)
+    event = {
+        "id": f"evt_{timestamp_ms}",
+        "ts": timestamp_ms,
+        "name": name,
+        "trigger": trigger,
+        "source": source,
+        "result": "blocked",
+        "duration": "0.00s",
+        "category": category,
+        "automation": "",
+        "details": f"via assistant: blocked ({reason})" if source == "assistant" else f"blocked: {reason}",
+    }
+    append_history_event(event)
+    sys.stdout.write(json.dumps({"ok": True, "action": action_id, "result": "blocked", "event": event}, ensure_ascii=False) + "\n")
+    return 0
 
 
 def cmd_activity_list(args: argparse.Namespace) -> int:
@@ -2104,9 +2179,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_act_run = act_sub.add_parser("run", help="Run a whitelisted action safely")
     p_act_run.add_argument("action_id", help="ID of whitelisted action to run")
     p_act_run.add_argument("params_json", nargs="?", default=None, help="Optional JSON string of parameters")
+    p_act_run.add_argument("--params-json", dest="params_json_flag", default="", help="JSON string representing parameter dictionary")
     p_act_run.add_argument("--dry-run", action="store_true", help="Simulate execution without running subprocess")
     p_act_run.add_argument("--confirmed", action="store_true", help="Confirm execution of destructive action")
     p_act_run.add_argument("--source", default="manual", help="Source of execution (manual, assistant)")
+    p_act_run.add_argument("--tainted", action="store_true", help="Session is tainted; only allow ui_only actions")
+
+    p_act_log_blocked = act_sub.add_parser("log-blocked", help="Log a blocked action attempt to history")
+    p_act_log_blocked.add_argument("action_id", help="Action ID that was blocked")
+    p_act_log_blocked.add_argument("--reason", default="blocked", help="Reason for blockage")
+    p_act_log_blocked.add_argument("--source", default="assistant", help="Source of attempt")
 
     # 2b. describe subcommand (direct alias)
     desc_parser = subparsers.add_parser("describe", help="Describe actions for integrations and assistant")
@@ -2233,6 +2315,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_describe(args)
         elif args.act_action == "run":
             return cmd_action_run(args)
+        elif args.act_action == "log-blocked":
+            return cmd_action_log_blocked(args)
 
     elif args.subcommand == "activity":
         if args.hist_action == "list":

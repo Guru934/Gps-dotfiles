@@ -178,6 +178,70 @@ class ToolboxBridgeContractTests(unittest.TestCase):
         self.assertFalse(data_lock.get("ok"))
         self.assertTrue(data_lock.get("requires_confirm"))
 
+    def test_model_supplied_confirmed_param_does_not_bypass_confirmation(self):
+        """Model passing {"confirmed": true} in params_json must NOT bypass confirmation."""
+        res = self.run_cli("action", "run", "lock_screen", json.dumps({"confirmed": True}), "--source", "assistant")
+        self.assertNotEqual(res.returncode, 0)
+        data = json.loads(res.stdout)
+        self.assertFalse(data.get("ok"))
+        # Should be rejected either for requires_confirm or unknown parameter
+        self.assertTrue(data.get("requires_confirm") or "Unknown parameter" in data.get("error", ""))
+
+    def test_unknown_parameter_rejected(self):
+        """Verifies extra/unknown parameters are rejected and logged as blocked."""
+        res = self.run_cli("action", "run", "toggle_toolbox", json.dumps({"bogus": "value"}), "--source", "assistant")
+        self.assertNotEqual(res.returncode, 0)
+        data = json.loads(res.stdout)
+        self.assertFalse(data.get("ok"))
+        self.assertIn("Unknown parameter 'bogus'", data.get("error", ""))
+
+        # Verify entry in history.jsonl is marked blocked
+        self.assertTrue(self.history_file.exists())
+        lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
+        event = json.loads(lines[-1])
+        self.assertEqual(event.get("result"), "blocked")
+        self.assertEqual(event.get("source"), "assistant")
+        self.assertIn("Unknown parameter 'bogus'", event.get("details", ""))
+
+    def test_tainted_flag_enforcement(self):
+        """Verifies --tainted allows ui_only actions and blocks non-ui_only actions."""
+        # UI-only action should succeed under taint
+        res_ui = self.run_cli("action", "run", "toggle_toolbox", "--tainted", "--source", "assistant", "--dry-run")
+        self.assertEqual(res_ui.returncode, 0, res_ui.stderr)
+        data_ui = json.loads(res_ui.stdout)
+        self.assertTrue(data_ui.get("ok"))
+
+        # Non-UI-only action must be blocked under taint
+        res_non_ui = self.run_cli("action", "run", "open_terminal", "--tainted", "--source", "assistant", "--dry-run")
+        self.assertNotEqual(res_non_ui.returncode, 0)
+        data_non_ui = json.loads(res_non_ui.stdout)
+        self.assertFalse(data_non_ui.get("ok"))
+        self.assertTrue(data_non_ui.get("taint_blocked"))
+        self.assertIn("tainted by untrusted content", data_non_ui.get("error", ""))
+
+        # Verify blocked event recorded in history.jsonl
+        lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
+        event = json.loads(lines[-1])
+        self.assertEqual(event.get("result"), "blocked")
+        self.assertEqual(event.get("source"), "assistant")
+        self.assertIn("blocked", event.get("details", ""))
+
+    def test_log_blocked_subcommand(self):
+        """Verifies action log-blocked command logs to history journal."""
+        res = self.run_cli("action", "log-blocked", "some_action", "--reason", "rate limit exceeded", "--source", "assistant")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        data = json.loads(res.stdout)
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data.get("result"), "blocked")
+
+        self.assertTrue(self.history_file.exists())
+        lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
+        event = json.loads(lines[-1])
+        self.assertEqual(event.get("name"), "some_action")
+        self.assertEqual(event.get("result"), "blocked")
+        self.assertEqual(event.get("source"), "assistant")
+        self.assertIn("rate limit exceeded", event.get("details", ""))
+
     # 4. Whitelist Immutability & Action Definition Integrity ───────────────────
 
     def test_whitelist_immutability(self):

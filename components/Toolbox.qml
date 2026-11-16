@@ -628,8 +628,8 @@ Item {
     function stateTone(s) { return s === "enabled" ? th.teal : s === "paused" ? th.mute : s === "upcoming" ? th.cyan : s === "failed" ? th.red : th.amber }
     function trustLabel(t) { return t === "reviewed" ? "Reviewed" : t === "restricted" ? "Restricted" : "Needs Review" }
     function trustTone(t) { return t === "reviewed" ? th.teal : t === "restricted" ? th.red : th.amber }
-    function resLabel(r) { return r === "completed" ? "Completed" : r === "failed" ? "Failed" : r === "cancelled" ? "Cancelled" : "Needs Review" }
-    function resTone(r) { return r === "completed" ? th.teal : r === "failed" ? th.red : r === "cancelled" ? th.mute : th.amber }
+    function resLabel(r) { return r === "completed" ? "Completed" : r === "failed" ? "Failed" : r === "cancelled" ? "Cancelled" : r === "blocked" ? "Blocked" : "Needs Review" }
+    function resTone(r) { return r === "completed" ? th.teal : r === "failed" ? th.red : r === "cancelled" ? th.mute : r === "blocked" ? th.amber : th.amber }
     function devLabel(s) { return s === "connected" ? "Connected" : s === "pairing" ? "Pairing Required" : s === "unavailable" ? "Unavailable" : "Disconnected" }
     function devTone(s) { return s === "connected" ? th.teal : s === "pairing" ? th.amber : s === "unavailable" ? th.red : th.mute }
 
