@@ -545,7 +545,7 @@ def execute_action(
     whitelist = load_action_whitelist()
     actions = whitelist.get("actions", {})
 
-    def _log_blocked(err_msg: str) -> None:
+    def _log_blocked(reason: str) -> None:
         if source == "assistant":
             ts_ms = int(time.time() * 1000)
             name_val = action_def.get("name", action_id) if action_id in actions else action_id
@@ -560,26 +560,27 @@ def execute_action(
                 "duration": "0.00s",
                 "category": cat_val,
                 "automation": automation,
-                "details": f"via assistant: blocked ({err_msg})",
+                "details": f"via assistant: {reason}",
             }
             append_history_event(evt)
 
     if action_id not in actions:
         err = f"Action '{action_id}' is not registered in the whitelist."
-        _log_blocked(err)
+        _log_blocked(f"unknown action '{action_id}'")
         return False, {"ok": False, "error": err}
 
     action_def = actions[action_id]
     if source == "assistant":
         if not bool(action_def.get("assistant_allowed", False)):
             err = f"Action '{action_id}' is not permitted for assistant execution."
-            _log_blocked(err)
+            is_power = action_id in ("suspend", "reboot", "shutdown") or str(action_def.get("risk", "")).lower() == "destructive" or str(action_def.get("category", "")).lower() == "power"
+            _log_blocked("power action not permitted" if is_power else "action not permitted for assistant")
             return False, {"ok": False, "error": err, "assistant_rejected": True}
         trigger = "Assistant"
 
     if tainted and not bool(action_def.get("ui_only", False)):
         err = f"Action '{action_id}' is blocked: session is tainted by untrusted content and action is not ui_only."
-        _log_blocked(err)
+        _log_blocked("tainted session: non-ui_only action")
         return False, {"ok": False, "error": err, "taint_blocked": True}
 
     executable_tmpl = action_def.get("executable", [])
@@ -594,18 +595,18 @@ def execute_action(
             continue
         if k not in param_schema:
             err = f"Unknown parameter '{k}' provided for action '{action_id}'."
-            _log_blocked(err)
+            _log_blocked(f"unknown param '{k}'")
             return False, {"ok": False, "error": err}
 
     for param_name, pattern in param_schema.items():
         if param_name not in resolved_params:
             err = f"Missing required parameter '{param_name}' for action '{action_id}'."
-            _log_blocked(err)
+            _log_blocked(f"missing required param '{param_name}'")
             return False, {"ok": False, "error": err}
         val = str(resolved_params.get(param_name, "")).strip()
         if not re.match(pattern, val):
             err = f"Parameter '{param_name}' value '{val}' does not match validation pattern: {pattern}"
-            _log_blocked(err)
+            _log_blocked(f"invalid param value '{param_name}'")
             return False, {"ok": False, "error": err}
 
     repo_root = str(get_repo_root())
@@ -626,7 +627,7 @@ def execute_action(
         is_confirmed = bool(confirmed or resolved_params.get("confirmed", False))
     if is_destructive and not is_confirmed and not dry_run:
         err = f"Action '{action_id}' requires explicit confirmation."
-        _log_blocked(err)
+        _log_blocked("confirmation required")
         return False, {"ok": False, "error": err, "requires_confirm": True}
 
     start_time = time.monotonic()
@@ -771,7 +772,7 @@ def cmd_action_log_blocked(args: argparse.Namespace) -> int:
         "duration": "0.00s",
         "category": category,
         "automation": "",
-        "details": f"via assistant: blocked ({reason})" if source == "assistant" else f"blocked: {reason}",
+        "details": f"via assistant: {reason}" if source == "assistant" else reason,
     }
     append_history_event(event)
     sys.stdout.write(json.dumps({"ok": True, "action": action_id, "result": "blocked", "event": event}, ensure_ascii=False) + "\n")

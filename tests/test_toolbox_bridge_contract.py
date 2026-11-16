@@ -164,6 +164,14 @@ class ToolboxBridgeContractTests(unittest.TestCase):
             self.assertTrue(data.get("assistant_rejected"))
             self.assertIn("not permitted for assistant execution", data.get("error", ""))
 
+            # Verify history records concise reason without "blocked (...)" wrapper
+            lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
+            event = json.loads(lines[-1])
+            self.assertEqual(event.get("result"), "blocked")
+            self.assertEqual(event.get("source"), "assistant")
+            self.assertEqual(event.get("details"), "via assistant: power action not permitted")
+            self.assertNotIn("blocked (", event.get("details", ""))
+
     def test_assistant_source_medium_risk_requires_confirm(self):
         """Verifies medium actions require explicit confirmation."""
         res = self.run_cli("action", "run", "record", "--source", "assistant")
@@ -187,24 +195,46 @@ class ToolboxBridgeContractTests(unittest.TestCase):
         # Should be rejected either for requires_confirm or unknown parameter
         self.assertTrue(data.get("requires_confirm") or "Unknown parameter" in data.get("error", ""))
 
+    def test_human_vs_assistant_confirmation_contract(self):
+        """Locks in that human/UI (source != assistant) permits {"confirmed": True} in params,
+        while assistant (source == assistant) strictly requires the --confirmed CLI flag."""
+        # 1. Human / UI flow: passing {"confirmed": True} in params permits destructive dispatch
+        res_human = self.run_cli("action", "run", "suspend", json.dumps({"confirmed": True}), "--dry-run")
+        self.assertEqual(res_human.returncode, 0, res_human.stderr)
+        data_human = json.loads(res_human.stdout)
+        self.assertTrue(data_human.get("ok"))
+
+        # 2. Assistant flow: passing {"confirmed": True} in params is strictly rejected
+        res_asst_param = self.run_cli("action", "run", "lock_screen", json.dumps({"confirmed": True}), "--source", "assistant", "--dry-run")
+        self.assertNotEqual(res_asst_param.returncode, 0)
+        data_asst = json.loads(res_asst_param.stdout)
+        self.assertFalse(data_asst.get("ok"))
+
+        # 3. Assistant flow with --confirmed flag succeeds
+        res_asst_flag = self.run_cli("action", "run", "lock_screen", "--confirmed", "--source", "assistant", "--dry-run")
+        self.assertEqual(res_asst_flag.returncode, 0, res_asst_flag.stderr)
+        data_flag = json.loads(res_asst_flag.stdout)
+        self.assertTrue(data_flag.get("ok"))
+
     def test_unknown_parameter_rejected(self):
-        """Verifies extra/unknown parameters are rejected and logged as blocked."""
+        """Verifies extra/unknown parameters are rejected and logged as blocked with concise reason."""
         res = self.run_cli("action", "run", "toggle_toolbox", json.dumps({"bogus": "value"}), "--source", "assistant")
         self.assertNotEqual(res.returncode, 0)
         data = json.loads(res.stdout)
         self.assertFalse(data.get("ok"))
         self.assertIn("Unknown parameter 'bogus'", data.get("error", ""))
 
-        # Verify entry in history.jsonl is marked blocked
+        # Verify entry in history.jsonl is marked blocked with actual reason, not "blocked (...)"
         self.assertTrue(self.history_file.exists())
         lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
         event = json.loads(lines[-1])
         self.assertEqual(event.get("result"), "blocked")
         self.assertEqual(event.get("source"), "assistant")
-        self.assertIn("Unknown parameter 'bogus'", event.get("details", ""))
+        self.assertEqual(event.get("details"), "via assistant: unknown param 'bogus'")
+        self.assertNotIn("blocked (", event.get("details", ""))
 
     def test_tainted_flag_enforcement(self):
-        """Verifies --tainted allows ui_only actions and blocks non-ui_only actions."""
+        """Verifies --tainted allows ui_only actions and blocks non-ui_only actions with concise reason."""
         # UI-only action should succeed under taint
         res_ui = self.run_cli("action", "run", "toggle_toolbox", "--tainted", "--source", "assistant", "--dry-run")
         self.assertEqual(res_ui.returncode, 0, res_ui.stderr)
@@ -219,15 +249,16 @@ class ToolboxBridgeContractTests(unittest.TestCase):
         self.assertTrue(data_non_ui.get("taint_blocked"))
         self.assertIn("tainted by untrusted content", data_non_ui.get("error", ""))
 
-        # Verify blocked event recorded in history.jsonl
+        # Verify blocked event recorded in history.jsonl with actual reason
         lines = self.history_file.read_text(encoding="utf-8").strip().splitlines()
         event = json.loads(lines[-1])
         self.assertEqual(event.get("result"), "blocked")
         self.assertEqual(event.get("source"), "assistant")
-        self.assertIn("blocked", event.get("details", ""))
+        self.assertEqual(event.get("details"), "via assistant: tainted session: non-ui_only action")
+        self.assertNotIn("blocked (", event.get("details", ""))
 
     def test_log_blocked_subcommand(self):
-        """Verifies action log-blocked command logs to history journal."""
+        """Verifies action log-blocked command logs actual reason to history journal."""
         res = self.run_cli("action", "log-blocked", "some_action", "--reason", "rate limit exceeded", "--source", "assistant")
         self.assertEqual(res.returncode, 0, res.stderr)
         data = json.loads(res.stdout)
@@ -240,7 +271,8 @@ class ToolboxBridgeContractTests(unittest.TestCase):
         self.assertEqual(event.get("name"), "some_action")
         self.assertEqual(event.get("result"), "blocked")
         self.assertEqual(event.get("source"), "assistant")
-        self.assertIn("rate limit exceeded", event.get("details", ""))
+        self.assertEqual(event.get("details"), "via assistant: rate limit exceeded")
+        self.assertNotIn("blocked (", event.get("details", ""))
 
     # 4. Whitelist Immutability & Action Definition Integrity ───────────────────
 
