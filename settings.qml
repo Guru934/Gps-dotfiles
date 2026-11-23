@@ -313,6 +313,19 @@ ShellRoot {
         onFileChanged: reload()
         onLoaded: root.applyPalette(text())
     }
+    property bool petEnabled: true
+    readonly property string petConfigPath: root.home + "/.config/quickshell/pet.json"
+    FileView {
+        path: root.petConfigPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const parsed = JSON.parse(text())
+                if (parsed && typeof parsed.enabled === "boolean") root.petEnabled = parsed.enabled
+            } catch (e) {}
+        }
+    }
 
     // ───────────────────── system detection ─────────────────────
     Cmd {
@@ -948,6 +961,10 @@ echo "##llama"; curl -s -m 1 http://127.0.0.1:8080/v1/models | head -c 400; echo
                                 Dim { text: Brightness.percent + "%"; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight }
                                 Sld { Layout.preferredWidth: 220; from: 1; to: 100; value: Brightness.percent
                                     onCommitted: v => Brightness.setPercent(Math.round(v)) } }
+                            SRow { label: "Desktop pet"; desc: "companion roams on windows"
+                                Dim { text: root.petEnabled ? "active" : "hidden"; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignRight }
+                                Btn { icon: "tune"; text: "Panel"; visible: root.petEnabled; onClicked: root.sh("gps-ipc pet panel") }
+                                Tgl { on: root.petEnabled; onFlipped: v => { root.petEnabled = v; root.sh("gps-ipc pet toggle") } } }
                         }
                     }
 

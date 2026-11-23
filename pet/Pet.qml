@@ -136,6 +136,10 @@ Scope {
         function dance() { brain.dance() }
         function hop() { brain.hop() }
         function nap() { brain.doSleep() }
+        function spin() { brain.spin() }
+        function feed() { brain.feed() }
+        function stretch() { brain.stretch() }
+        function celebrate() { brain.celebrate() }
         function respawn() { brain.respawn() }
         function callHere() { root.petActions.callHere() }
         function perch() { brain.goPerch() }

@@ -215,6 +215,10 @@ FloatingWindow {
                     PetChip { theme: panel.theme; text: "PET"; accent: panel.theme.coral; onClicked: panel.brain.pet() }
                     PetChip { theme: panel.theme; text: "DROP IN"; onClicked: panel.brain.respawn() }
                     PetChip { theme: panel.theme; visible: panel.perchAvailable; text: "PERCH"; onClicked: panel.actions.perch() }
+                    PetChip { theme: panel.theme; text: "SPIN"; accent: panel.theme.tertiary; onClicked: panel.brain.spin() }
+                    PetChip { theme: panel.theme; text: "FEED"; accent: panel.theme.secondary; onClicked: panel.brain.feed() }
+                    PetChip { theme: panel.theme; text: "STRETCH"; accent: panel.theme.primary; onClicked: panel.brain.stretch() }
+                    PetChip { theme: panel.theme; text: "CHEER"; accent: panel.theme.coral; onClicked: panel.brain.celebrate() }
                 }
             }
 
@@ -243,7 +247,7 @@ FloatingWindow {
 
             Text {
                 Layout.fillWidth: true
-                text: "IPC  qs ipc call pet  ·  panel  toggle  wave  dance  hop  nap  callHere  respawn  perch  alert <sticky>  clear  skin <id>  status"
+                text: "IPC  qs ipc call pet  ·  panel  toggle  wave  dance  hop  nap  spin  feed  stretch  celebrate  callHere  respawn  perch  alert <sticky>  clear  skin <id>  status"
                 color: panel.theme.mute; font.family: panel.theme.mono; font.pixelSize: 9; wrapMode: Text.WordWrap
             }
         }

@@ -23,6 +23,29 @@ Item {
     readonly property string projectPath: Quickshell.env("GPS_ROOT") || ""
 
     // ----------------------------------------------------------------
+    // Desktop Pet controls & synchronization
+    // ----------------------------------------------------------------
+    readonly property bool petEnabled: root.hub && root.hub.pet && root.hub.pet.settings ? root.hub.pet.settings.enabled : false
+    readonly property string petSkin: root.hub && root.hub.pet && root.hub.pet.settings ? root.hub.pet.settings.character : "cat"
+    readonly property bool petPanelOpen: root.hub && root.hub.pet ? root.hub.pet.panelVisible : false
+
+    function togglePet() {
+        if (root.hub && root.hub.pet && root.hub.pet.settings) {
+            root.hub.pet.settings.enabled = !root.hub.pet.settings.enabled
+        } else {
+            Quickshell.execDetached(["gps-ipc", "pet", "toggle"])
+        }
+    }
+
+    function openPetPanel() {
+        if (root.hub && root.hub.pet) {
+            root.hub.pet.openPanel()
+        } else {
+            Quickshell.execDetached(["gps-ipc", "pet", "panel"])
+        }
+    }
+
+    // ----------------------------------------------------------------
     // Night Light state (synchronized with Island via IPC)
     // ----------------------------------------------------------------
     property bool nightLightAvailable: false
@@ -630,6 +653,28 @@ Item {
                     dimmed: !root.nightLightAvailable || root.nightLightIpcError
                     interactive: root.nightLightAvailable && !root.nightLightIpcError
                     onActivated: root.toggleNightLight()
+                }
+
+                QuickToggleCard {
+                    Layout.fillWidth: true
+                    icon: "pets"
+                    title: "Desktop Pet"
+                    subtitle: root.petEnabled
+                        ? (root.petSkin.toUpperCase() + " \u00b7 on")
+                        : "hidden \u00b7 tap to enable"
+                    accent: Theme.accentPrimary
+                    dotColor: root.petEnabled ? Theme.accentPrimary : Theme.textDim
+                    onActivated: root.togglePet()
+                }
+
+                QuickToggleCard {
+                    Layout.fillWidth: true
+                    icon: "tune"
+                    title: "Pet Companion"
+                    subtitle: root.petPanelOpen ? "panel open" : "open controls"
+                    accent: Theme.accentTertiary
+                    dotColor: root.petPanelOpen ? Theme.accentTertiary : Theme.textDim
+                    onActivated: root.openPetPanel()
                 }
             }
 

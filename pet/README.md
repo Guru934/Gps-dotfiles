@@ -19,7 +19,7 @@ Float rule for the panel: match window title `Pet Companion`.
 - PetWorld.qml       polls hyprctl: monitor, windows, cursor
 - PetWindow.qml      click-through overlay, dragging, effects
 - PetPanel.qml       control panel (+ PetCard/Toggle/Slider/Chip/Theme)
-- PetSprites.js, PetSprite.qml   pixel art engine, 7 skins, 11 poses
+- PetSprites.js, PetSprite.qml   pixel art engine, 10 skins, 15 poses
 - PetSettings.qml    JSON persistence
 - tests/brain_test.qml
 
@@ -30,5 +30,5 @@ Float rule for the panel: match window title `Pet Companion`.
 - `pet.perch = { enabled: true, x1: .., x2: .., y: .. }`   island top edge, logical px, optional
 
 ## IPC (target `pet`)
-panel toggle wave dance hop nap respawn callHere perch alert <bool> clear skin <id> status
-Skin ids: cat shadow snow fox robot slime ghost
+panel toggle wave dance hop nap spin feed stretch celebrate respawn callHere perch alert <bool> clear skin <id> status
+Skin ids: cat shadow snow fox robot slime ghost dragon mecha kitsune

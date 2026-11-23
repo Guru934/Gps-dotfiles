@@ -16,6 +16,7 @@ Scope {
     id: root
 
     readonly property string repoRoot: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+    readonly property alias pet: pet
 
     // UI Popup Routing: "wifi", "bt", "battery", "clock", "settings", or "tray"
     property bool dashboardOpen: false

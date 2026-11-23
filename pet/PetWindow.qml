@@ -44,13 +44,15 @@ PanelWindow {
             required property real ex
             required property real ey
             x: ex; y: ey
-            readonly property var glyph: ({ heart: "♥", zzz: "z", note: "♪", bang: "!", sparkle: "✦", poof: "" })
+            readonly property var glyph: ({ heart: "♥", zzz: "z", note: "♪", bang: "!", sparkle: "✦", poof: "",
+                                           crumb: "✦", confetti: "★", question: "?", sweat: "💧" })
             readonly property var tint: ({ heart: win.theme.coral, zzz: win.theme.primary, note: win.theme.secondary,
-                                           bang: win.theme.coral, sparkle: win.theme.tertiary, poof: win.theme.dim })
+                                           bang: win.theme.coral, sparkle: win.theme.tertiary, poof: win.theme.dim,
+                                           crumb: "#fbbf24", confetti: "#f472b6", question: "#38bdf8", sweat: "#60a5fa" })
             Text {
                 visible: e.kind !== "poof"
-                text: e.glyph[e.kind]
-                color: e.tint[e.kind]
+                text: e.glyph[e.kind] || ""
+                color: e.tint[e.kind] || win.theme.primary
                 font.family: win.theme.mono
                 font.pixelSize: e.kind === "bang" ? win.settings.scale * 7 : win.settings.scale * 5
                 font.bold: true

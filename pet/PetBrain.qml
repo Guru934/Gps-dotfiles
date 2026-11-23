@@ -54,6 +54,10 @@ Item {
         case "wave": return "wave"
         case "groove": return "groove"
         case "alert": return "alert"
+        case "spin": return "spin"
+        case "feed": return "feed"
+        case "stretch": return "stretch"
+        case "celebrate": return "celebrate"
         }
         return "sit"
     }
@@ -156,6 +160,39 @@ Item {
     function doSleep() { if (ground && mode !== "alert") { mode = "sleep"; sleepReason = "tired"; sleepClock = 0; fxTimer = 0; } }
     function dance() { if (ground && mode !== "alert") { mode = "groove"; timer = 8; fxTimer = 0; } }
     function hop() { if (ground && mode !== "alert") { vy = -430; vx = facing * 40; ground = null; groundId = ""; mode = "jump"; } }
+
+    function spin() {
+        if (!ground || mode === "alert") return;
+        mode = "spin";
+        timer = 2.0;
+        effect("sparkle", px, py - spriteH);
+    }
+
+    function feed() {
+        if (!ground || mode === "alert") return;
+        mode = "feed";
+        timer = 2.6;
+        energy = Math.min(100, energy + 25);
+        mood = Math.min(100, mood + 15);
+        effect("crumb", px + facing * spriteW * 0.45, py - spriteH * 0.35);
+        effect("heart", px, py - spriteH);
+    }
+
+    function stretch() {
+        if (!ground || mode === "alert") return;
+        mode = "stretch";
+        timer = 2.2;
+        mood = Math.min(100, mood + 4);
+    }
+
+    function celebrate() {
+        if (mode === "alert") return;
+        mode = "celebrate";
+        timer = 2.4;
+        mood = Math.min(100, mood + 10);
+        effect("confetti", px, py - spriteH);
+        effect("sparkle", px, py - spriteH * 0.8);
+    }
 
     function beginDrag() {
         mode = "drag"; ground = null; groundId = ""; vx = 0; vy = 0; dragVx = 0; lastDragX = px;
@@ -313,7 +350,7 @@ Item {
             var userBack = sleepReason === "idle" && cursorValid && cursorIdleSec < 1.5 && sleepClock > 3;
             var musicStart = reactMusic && musicPlaying && sleepClock > 1;
             var rested = sleepReason === "tired" && energy >= 100;
-            if (rested || userBack || musicStart || !sleepWhenIdle) wake();
+            if (rested) stretch(); else if (userBack || musicStart || !sleepWhenIdle) wake();
             return;
         }
 
@@ -362,6 +399,20 @@ Item {
             if (fxTimer <= 0) { fxTimer = 0.5; effect("heart", px + rand(-8, 8), py - spriteH); }
             timer -= dt;
             if (timer <= 0) { mode = "sit"; timer = rand(1.5, 3); }
+            return;
+        }
+
+        if (mode === "spin" || mode === "feed" || mode === "stretch" || mode === "celebrate") {
+            timer -= dt;
+            if (mode === "celebrate" && Math.random() < dt * 2.0) {
+                effect("confetti", px + rand(-14, 14), py - spriteH);
+            } else if (mode === "feed" && Math.random() < dt * 1.5) {
+                effect("crumb", px + rand(-10, 10), py - spriteH * 0.4);
+            }
+            if (timer <= 0) {
+                mode = "sit";
+                timer = rand(1.5, 3.0);
+            }
             return;
         }
 

@@ -40,13 +40,74 @@ var skins = {
   ghost: {
     label: "Ghost", kind: "blob", wavy: true, float: true,
     c: { o: "#241338", b: "#ddb8ff", d: "#b48ad8", l: "#f6ebff", p: "#ff9db1", e: "#40215d", w: "#ffffff", m: "#40215d" }
+  },
+  dragon: {
+    label: "Dragon",
+    kind: "drake",
+    c: {
+      o: "#0a1c14", // outline
+      b: "#10b981", // emerald base
+      s: "#059669", // mid-tone scale shade (extended)
+      d: "#047857", // deep emerald shadow
+      l: "#fde68a", // warm cream belly / claws
+      p: "#f59e0b", // gold horns / wing membrane
+      a: "#ef4444", // flame outer / wing accent (extended)
+      g: "#fef08a", // bright flame glow (extended)
+      e: "#fbbf24", // amber eyes
+      w: "#ffffff", // eye glint
+      m: "#064e3b", // mouth
+      k: "#78350f"  // horn base
+    }
+  },
+  mecha: {
+    label: "Sentinel",
+    kind: "mecha",
+    c: {
+      o: "#090d16", // outline
+      b: "#cbd5e1", // titanium chassis
+      s: "#94a3b8", // steel mid-tone (extended)
+      d: "#475569", // dark gunmetal joints
+      l: "#f8fafc", // armor highlight
+      p: "#38bdf8", // cyan LED primary
+      a: "#f43f5e", // alert coral-red (extended)
+      g: "#7dd3fc", // cyan glow / thruster core (extended)
+      e: "#0f172a", // dark visor screen
+      w: "#ffffff", // LED glint / thruster tip
+      m: "#38bdf8", // visor LED mouth
+      k: "#f59e0b"  // sleep charging amber
+    }
+  },
+  kitsune: {
+    label: "Kitsune",
+    kind: "spirit",
+    c: {
+      o: "#1c1018", // outline
+      b: "#fff7ed", // warm snow-white coat
+      s: "#fed7aa", // peach-cream mid shade (extended)
+      d: "#cbd5e1", // soft underside shadow
+      l: "#ffffff", // pure white fur highlights
+      p: "#ef4444", // vermilion tips & shrine markings
+      a: "#f97316", // shrine orange accent (extended)
+      g: "#22d3ee", // cyan foxfire glow (extended)
+      e: "#b91c1c", // crimson eyes
+      w: "#ffffff", // eye glint
+      m: "#991b1b", // mouth
+      k: "#0e7490"  // foxfire halo
+    }
   }
 };
 
-var order = ["cat", "shadow", "snow", "fox", "robot", "slime", "ghost"];
+var order = [
+  "cat", "shadow", "snow", "fox", "robot", "slime", "ghost",
+  "dragon", "mecha", "kitsune"
+];
 
 // Poses understood by every skin. The renderer maps them onto frames using `tick`.
-var poses = ["sit", "stand", "walk", "run", "sleep", "air", "drag", "wave", "groove", "alert", "happy"];
+var poses = [
+  "sit", "stand", "walk", "run", "sleep", "air", "drag",
+  "wave", "groove", "alert", "happy",
+  "spin", "feed", "stretch", "celebrate"
+];
 
 function skin(id) { return skins[id] || skins.cat; }
 
@@ -153,6 +214,98 @@ function legs(s, L, kind, p) {
 
 function quad(s, pose, tick) {
   var L = [];
+
+  if (pose === "spin") {
+    var sp = tick % 4;
+    var bw = (sp === 1 || sp === 3) ? 6 : 8;
+    var bx = Math.floor((20 - bw) / 2);
+    // Ears
+    if (s.ears === "antenna") {
+      R(L, 9, 2, 2, 2, "p"); R(L, 9, 4, 2, 1, "d");
+    } else {
+      R(L, bx, 3, 2, 2, "b"); R(L, bx + bw - 2, 3, 2, 2, "b");
+      if (sp !== 3) { R(L, bx, 4, 1, 1, "p"); R(L, bx + bw - 1, 4, 1, 1, "p"); }
+    }
+    // Head & body
+    R(L, bx, 5, bw, 5, "b");
+    R(L, bx, 10, bw, 5, "b");
+    R(L, bx + 1, 11, bw - 2, 3, sp === 3 ? "d" : "l");
+    if (sp === 0 || sp === 2) {
+      // Side profile eyes
+      var ex = sp === 0 ? bx + bw - 3 : bx + 1;
+      R(L, ex, 7, 2, 1, "e");
+    } else if (sp === 1) {
+      // Front view
+      R(L, bx + 1, 7, 1, 1, "e"); R(L, bx + bw - 2, 7, 1, 1, "e");
+      R(L, bx + 2, 8, 2, 1, "p");
+    }
+    // Tail flick
+    if (s.tail !== "none") {
+      var tx = sp === 0 ? bx - 2 : (sp === 2 ? bx + bw : bx + 2);
+      R(L, tx, 11, 2, 3, s.tail === "fox" ? "l" : "d");
+    }
+    // Tucked paws
+    R(L, bx + 1, 15, 2, 3, "l"); R(L, bx + bw - 3, 15, 2, 3, "l");
+    return L;
+  }
+
+  if (pose === "feed") {
+    var chew = tick % 4 < 2;
+    // Seated body
+    if (s.tail !== "none") R(L, 3, 12 + (chew ? 0 : 1), 3, 2, s.tail === "fox" ? "l" : "d");
+    R(L, 5, 10, 8, 6, "b"); R(L, 7, 12, 5, 4, "l");
+    // Head leaning slightly toward treat
+    var hy = chew ? 6 : 7;
+    if (s.ears === "antenna") {
+      R(L, 12, hy - 3, 2, 2, "p"); R(L, 12, hy - 1, 2, 1, "d");
+    } else {
+      R(L, 9, hy - 2, 2, 2, "b"); R(L, 13, hy - 2, 2, 2, "b");
+    }
+    R(L, 9, hy, 7, 5, "b");
+    R(L, 13, hy + 1, 2, 1, "e"); R(L, 13, hy + 1, 1, 1, "w");
+    R(L, 14, hy + 3, 2, chew ? 2 : 1, "m");
+    // Paws
+    R(L, 6, 16, 3, 2, "l"); R(L, 11, 16, 3, 2, "l");
+    // Pixel treat bowl & snack
+    R(L, 16, 16, 4, 2, "d");
+    R(L, 17, 15, 2, 1, chew ? "p" : "l");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    var yawn = tick % 6 >= 2 && tick % 6 <= 4;
+    // Raised tail & rump
+    if (s.tail !== "none") R(L, 2, 6, 2, 5, s.tail === "fox" ? "l" : "b");
+    R(L, 4, 9, 5, 5, "b");
+    R(L, 8, 12, 5, 4, "b"); R(L, 9, 14, 4, 2, "l");
+    // Low bowed head
+    if (s.ears !== "antenna") { R(L, 12, 9, 2, 2, "b"); R(L, 15, 9, 2, 2, "b"); }
+    else { R(L, 14, 8, 2, 2, "p"); }
+    R(L, 11, 11, 6, 5, "b");
+    R(L, 14, 12, 2, 1, "e");
+    if (yawn) R(L, 15, 14, 2, 2, "m");
+    // Hind legs tall, front paws extended low
+    R(L, 5, 14, 2, 4, "l");
+    R(L, 14, 16, 5, 2, "l");
+    return L;
+  }
+
+  if (pose === "celebrate") {
+    var hop = tick % 2 === 0 ? 2 : 0;
+    if (s.tail !== "none") R(L, 3, 10 - hop, 3, 3, s.tail === "fox" ? "l" : "b");
+    R(L, 6, 9 - hop, 8, 6, "b"); R(L, 8, 11 - hop, 4, 4, "l");
+    if (s.ears === "antenna") { R(L, 9, 1 - hop, 2, 2, "p"); R(L, 9, 3 - hop, 2, 1, "d"); }
+    else { R(L, 7, 3 - hop, 2, 2, "b"); R(L, 11, 3 - hop, 2, 2, "b"); }
+    R(L, 6, 5 - hop, 8, 5, "b");
+    // Joyful ^ ^ eyes & open smile
+    R(L, 7, 7 - hop, 2, 1, "e"); R(L, 11, 7 - hop, 2, 1, "e");
+    R(L, 9, 8 - hop, 2, 2, "m");
+    // Raised celebratory front paws
+    R(L, 4, 7 - hop, 2, 3, "l"); R(L, 14, 7 - hop, 2, 3, "l");
+    R(L, 7, 15 - hop, 2, 3, "l"); R(L, 11, 15 - hop, 2, 3, "l");
+    return L;
+  }
+
   var eyes = blinking(tick) ? "closed" : "open";
   var mouth = "none";
   var sway = (tick % 8) < 4 ? 0 : 1;
@@ -245,6 +398,61 @@ function blobRows(L, top, rows, key) {
 
 function blob(s, pose, tick) {
   var L = [];
+
+  if (pose === "spin") {
+    var sp = tick % 4;
+    var w = (sp === 1 || sp === 3) ? 8 : 10;
+    var x = Math.floor((20 - w) / 2);
+    var bob = s.float ? (tick % 2) : 0;
+    R(L, x + 1, 7 - bob, w - 2, 2, "b");
+    R(L, x, 9 - bob, w, 7, "b");
+    R(L, x + 1, 8 - bob, 2, 2, "l");
+    if (sp !== 3) {
+      var ex = sp === 0 ? x + w - 4 : (sp === 2 ? x + 2 : x + 2);
+      R(L, ex, 11 - bob, 1, 2, "e");
+      if (sp === 1) R(L, x + w - 3, 11 - bob, 1, 2, "e");
+    }
+    if (s.wavy) {
+      R(L, x, 16 - bob, 2, 2, "b"); R(L, x + w - 2, 16 - bob, 2, 2, "b");
+    } else {
+      R(L, x + 1, 16, w - 2, 2, "d");
+    }
+    return L;
+  }
+
+  if (pose === "feed") {
+    var ch = tick % 4 < 2;
+    var top = ch ? 8 : 9;
+    R(L, 5, top, 8, 2, "b");
+    R(L, 4, top + 2, 10, 18 - (top + 2), "b");
+    R(L, 5, top + 1, 2, 2, "l");
+    R(L, 10, top + 3, 2, 2, "e"); R(L, 10, top + 3, 1, 1, "w");
+    R(L, 11, top + 6, 2, ch ? 2 : 1, "m");
+    // Snack orb
+    R(L, 16, 15, 3, 3, ch ? "p" : "l");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    R(L, 3, 11, 14, 2, "b");
+    R(L, 2, 13, 16, 5, "b");
+    R(L, 4, 12, 3, 2, "l");
+    R(L, 11, 14, 2, 1, "e"); R(L, 14, 14, 2, 1, "e");
+    R(L, 13, 16, 2, 1, "m");
+    return L;
+  }
+
+  if (pose === "celebrate") {
+    var h = tick % 2 === 0 ? 3 : 0;
+    R(L, 6, 7 - h, 8, 2, "b");
+    R(L, 5, 9 - h, 10, 7, "b");
+    R(L, 6, 8 - h, 2, 2, "l");
+    R(L, 7, 11 - h, 2, 1, "e"); R(L, 11, 11 - h, 2, 1, "e");
+    R(L, 9, 13 - h, 2, 2, "m");
+    R(L, 6, 16 - h, 8, 2, s.wavy ? "b" : "d");
+    return L;
+  }
+
   var eyes = blinking(tick) ? "closed" : "open";
   var mouth = "smile";
   var squash = 0;   // + = taller, - = flatter
@@ -317,11 +525,435 @@ function blob(s, pose, tick) {
   return L;
 }
 
+// ---- drake (dragon) ---------------------------------------------------------
+function drake(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var breath = (t % 12) >= 6 ? 1 : 0;
+  var blink = (t % 28) === 27;
+  var flameHi = (t % 4) < 2;
+
+  // --- SPIN (4-phase 360 turnaround) ---
+  if (pose === "spin") {
+    var sp = t % 4;
+    if (sp === 1) {
+      // Front-facing spread wings
+      R(L, 2, 6, 4, 5, "p"); R(L, 14, 6, 4, 5, "p");
+      R(L, 3, 5, 3, 2, "d"); R(L, 14, 5, 3, 2, "d");
+      R(L, 7, 2, 2, 2, "p"); R(L, 11, 2, 2, 2, "p");
+      R(L, 6, 4, 8, 6, "b"); R(L, 7, 10, 6, 6, "b"); R(L, 8, 11, 4, 4, "l");
+      R(L, 7, 6, 2, 2, "e"); R(L, 11, 6, 2, 2, "e");
+      R(L, 7, 6, 1, 1, "w"); R(L, 11, 6, 1, 1, "w");
+      R(L, 7, 16, 2, 2, "l"); R(L, 11, 16, 2, 2, "l");
+    } else if (sp === 3) {
+      // Back-facing spine & folded wings
+      R(L, 3, 6, 4, 6, "d"); R(L, 13, 6, 4, 6, "d");
+      R(L, 7, 2, 2, 2, "p"); R(L, 11, 2, 2, 2, "p");
+      R(L, 6, 4, 8, 11, "s"); R(L, 9, 5, 2, 9, "p");
+      R(L, 9, 14, 2, 3, "a"); R(L, 9, 15, 2, 1, "g");
+      R(L, 7, 15, 2, 3, "d"); R(L, 11, 15, 2, 3, "d");
+    } else {
+      // Left / Right side pass
+      var left = sp === 2;
+      var hx = left ? 4 : 10;
+      var tx = left ? 15 : 2;
+      R(L, 7, 6, 6, 4, "p"); R(L, 7, 5, 5, 2, "d");
+      R(L, 6, 10, 8, 5, "b"); R(L, 7, 13, 6, 2, "l");
+      R(L, hx, 4, 6, 6, "b");
+      R(L, left ? hx + 3 : hx + 1, 2, 2, 2, "p");
+      R(L, left ? hx + 1 : hx + 3, 6, 2, 2, "e");
+      R(L, tx, 11, 3, 3, "a"); R(L, tx + 1, 12, 1, 1, "g");
+      R(L, 7, 15, 2, 3, "l"); R(L, 11, 15, 2, 3, "l");
+    }
+    return L;
+  }
+
+  // --- SLEEP (Curled around glowing tail flame) ---
+  if (pose === "sleep") {
+    R(L, 4, 11, 11, 7, "b");
+    R(L, 5, 10, 9, 2, "s");
+    R(L, 6, 11, 6, 4, "d"); // Folded wing blanket
+    R(L, 7, 12, 4, 2, "p");
+    R(L, 6, 15, 7, 3, "l");
+    // Resting head
+    R(L, 11, 11, 6, 5, "b");
+    R(L, 11, 9, 2, 2, "p");
+    R(L, 13, 13, 3, 1, "m"); // Closed eye line
+    // Tail flame tucked by nose
+    R(L, 16, 13 - (flameHi ? 1 : 0), 3, 3, "a");
+    R(L, 17, 14 - (flameHi ? 1 : 0), 1, 2, "g");
+    return L;
+  }
+
+  // --- STRETCH (Low bow + arched wings) ---
+  if (pose === "stretch") {
+    var yawn = (t % 6) >= 2 && (t % 6) <= 4;
+    // High tail & flame
+    R(L, 1, 5 - (flameHi ? 1 : 0), 2, 3, "a");
+    R(L, 1, 6 - (flameHi ? 1 : 0), 1, 2, "g");
+    R(L, 3, 8, 2, 4, "b");
+    // Arched rump & lifted wing
+    R(L, 4, 9, 6, 5, "b"); R(L, 5, 6, 5, 3, "p"); R(L, 5, 5, 4, 2, "d");
+    R(L, 9, 12, 4, 4, "s"); R(L, 9, 14, 4, 2, "l");
+    // Low bowed head
+    R(L, 11, 10, 2, 2, "p");
+    R(L, 12, 11, 6, 5, "b");
+    R(L, 15, 12, 2, 1, "e");
+    if (yawn) R(L, 16, 14, 2, 2, "a");
+    R(L, 5, 14, 2, 4, "b"); R(L, 5, 17, 3, 1, "l");
+    R(L, 14, 16, 5, 2, "b"); R(L, 18, 17, 1, 1, "l");
+    return L;
+  }
+
+  // --- SHARED BODY GEOMETRY FOR REMAINING POSES ---
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var grooveDy = (pose === "groove") ? ((t % 4) < 2 ? 1 : 0) : 0;
+  var dy = (pose === "sit" ? breath : 0) + grooveDy - hop;
+  var flap = (pose === "air" || pose === "celebrate" || pose === "alert")
+    ? ((t % 4) < 2 ? 3 : 0)
+    : (pose === "happy" || pose === "groove" ? ((t % 4) < 2 ? 2 : 0) : 0);
+
+  // Tail + animated flame (x=1..6)
+  var tailY = 12 + (pose === "run" ? -1 : 0) - hop;
+  R(L, 3, tailY + 1, 4, 2, "d");
+  R(L, 2, tailY, 2, 2, "b");
+  R(L, 1, Math.max(0, tailY - 2 - (flameHi ? 1 : 0)), 2, 3, "a");
+  R(L, 1, Math.max(0, tailY - 1 - (flameHi ? 1 : 0)), 1, 2, "g");
+
+  // Articulated Bat Wing (x=4..10)
+  var wy = Math.max(0, 6 - flap + Math.min(0, dy));
+  R(L, 4, wy + 1, 6, 4, "p");
+  R(L, 5, wy + 2, 4, 2, "a");
+  R(L, 4, wy, 5, 2, "d");
+
+  // Torso, dorsal spine & segmented belly (x=5..14)
+  var bodyY = Math.max(2, 10 + dy);
+  R(L, 5, bodyY, 9, 5, "b");
+  R(L, 6, bodyY, 6, 2, "s");
+  R(L, 7, bodyY - 1, 1, 1, "p"); R(L, 9, bodyY - 1, 1, 1, "p");
+  R(L, 7, bodyY + 3, 6, 2, "l");
+
+  // Head & swept golden horns (x=10..18)
+  var hy = Math.max(2, 5 + dy + (pose === "feed" && (t % 4) >= 2 ? 1 : 0));
+  var hx = (pose === "run") ? 12 : 11;
+  R(L, hx - 1, Math.max(0, hy - 3), 2, 2, "p");
+  R(L, hx, Math.max(0, hy - 1), 1, 1, "k");
+  R(L, hx + 2, Math.max(0, hy - 3), 2, 2, "p");
+  R(L, hx, hy, 7, 5, "b");
+  R(L, hx + 1, hy, 5, 1, "s");
+  R(L, hx + 5, hy + 1, 2, 3, "b"); // Snout
+
+  // Eyes & Expressions
+  if (pose === "happy" || pose === "celebrate" || pose === "groove") {
+    R(L, hx + 3, hy + 1, 2, 1, "e");
+    R(L, hx + 4, hy + 3, 2, 2, "a");
+  } else if (pose === "air" || pose === "drag" || pose === "alert") {
+    R(L, hx + 3, hy + 1, 2, 2, "w");
+    R(L, hx + 4, hy + 1, 1, 2, "e");
+    R(L, hx + 5, hy + 3, 2, 2, "a");
+    if (pose === "alert" && flameHi) {
+      R(L, Math.min(18, hx + 7), hy + 2, 2, 2, "g");
+    }
+  } else if (pose === "feed") {
+    R(L, hx + 3, hy + 1, 2, 2, "e"); R(L, hx + 3, hy + 1, 1, 1, "w");
+    R(L, hx + 5, hy + 3, 2, (t % 4) < 2 ? 2 : 1, "m");
+    // Ember-berry snack
+    R(L, 17, 15, 3, 3, "a"); R(L, 18, 15, 1, 1, "g");
+  } else {
+    if (blink) {
+      R(L, hx + 3, hy + 2, 2, 1, "m");
+    } else {
+      R(L, hx + 3, hy + 1, 2, 2, "e");
+      R(L, hx + 3, hy + 1, 1, 1, "w");
+    }
+    R(L, hx + 5, hy + 3, 2, 1, "m");
+  }
+
+  // Legs / Claws / Wave
+  if (pose === "walk" || pose === "run") {
+    var ph = t % 4;
+    var a1 = (ph === 0 || ph === 2) ? 0 : (ph === 1 ? -1 : 1);
+    R(L, 6 + a1, 15, 2, 3, "b"); R(L, 7 + a1, 17, 1, 1, "l");
+    R(L, 12 - a1, 15, 2, 3, "b"); R(L, 13 - a1, 17, 1, 1, "l");
+  } else if (pose === "air" || pose === "drag") {
+    R(L, 5, 15, 2, 3, "d"); R(L, 13, 15, 2, 3, "d");
+  } else if (pose === "wave") {
+    R(L, 6, 15, 3, 3, "b"); R(L, 8, 17, 1, 1, "l");
+    var wv = (t % 4) < 2 ? 10 : 12;
+    R(L, 15, wv, 3, 2, "b"); R(L, 17, wv, 1, 1, "l");
+  } else {
+    var ly = 15 - hop;
+    R(L, 6, ly, 3, 3, "b"); R(L, 8, ly + 2, 1, 1, "l");
+    R(L, 11, ly, 3, 3, "b"); R(L, 13, ly + 2, 1, 1, "l");
+  }
+
+  return L;
+}
+
+// ---- mecha (Sentinel Unit) --------------------------------------------------
+function mecha(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var pulse = (t % 4) < 2;
+
+  // --- SPIN (360 hovering thruster twirl) ---
+  if (pose === "spin") {
+    var sp = t % 4;
+    R(L, 9, 1, 2, 2, pulse ? "g" : "p");
+    R(L, 6, 3, 8, 7, "b"); R(L, 7, 3, 6, 1, "l");
+    if (sp === 0) { R(L, 9, 5, 5, 3, "e"); R(L, 11, 6, 2, 1, "g"); }
+    else if (sp === 1) { R(L, 7, 5, 6, 3, "e"); R(L, 8, 6, 1, 1, "p"); R(L, 11, 6, 1, 1, "p"); }
+    else if (sp === 2) { R(L, 6, 5, 5, 3, "e"); R(L, 7, 6, 2, 1, "g"); }
+    else { R(L, 7, 5, 6, 4, "s"); R(L, 8, 11, 4, 3, "d"); } // Back thruster pack
+    R(L, 6, 10, 8, 4, "s");
+    R(L, 7, 14, 2, 2, "d"); R(L, 11, 14, 2, 2, "d");
+    R(L, 7, 16, 2, 2, "p"); R(L, 11, 16, 2, 2, "g");
+    return L;
+  }
+
+  var hover = (pose === "air" || pose === "celebrate" || pose === "run") ? 1 : 0;
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 1 : 0) : 0;
+  var dy = (pose === "groove" ? ((t % 4) < 2 ? 1 : 0) : 0) - hover - hop;
+  var hy = Math.max(2, 3 + dy);
+
+  // Antenna beacon
+  var antCol = pose === "alert" ? (pulse ? "a" : "w") : (pose === "sleep" ? "k" : (pulse ? "g" : "p"));
+  R(L, 9, Math.max(0, hy - 2), 2, 1, antCol);
+  R(L, 9, Math.max(1, hy - 1), 2, 1, "d");
+
+  // Helmet & Armored Ear Pods (x=5..15)
+  R(L, 5, hy, 10, 7, "b");
+  R(L, 6, hy, 8, 1, "l");
+  R(L, 4, hy + 2, 1, 3, "s");
+  R(L, 15, hy + 2, 1, 3, "s");
+
+  // Wide Dark Visor Glass (x=6..14, y=hy+2..hy+5)
+  R(L, 6, hy + 2, 8, 4, "e");
+
+  // Dynamic LED Visor Expressions
+  if (pose === "sleep") {
+    // Charging battery bars
+    var bars = 1 + (Math.floor(t / 3) % 3);
+    R(L, 7, hy + 3, 6, 2, "d");
+    R(L, 7, hy + 3, bars * 2, 2, "k");
+  } else if (pose === "alert") {
+    R(L, 8, hy + 2, 1, 2, "a"); R(L, 8, hy + 5, 1, 1, "w");
+    R(L, 11, hy + 2, 1, 2, "a"); R(L, 11, hy + 5, 1, 1, "w");
+  } else if (pose === "drag") {
+    // > < startled eyes
+    R(L, 7, hy + 3, 2, 1, "a"); R(L, 11, hy + 3, 2, 1, "a");
+    R(L, 8, hy + 4, 1, 1, "w"); R(L, 11, hy + 4, 1, 1, "w");
+  } else if (pose === "happy" || pose === "celebrate") {
+    // ^ ^ cheerful LED chevrons
+    R(L, 7, hy + 3, 2, 1, "g"); R(L, 7, hy + 4, 1, 1, "p");
+    R(L, 11, hy + 3, 2, 1, "g"); R(L, 12, hy + 4, 1, 1, "p");
+  } else if (pose === "groove") {
+    // Live 4-bar audio equalizer
+    var eq = [(t % 3) + 1, ((t + 1) % 3) + 1, ((t + 2) % 3) + 1, (t % 2) + 1];
+    R(L, 7, hy + 6 - eq[0], 1, eq[0], "p");
+    R(L, 9, hy + 6 - eq[1], 1, eq[1], "g");
+    R(L, 11, hy + 6 - eq[2], 1, eq[2], "a");
+    R(L, 13, hy + 6 - eq[3], 1, eq[3], "p");
+  } else if (pose === "stretch") {
+    // Diagnostic sweep bar
+    var sw = 7 + (t % 5);
+    R(L, sw, hy + 3, 2, 2, "g");
+  } else if (pose === "feed") {
+    // Power fill eyes
+    R(L, 7, hy + 3, 2, 2, "g"); R(L, 11, hy + 3, 2, 2, "g");
+    R(L, 9, hy + 5, 2, 1, pulse ? "w" : "p");
+  } else {
+    // Default cyan eyes + subtle blink
+    if (blink) {
+      R(L, 7, hy + 4, 2, 1, "p"); R(L, 11, hy + 4, 2, 1, "p");
+    } else {
+      var shift = pose === "run" ? 1 : 0;
+      R(L, 7 + shift, hy + 3, 2, 2, "p"); R(L, 7 + shift, hy + 3, 1, 1, "w");
+      R(L, 11 + shift, hy + 3, 2, 2, "p"); R(L, 11 + shift, hy + 3, 1, 1, "w");
+    }
+  }
+
+  // Torso, Pauldrons & Chest Core (y = hy+7..hy+11)
+  var ty = Math.min(11, hy + 7);
+  R(L, 6, ty, 8, 5, "s");
+  R(L, 7, ty, 6, 4, "b");
+  R(L, 9, ty + 1, 2, 2, pose === "alert" ? "a" : (pulse ? "g" : "p"));
+
+  // Articulated Arms
+  if (pose === "stretch" || pose === "celebrate") {
+    // Both arms raised high
+    R(L, 3, Math.max(1, ty - 5), 2, 5, "b"); R(L, 3, Math.max(1, ty - 5), 2, 1, "l");
+    R(L, 15, Math.max(1, ty - 5), 2, 5, "b"); R(L, 15, Math.max(1, ty - 5), 2, 1, "l");
+  } else if (pose === "wave") {
+    R(L, 4, ty, 2, 4, "s");
+    R(L, 15, Math.max(2, ty - 3 + (pulse ? 0 : 1)), 2, 4, "b");
+  } else if (pose === "feed") {
+    R(L, 4, ty, 2, 4, "s");
+    R(L, 14, ty + 1, 3, 2, "b");
+    // Glowing energy cell
+    R(L, 16, 12, 3, 6, "d");
+    R(L, 17, 13, 1, pulse ? 4 : 3, "g");
+  } else {
+    var armSw = (pose === "walk" || pose === "run") ? ((t % 2) === 0 ? 1 : 0) : 0;
+    R(L, 4, ty + armSw, 2, 4, "s"); R(L, 4, ty + armSw, 2, 1, "l");
+    R(L, 14, ty + (1 - armSw), 2, 4, "s"); R(L, 14, ty + (1 - armSw), 2, 1, "l");
+  }
+
+  // Bipedal Boots & Foot Thrusters
+  var footY = ty + 5;
+  if (pose === "air" || pose === "celebrate" || pose === "run") {
+    R(L, 6, Math.min(14, footY), 3, 2, "d");
+    R(L, 11, Math.min(14, footY), 3, 2, "d");
+    // Thruster flames
+    var flH = pulse ? 2 : 1;
+    R(L, 7, Math.min(16, footY + 2), 2, flH, "p");
+    R(L, 11, Math.min(16, footY + 2), 2, flH, "g");
+  } else if (pose === "walk") {
+    var st = (t % 4) < 2 ? 1 : 0;
+    R(L, 6, 15 - st, 3, 3, "d"); R(L, 11, 15 - (1 - st), 3, 3, "d");
+  } else {
+    R(L, 6, 15, 3, 3, "d"); R(L, 6, 15, 3, 1, "s");
+    R(L, 11, 15, 3, 3, "d"); R(L, 11, 15, 3, 1, "s");
+  }
+
+  return L;
+}
+
+// ---- spirit (Kitsune) -------------------------------------------------------
+function spirit(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var fastOrb = (pose === "groove" || pose === "celebrate" || pose === "alert");
+  var orbPhase = (fastOrb ? t * 2 : t) % 8;
+  var orbX = [2, 3, 4, 3, 2, 1, 1, 2][orbPhase];
+  var orbY = [2, 1, 2, 3, 4, 3, 2, 1][orbPhase];
+  var orbCol = (pose === "alert") ? "a" : "g";
+
+  // Independent Orbiting Foxfire Orb
+  R(L, orbX, orbY, 2, 2, "k");
+  R(L, orbX, orbY, 1, 1, orbCol);
+  if ((t % 2) === 0) R(L, orbX + 1, orbY, 1, 1, "w");
+
+  // --- SPIN (Whirling 3-tail spirit twirl) ---
+  if (pose === "spin") {
+    var sp = t % 4;
+    // Symmetrical fanned tails
+    R(L, 2, 9, 4, 5, "b"); R(L, 2, 8, 2, 2, "p");
+    R(L, 14, 9, 4, 5, "b"); R(L, 16, 8, 2, 2, "p");
+    R(L, 7, 2, 2, 3, "b"); R(L, 7, 2, 2, 1, "p");
+    R(L, 11, 2, 2, 3, "b"); R(L, 11, 2, 2, 1, "p");
+    R(L, 6, 5, 8, 5, "b"); R(L, 9, 6, 2, 1, "p");
+    if (sp !== 3) {
+      R(L, 7, 7, 2, 1, "e"); R(L, 11, 7, 2, 1, "e");
+    }
+    R(L, 7, 10, 6, 1, "p"); // Shrine collar
+    R(L, 6, 11, 8, 5, "b"); R(L, 8, 11, 4, 4, "l");
+    R(L, 7, 16, 2, 2, "s"); R(L, 11, 16, 2, 2, "s");
+    return L;
+  }
+
+  // --- SLEEP (Curled inside 3 vermilion-tipped tails) ---
+  if (pose === "sleep") {
+    R(L, 3, 11, 14, 7, "b");
+    R(L, 3, 10, 4, 3, "l"); R(L, 3, 10, 2, 2, "p");
+    R(L, 6, 9, 4, 3, "s"); R(L, 6, 9, 2, 1, "p");
+    R(L, 5, 14, 9, 4, "l");
+    R(L, 11, 11, 6, 5, "b");
+    R(L, 11, 9, 2, 2, "p"); R(L, 14, 9, 2, 2, "p");
+    R(L, 13, 13, 3, 1, "m");
+    R(L, 11, 15, 5, 1, "p");
+    return L;
+  }
+
+  // --- STRETCH (Fox-bow with fanned tails high) ---
+  if (pose === "stretch") {
+    // 3 Fanned Tails High
+    R(L, 1, 5, 3, 4, "b"); R(L, 1, 5, 2, 2, "p");
+    R(L, 4, 4, 3, 5, "l"); R(L, 4, 4, 2, 2, "p");
+    R(L, 3, 9, 4, 4, "s");
+    // Arched body
+    R(L, 5, 10, 5, 4, "b"); R(L, 9, 12, 4, 4, "b");
+    R(L, 11, 11, 2, 2, "p"); R(L, 14, 11, 2, 2, "p");
+    R(L, 12, 12, 6, 4, "b"); R(L, 15, 13, 2, 1, "e");
+    R(L, 6, 14, 2, 4, "b"); R(L, 6, 17, 2, 1, "p");
+    R(L, 14, 16, 5, 2, "l");
+    return L;
+  }
+
+  // --- SHARED KITSUNE GEOMETRY ---
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var dy = (pose === "groove" ? ((t % 4) < 2 ? 1 : 0) : 0) - hop;
+  var sway = (t % 4) < 2 ? 0 : 1;
+
+  // 3 Layered Fanned Tails (x=1..7)
+  R(L, 1, Math.max(3, 9 - sway - hop), 4, 4, "b"); R(L, 1, Math.max(3, 9 - sway - hop), 2, 2, "p");
+  R(L, 3, Math.max(2, 6 + sway - hop), 4, 5, "l"); R(L, 3, Math.max(2, 6 + sway - hop), 2, 2, "p");
+  R(L, 2, Math.max(4, 12 - hop), 5, 3, "s"); R(L, 2, Math.max(4, 12 - hop), 2, 1, "p");
+
+  // Body & Shrine Collar (x=6..15)
+  var by = Math.max(3, 10 + dy);
+  R(L, 6, by, 8, 5, "b");
+  R(L, 7, by + 3, 6, 2, "d");
+  R(L, 10, by, 4, 4, "l"); // Fluffy chest ruff
+  R(L, 10, by, 4, 1, "p"); // Vermilion shrine collar
+  R(L, 12, by + 1, 1, 1, "a");
+
+  // Head & Tall Vermilion-Tipped Ears (x=10..18)
+  var hy = Math.max(2, 5 + dy + (pose === "feed" && (t % 4) >= 2 ? 1 : 0));
+  R(L, 10, Math.max(0, hy - 3), 2, 3, "b"); R(L, 10, Math.max(0, hy - 3), 2, 1, "p");
+  R(L, 14, Math.max(0, hy - 3), 2, 3, "b"); R(L, 14, Math.max(0, hy - 3), 2, 1, "p");
+  R(L, 10, hy, 7, 5, "b");
+  R(L, 16, hy + 2, 2, 2, "l"); // Snout
+  R(L, 13, hy, 1, 1, "p");     // Forehead shrine diamond
+  R(L, 11, hy + 3, 1, 1, "p"); // Cheek marking
+
+  // Eyes & Expressions
+  if (pose === "happy" || pose === "celebrate" || pose === "groove") {
+    R(L, 13, hy + 1, 2, 1, "e"); R(L, 15, hy + 3, 2, 1, "m");
+  } else if (pose === "air" || pose === "drag" || pose === "alert") {
+    R(L, 13, hy + 1, 2, 2, "w"); R(L, 14, hy + 1, 1, 2, "e");
+    R(L, 16, hy + 3, 2, 2, "m");
+  } else if (pose === "feed") {
+    R(L, 13, hy + 1, 2, 2, "e"); R(L, 13, hy + 1, 1, 1, "w");
+    R(L, 16, hy + 3, 2, (t % 4) < 2 ? 2 : 1, "m");
+    // Shrine mochi / berry offering
+    R(L, 17, 15, 3, 3, "l"); R(L, 18, 15, 1, 1, "p");
+  } else {
+    if (blink) { R(L, 13, hy + 2, 2, 1, "m"); }
+    else { R(L, 13, hy + 1, 2, 2, "e"); R(L, 13, hy + 1, 1, 1, "w"); }
+    R(L, 16, hy + 3, 2, 1, "m");
+  }
+
+  // Paws
+  if (pose === "walk" || pose === "run") {
+    var p = t % 4;
+    var step = (p === 0 || p === 2) ? 0 : (p === 1 ? -1 : 1);
+    R(L, 7 + step, 15, 2, 3, "b"); R(L, 7 + step, 17, 2, 1, "p");
+    R(L, 12 - step, 15, 2, 3, "b"); R(L, 12 - step, 17, 2, 1, "p");
+  } else if (pose === "wave") {
+    R(L, 7, 15, 2, 3, "b"); R(L, 7, 17, 2, 1, "p");
+    R(L, 15, (t % 4) < 2 ? 10 : 12, 3, 2, "l");
+  } else {
+    var py = 15 - hop;
+    R(L, 7, py, 2, 3, "b"); R(L, 7, py + 2, 2, 1, "p");
+    R(L, 12, py, 2, 3, "b"); R(L, 12, py + 2, 2, 1, "p");
+  }
+
+  return L;
+}
+
 // ---- public ------------------------------------------------------------------
 // Returns {w, h, rects} for a skin/pose/tick. Colors are looked up with colors(skinId).
 function build(skinId, pose, tick) {
   var s = skin(skinId);
-  var rects = s.kind === "blob" ? blob(s, pose, tick) : quad(s, pose, tick);
+  var rects;
+  if (s.kind === "drake")  rects = drake(s, pose, tick);
+  else if (s.kind === "mecha")  rects = mecha(s, pose, tick);
+  else if (s.kind === "spirit") rects = spirit(s, pose, tick);
+  else if (s.kind === "blob")   rects = blob(s, pose, tick);
+  else rects = quad(s, pose, tick);
   return { w: W, h: H, rects: rects };
 }
 

@@ -311,7 +311,10 @@ Scope {
         const cfg = Quickshell.env("XDG_CONFIG_HOME")
         return (cfg ? cfg : Quickshell.env("HOME") + "/.config") + "/quickshell/pet.json"
     }
-    readonly property var petSkins: ["cat", "shadow", "snow", "fox", "robot", "slime", "ghost"]
+    readonly property var petSkins: [
+        "cat", "shadow", "snow", "fox", "robot", "slime", "ghost",
+        "dragon", "mecha", "kitsune"
+    ]
     property string petSkin: "cat"
     property double petTick: 0
     readonly property bool petAnimating: mode === "idle"
