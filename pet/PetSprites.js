@@ -94,19 +94,93 @@ var skins = {
       m: "#991b1b", // mouth
       k: "#0e7490"  // foxfire halo
     }
+  },
+  owl: {
+    label: "Owl",
+    kind: "avian",
+    c: {
+      o: "#0f172a", // outline
+      b: "#475569", // slate-indigo plumage
+      s: "#334155", // mid wing feather shade
+      d: "#1e293b", // deep wingtip & ear-tuft shadow
+      l: "#fef3c7", // warm cream chevron chest
+      p: "#f59e0b", // golden beak & talons
+      a: "#fb923c", // amber ear-tuft / berry accent
+      g: "#fde047", // bright eye glow / lantern glint
+      e: "#fbbf24", // large golden owl eyes
+      w: "#ffffff", // eye reflection
+      m: "#0f172a", // pupils & closed eyelids
+      k: "#78350f"  // brow shade
+    }
+  },
+  axolotl: {
+    label: "Axolotl",
+    kind: "amphibian",
+    c: {
+      o: "#3b0764", // deep plum outline
+      b: "#fbcfe8", // pastel sakura body
+      s: "#f9a8d4", // mid pink shading
+      d: "#f472b6", // deeper underside & tail ridge
+      l: "#fff1f2", // soft cream belly highlight
+      p: "#ec4899", // vibrant external gill fronds
+      a: "#db2777", // gill tips & blush
+      g: "#67e8f9", // water-bubble cyan accent
+      e: "#1e1b4b", // dark glossy eyes
+      w: "#ffffff", // eye glint
+      m: "#be185d", // wide smile
+      k: "#9d174d"  // gill base
+    }
+  },
+  redpanda: {
+    label: "Red Panda",
+    kind: "biped_quad",
+    c: {
+      o: "#1c0f08", // outline
+      b: "#ea580c", // rust-orange coat
+      s: "#c2410c", // mid cinnamon shade
+      d: "#451a03", // espresso belly & legs
+      l: "#fffbeb", // crisp white muzzle, eyebrows & ear rims
+      p: "#fb923c", // light tail rings
+      a: "#9a3412", // dark tail rings
+      g: "#22c55e", // bamboo shoot green accent
+      e: "#1c1917", // dark eyes
+      w: "#ffffff", // eye glint
+      m: "#291005", // nose & mouth
+      k: "#7c2d12"  // cheek fur
+    }
+  },
+  penguin: {
+    label: "Tux",
+    kind: "penguin",
+    c: {
+      o: "#090d16", // outline
+      b: "#1e293b", // midnight navy back
+      s: "#334155", // flipper sheen
+      d: "#0f172a", // deep back shadow
+      l: "#f8fafc", // snow-white belly
+      p: "#f97316", // tangerine beak & webbed feet
+      a: "#06b6d4", // neon cyan scarf dark
+      g: "#22d3ee", // neon cyan scarf glow & fish highlight
+      e: "#090d16", // eyes
+      w: "#ffffff", // eye glint
+      m: "#ea580c", // open beak accent
+      k: "#38bdf8"  // scarf trim
+    }
   }
 };
 
 var order = [
   "cat", "shadow", "snow", "fox", "robot", "slime", "ghost",
-  "dragon", "mecha", "kitsune"
+  "dragon", "mecha", "kitsune",
+  "owl", "axolotl", "redpanda", "penguin"
 ];
 
 // Poses understood by every skin. The renderer maps them onto frames using `tick`.
 var poses = [
   "sit", "stand", "walk", "run", "sleep", "air", "drag",
   "wave", "groove", "alert", "happy",
-  "spin", "feed", "stretch", "celebrate"
+  "spin", "feed", "stretch", "celebrate",
+  "fetch", "peek", "focus", "curious", "sweat"
 ];
 
 function skin(id) { return skins[id] || skins.cat; }
@@ -944,17 +1018,586 @@ function spirit(s, pose, tick) {
   return L;
 }
 
+// ---- helpers for extended palette & species poses --------------------------
+function K(s, pref, fallback) {
+  return (s.c && s.c[pref]) ? pref : fallback;
+}
+
+function peekPose(s, tick) {
+  var L = [];
+  var t = tick || 0;
+  var look = (t % 12) < 6 ? 0 : 1;
+  var blink = (t % 24) === 23;
+
+  // Species-specific top silhouette (ears / horns / tufts / gills / antenna)
+  if (s.kind === "drake") {
+    R(L, 5, 9, 2, 3, "p"); R(L, 13, 9, 2, 3, "p");
+    R(L, 6, 12, 8, 6, "b"); R(L, 7, 12, 6, 1, "s");
+  } else if (s.kind === "mecha") {
+    R(L, 9, 9, 2, 2, (t % 4) < 2 ? "g" : "p"); R(L, 9, 11, 2, 1, "d");
+    R(L, 5, 12, 10, 6, "b"); R(L, 6, 14, 8, 4, "e");
+    if (!blink) {
+      R(L, 7 + look, 15, 2, 2, "p"); R(L, 11 + look, 15, 2, 2, "p");
+    } else {
+      R(L, 7, 16, 2, 1, "p"); R(L, 11, 16, 2, 1, "p");
+    }
+    R(L, 4, 16, 2, 2, "s"); R(L, 14, 16, 2, 2, "s");
+    return L;
+  } else if (s.kind === "spirit") {
+    R(L, 5, 9, 2, 3, "b"); R(L, 5, 9, 2, 1, "p");
+    R(L, 13, 9, 2, 3, "b"); R(L, 13, 9, 2, 1, "p");
+    R(L, 5, 12, 10, 6, "b"); R(L, 9, 12, 2, 1, "p");
+  } else if (s.kind === "avian") {
+    R(L, 5, 10, 2, 2, "d"); R(L, 13, 10, 2, 2, "d");
+    R(L, 5, 12, 10, 6, "b"); R(L, 9, 16, 2, 2, "p");
+  } else if (s.kind === "amphibian") {
+    var gw = (t % 4) < 2 ? 0 : 1;
+    R(L, 2, 12 + gw, 3, 1, "p"); R(L, 2, 14, 3, 1, "a"); R(L, 3, 16 - gw, 2, 1, "p");
+    R(L, 15, 12 + gw, 3, 1, "p"); R(L, 15, 14, 3, 1, "a"); R(L, 15, 16 - gw, 2, 1, "p");
+    R(L, 5, 12, 10, 6, "b"); R(L, 6, 12, 8, 1, "l");
+  } else if (s.kind === "biped_quad") {
+    R(L, 5, 10, 3, 2, "b"); R(L, 6, 10, 1, 1, "l");
+    R(L, 12, 10, 3, 2, "b"); R(L, 13, 10, 1, 1, "l");
+    R(L, 5, 12, 10, 6, "b");
+    R(L, 7, 13, 2, 1, "l"); R(L, 11, 13, 2, 1, "l");
+  } else if (s.kind === "penguin") {
+    R(L, 5, 12, 10, 6, "b"); R(L, 6, 14, 8, 4, "l");
+    R(L, 9, 16, 2, 2, "p");
+  } else if (s.kind === "blob") {
+    R(L, 5, 12, 10, 6, "b"); R(L, 6, 13, 2, 2, "l");
+  } else {
+    // Original quad skins
+    if (s.ears === "antenna") { R(L, 9, 9, 2, 2, "p"); R(L, 9, 11, 2, 1, "d"); }
+    else { R(L, 5, 10, 2, 2, "b"); R(L, 13, 10, 2, 2, "b"); }
+    R(L, 5, 12, 10, 6, "b");
+  }
+
+  // Peering eyes & gripping ledge paws
+  if (blink) {
+    R(L, 7, 15, 2, 1, "m"); R(L, 11, 15, 2, 1, "m");
+  } else {
+    R(L, 7 + look, 14, 2, 2, "e"); R(L, 7 + look, 14, 1, 1, "w");
+    R(L, 11 + look, 14, 2, 2, "e"); R(L, 11 + look, 14, 1, 1, "w");
+  }
+  if (s.kind !== "blob") {
+    var paw = (s.kind === "biped_quad") ? "d" : "l";
+    R(L, 4, 16, 2, 2, paw); R(L, 14, 16, 2, 2, paw);
+  }
+  return L;
+}
+
+function avian(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var tilt = (pose === "sit" && (t % 16) >= 10) || pose === "curious" ? 1 : 0;
+
+  if (pose === "spin") {
+    var sp = t % 4;
+    R(L, 6, 3, 2, 2, "d"); R(L, 12, 3, 2, 2, "d");
+    R(L, 5, 5, 10, 11, sp === 3 ? "s" : "b");
+    if (sp !== 3) {
+      R(L, 7, 10, 6, 5, "l");
+      var ex = sp === 0 ? 10 : (sp === 2 ? 6 : 7);
+      R(L, ex, 6, 2, 2, "e"); R(L, ex, 6, 1, 1, "m");
+      if (sp === 1) { R(L, 11, 6, 2, 2, "e"); R(L, 12, 6, 1, 1, "m"); R(L, 9, 8, 2, 2, "p"); }
+    } else {
+      R(L, 6, 8, 8, 6, "d");
+    }
+    R(L, 7, 16, 2, 2, "p"); R(L, 11, 16, 2, 2, "p");
+    return L;
+  }
+
+  if (pose === "sleep") {
+    // Puffed feathered ball perched on one talon
+    R(L, 5, 6, 2, 2, "d"); R(L, 13, 6, 2, 2, "d");
+    R(L, 4, 8, 12, 8, "b");
+    R(L, 5, 8, 10, 2, "s");
+    R(L, 6, 11, 8, 5, "l"); R(L, 7, 12, 2, 1, "s"); R(L, 11, 12, 2, 1, "s");
+    R(L, 6, 10, 3, 1, "m"); R(L, 11, 10, 3, 1, "m");
+    R(L, 9, 11, 2, 1, "p");
+    R(L, 9, 16, 2, 2, "p");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    // One wing fanned wide + angled tail
+    R(L, 1, 7, 5, 5, "s"); R(L, 1, 8, 4, 3, "d");
+    R(L, 6, 4, 2, 2, "d"); R(L, 12, 4, 2, 2, "d");
+    R(L, 5, 6, 10, 10, "b"); R(L, 7, 10, 6, 5, "l");
+    R(L, 7, 7, 2, 2, "e"); R(L, 11, 7, 2, 2, "e");
+    R(L, 9, 9, 2, 2, "p");
+    R(L, 14, 12, 4, 3, "d");
+    R(L, 7, 16, 2, 2, "p"); R(L, 12, 16, 2, 2, "p");
+    return L;
+  }
+
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var bop = (pose === "groove") ? ((t % 4) < 2 ? 1 : -1) : 0;
+  var spread = (pose === "air" || pose === "celebrate" || pose === "drag" || pose === "run");
+  var flapUp = (t % 4) < 2;
+  var topY = Math.max(2, 4 - hop + (pose === "groove" && flapUp ? 1 : 0));
+
+  // Layered Wings
+  if (spread) {
+    var wy = Math.max(2, topY + (flapUp ? 0 : 4));
+    R(L, 1, wy, 4, 4, "s"); R(L, 1, wy + 2, 3, 2, "d");
+    R(L, 15, wy, 4, 4, "s"); R(L, 16, wy + 2, 3, 2, "d");
+  } else if (pose === "wave") {
+    R(L, 4, topY + 5, 2, 5, "s");
+    R(L, 15, topY + (flapUp ? 2 : 4), 4, 3, "s");
+  } else {
+    R(L, 4, topY + 5 + (bop > 0 ? 1 : 0), 2, 6, "s"); R(L, 4, topY + 9, 2, 2, "d");
+    R(L, 14, topY + 5 + (bop < 0 ? 1 : 0), 2, 6, "s"); R(L, 14, topY + 9, 2, 2, "d");
+  }
+
+  // Ear Tufts & Round Feathered Body
+  R(L, 5 + tilt, Math.max(0, topY - 2), 2, 2, "d"); R(L, 5 + tilt, Math.max(0, topY - 2), 1, 1, "a");
+  R(L, 13 - tilt, Math.max(0, topY - 2), 2, 2, "d"); R(L, 14 - tilt, Math.max(0, topY - 2), 1, 1, "a");
+  R(L, 5, topY, 10, 12, "b");
+  R(L, 6, topY, 8, 2, "s");
+
+  // Chevron Chest Plumage
+  R(L, 7, topY + 6, 6, 6, "l");
+  R(L, 8, topY + 7, 1, 1, "s"); R(L, 11, topY + 7, 1, 1, "s");
+  R(L, 9, topY + 9, 2, 1, "s");
+
+  // Large Owl Eyes & Golden Beak
+  var ey = topY + 2;
+  if (pose === "happy" || pose === "celebrate" || pose === "groove") {
+    R(L, 6, ey + 1, 3, 1, "m"); R(L, 11, ey + 1, 3, 1, "m");
+    R(L, 7, ey, 1, 1, "e"); R(L, 12, ey, 1, 1, "e");
+  } else if (pose === "alert" || pose === "air" || pose === "drag") {
+    R(L, 6, ey, 3, 3, "g"); R(L, 7, ey + 1, 1, 1, "m");
+    R(L, 11, ey, 3, 3, "g"); R(L, 12, ey + 1, 1, 1, "m");
+  } else if (blink) {
+    R(L, 6, ey + 1, 3, 1, "m"); R(L, 11, ey + 1, 3, 1, "m");
+  } else {
+    R(L, 6 + tilt, ey, 3, 3, "e"); R(L, 7 + tilt, ey + 1, 1, 1, "m"); R(L, 6 + tilt, ey, 1, 1, "w");
+    R(L, 11 + tilt, ey, 3, 3, "e"); R(L, 12 + tilt, ey + 1, 1, 1, "m"); R(L, 11 + tilt, ey, 1, 1, "w");
+  }
+  R(L, 9 + tilt, ey + 2, 2, 2, "p");
+
+  // Feed Berry Treat
+  if (pose === "feed") {
+    R(L, 16, 15, 3, 3, "a"); R(L, 17, 15, 1, 1, "g");
+  }
+
+  // Gripping Talons
+  var fy = 16 - hop;
+  if (pose === "walk") {
+    var st = (t % 4) < 2 ? 1 : 0;
+    R(L, 7, 16 - st, 2, 2, "p"); R(L, 11, 16 - (1 - st), 2, 2, "p");
+  } else {
+    R(L, 7, fy, 2, 2, "p"); R(L, 11, fy, 2, 2, "p");
+  }
+  return L;
+}
+
+function amphibian(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var wig = (t % 4) < 2 ? 0 : 1;
+
+  if (pose === "spin") {
+    var sp = t % 4;
+    R(L, 3, 7 + wig, 3, 1, "p"); R(L, 3, 9, 3, 1, "a"); R(L, 3, 11 - wig, 3, 1, "p");
+    R(L, 14, 7 + wig, 3, 1, "p"); R(L, 14, 9, 3, 1, "a"); R(L, 14, 11 - wig, 3, 1, "p");
+    R(L, 6, 7, 8, 9, sp === 3 ? "s" : "b");
+    R(L, 7, 11, 6, 4, "l");
+    if (sp !== 3) {
+      R(L, 7, 9, 2, 2, "e"); R(L, 11, 9, 2, 2, "e");
+      R(L, 8, 12, 4, 1, "m");
+    }
+    R(L, 6, 16, 2, 2, "s"); R(L, 12, 16, 2, 2, "s");
+    return L;
+  }
+
+  if (pose === "sleep") {
+    R(L, 2, 13, 4, 3, "s"); R(L, 1, 14, 2, 2, "d");
+    R(L, 5, 11, 11, 7, "b"); R(L, 6, 14, 9, 4, "l");
+    R(L, 10, 10, 2, 2, "p"); R(L, 15, 10, 2, 2, "p");
+    R(L, 12, 13, 3, 1, "m");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    R(L, 0, 12, 5, 3, "d"); R(L, 1, 13, 4, 2, "s");
+    R(L, 4, 12, 8, 4, "b"); R(L, 5, 14, 7, 2, "l");
+    R(L, 11, 10, 7, 6, "b");
+    R(L, 10, 9, 2, 2, "p"); R(L, 17, 9, 2, 2, "p");
+    R(L, 14, 12, 2, 1, "e"); R(L, 15, 14, 3, 1, "m");
+    R(L, 5, 16, 2, 2, "s"); R(L, 15, 16, 4, 2, "s");
+    return L;
+  }
+
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var swim = (pose === "air" || pose === "drag") ? ((t % 4) < 2 ? 1 : -1) : 0;
+  var dy = (pose === "groove" ? wig : 0) - hop;
+  var excited = (pose === "happy" || pose === "groove" || pose === "celebrate" || pose === "fetch");
+  var gShift = excited ? wig : 0;
+
+  // Undulating Finned Tail (x=1..6)
+  var ty = Math.max(4, 11 + dy + swim);
+  R(L, 1, ty, 5, 4, "d");
+  R(L, 2, ty + 1, 4, 2, "b");
+  R(L, 1, ty + 1, 2, 1, "l");
+
+  // Rounded Pastel Body (x=5..13)
+  var by = Math.max(4, 10 + dy);
+  R(L, 5, by, 8, 6, "b");
+  R(L, 6, by, 6, 1, "s");
+  R(L, 6, by + 3, 6, 3, "l");
+
+  // Head & 3 Feathery External Gill Fronds per side (x=9..19)
+  var hy = Math.max(2, 7 + dy - (pose === "alert" ? 1 : 0));
+  // Back gill fronds (left of head)
+  R(L, 8, hy - 1 + gShift, 2, 1, "a");
+  R(L, 8, hy + 1, 2, 1, "p");
+  R(L, 8, hy + 3 - gShift, 2, 1, "a");
+  // Front gill fronds (right of head)
+  R(L, 17, hy - 1 + gShift, 2, 1, "a");
+  R(L, 17, hy + 1, 2, 1, "p");
+  R(L, 17, hy + 3 - gShift, 2, 1, "a");
+
+  R(L, 10, hy, 7, 7, "b");
+  R(L, 11, hy, 5, 1, "l");
+
+  // Glossy Eyes, Blush & Wide Axolotl Smile
+  if (pose === "happy" || pose === "celebrate" || pose === "groove") {
+    R(L, 11, hy + 2, 2, 1, "e"); R(L, 15, hy + 2, 2, 1, "e");
+    R(L, 12, hy + 4, 4, 2, "m");
+  } else if (pose === "air" || pose === "drag" || pose === "alert") {
+    R(L, 11, hy + 2, 2, 2, "e"); R(L, 11, hy + 2, 1, 1, "w");
+    R(L, 15, hy + 2, 2, 2, "e"); R(L, 15, hy + 2, 1, 1, "w");
+    R(L, 13, hy + 5, 2, 2, "m");
+  } else {
+    if (blink) {
+      R(L, 11, hy + 3, 2, 1, "m"); R(L, 15, hy + 3, 2, 1, "m");
+    } else {
+      R(L, 11, hy + 2, 2, 2, "e"); R(L, 11, hy + 2, 1, 1, "w");
+      R(L, 15, hy + 2, 2, 2, "e"); R(L, 15, hy + 2, 1, 1, "w");
+    }
+    R(L, 12, hy + 5, 4, 1, "m");
+  }
+  R(L, 10, hy + 4, 1, 1, "a"); R(L, 16, hy + 4, 1, 1, "a");
+
+  // Feed Water-Pellet Treat
+  if (pose === "feed") {
+    R(L, 17, 15, 2, 3, "g"); R(L, 18, 15, 1, 1, "w");
+  }
+
+  // Stubby Waddling Legs
+  if (pose === "walk" || pose === "run") {
+    var ph = (t % 4) < 2 ? 1 : 0;
+    R(L, 6 + ph, 16, 2, 2, "s"); R(L, 12 - ph, 16, 2, 2, "s");
+  } else if (pose === "wave") {
+    R(L, 6, 16, 2, 2, "s"); R(L, 15, 12 + wig, 3, 2, "s");
+  } else {
+    var ly = 16 - hop;
+    R(L, 6, ly, 2, 2, "s"); R(L, 12, ly, 2, 2, "s");
+  }
+  return L;
+}
+
+function biped_quad(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var sway = (t % 4) < 2 ? 0 : 1;
+
+  // Classic Upright Red Panda Stance (alert, wave, celebrate)
+  if (pose === "alert" || pose === "wave" || pose === "celebrate") {
+    var hop = (pose === "celebrate" && (t % 2) === 0) ? 1 : 0;
+    var hy = 2 - hop;
+    // Ringed Bushy Tail behind
+    R(L, 2, 11 - hop, 5, 4, "b"); R(L, 3, 11 - hop, 1, 4, "p"); R(L, 5, 11 - hop, 1, 4, "a");
+    // Raised Front Paws (classic threat / cheer stance)
+    var lp = (pose === "wave") ? (sway ? 7 : 9) : 6 - hop;
+    var rp = (pose === "wave") ? (sway ? 9 : 7) : 6 - hop;
+    R(L, 3, lp, 3, 4, "d"); R(L, 14, rp, 3, 4, "d");
+    // Upright Torso with dark espresso belly
+    R(L, 6, 9 - hop, 8, 6, "b"); R(L, 7, 10 - hop, 6, 5, "d");
+    // Round White-Rimmed Ears & Head
+    R(L, 6, hy, 3, 2, "l"); R(L, 7, hy + 1, 2, 1, "b");
+    R(L, 11, hy, 3, 2, "l"); R(L, 11, hy + 1, 2, 1, "b");
+    R(L, 6, hy + 2, 8, 5, "b");
+    R(L, 7, hy + 3, 2, 1, "l"); R(L, 11, hy + 3, 2, 1, "l"); // White eyebrows
+    R(L, 8, hy + 5, 4, 2, "l"); R(L, 9, hy + 5, 2, 1, "m"); // White muzzle
+    if (pose === "alert") {
+      R(L, 7, hy + 4, 2, 1, "e"); R(L, 11, hy + 4, 2, 1, "e");
+    } else {
+      R(L, 7, hy + 4, 2, 1, "e"); R(L, 11, hy + 4, 2, 1, "e");
+    }
+    R(L, 7, 15 - hop, 2, 3, "d"); R(L, 11, 15 - hop, 2, 3, "d");
+    return L;
+  }
+
+  if (pose === "spin") {
+    var sp = t % 4;
+    R(L, 2, 11, 4, 4, "b"); R(L, 3, 11, 1, 4, "p");
+    R(L, 6, 3, 3, 2, "l"); R(L, 11, 3, 3, 2, "l");
+    R(L, 6, 5, 8, 5, "b");
+    if (sp !== 3) {
+      R(L, 7, 6, 2, 1, "l"); R(L, 11, 6, 2, 1, "l");
+      R(L, 7, 7, 2, 1, "e"); R(L, 11, 7, 2, 1, "e");
+      R(L, 8, 8, 4, 2, "l");
+    }
+    R(L, 6, 10, 8, 5, sp === 3 ? "s" : "d");
+    R(L, 7, 15, 2, 3, "d"); R(L, 11, 15, 2, 3, "d");
+    return L;
+  }
+
+  if (pose === "sleep") {
+    // Curled around oversized ringed tail
+    R(L, 3, 11, 13, 7, "b");
+    R(L, 3, 12, 8, 4, "b"); R(L, 4, 12, 1, 4, "p"); R(L, 6, 12, 1, 4, "a"); R(L, 8, 12, 1, 4, "p");
+    R(L, 11, 11, 6, 5, "b");
+    R(L, 11, 9, 2, 2, "l"); R(L, 14, 9, 2, 2, "l");
+    R(L, 13, 13, 3, 1, "m"); R(L, 14, 14, 3, 2, "l");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    R(L, 1, 6, 4, 5, "b"); R(L, 2, 7, 1, 3, "p"); R(L, 3, 7, 1, 3, "a");
+    R(L, 5, 9, 5, 5, "b"); R(L, 9, 12, 4, 4, "d");
+    R(L, 11, 10, 2, 2, "l"); R(L, 15, 10, 2, 2, "l");
+    R(L, 11, 11, 7, 5, "b"); R(L, 15, 14, 3, 2, "l"); R(L, 14, 12, 2, 1, "e");
+    R(L, 6, 14, 2, 4, "d"); R(L, 14, 16, 5, 2, "d");
+    return L;
+  }
+
+  // Quadruped Red Panda (sit, stand, walk, run, air, drag, happy, groove, feed)
+  var hop = (pose === "happy") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var dy = (pose === "groove" ? sway : 0) - hop;
+
+  // Oversized Ringed Bushy Tail (x=1..7)
+  var ty = Math.max(5, 10 + sway - hop);
+  R(L, 1, ty, 6, 4, "b");
+  R(L, 2, ty, 1, 4, "p");
+  R(L, 4, ty, 1, 4, "a");
+  R(L, 1, ty + 1, 1, 2, "d");
+
+  // Rust Torso & Dark Espresso Belly (x=6..14)
+  var by = Math.max(4, 10 + dy);
+  R(L, 6, by, 8, 5, "b");
+  R(L, 6, by, 7, 2, "s");
+  R(L, 7, by + 3, 6, 2, "d");
+
+  // Head with White Eyebrow Spots & Muzzle (x=10..18)
+  var hy = Math.max(2, 5 + dy + (pose === "feed" && sway ? 1 : 0));
+  R(L, 10, Math.max(0, hy - 2), 2, 2, "l"); R(L, 11, Math.max(1, hy - 1), 1, 1, "b");
+  R(L, 14, Math.max(0, hy - 2), 2, 2, "l"); R(L, 14, Math.max(1, hy - 1), 1, 1, "b");
+  R(L, 10, hy, 7, 5, "b");
+  R(L, 13, hy + 1, 2, 1, "l"); // White eyebrow spot
+  R(L, 15, hy + 3, 3, 2, "l"); // White muzzle
+  R(L, 17, hy + 3, 1, 1, "m"); // Nose
+
+  if (pose === "happy" || pose === "groove") {
+    R(L, 13, hy + 2, 2, 1, "e");
+  } else if (blink) {
+    R(L, 13, hy + 2, 2, 1, "m");
+  } else {
+    R(L, 13, hy + 2, 2, 2, "e"); R(L, 13, hy + 2, 1, 1, "w");
+  }
+
+  // Feed Bamboo Shoot
+  if (pose === "feed") {
+    R(L, 17, 11, 2, 7, "g"); R(L, 18, 12, 1, 1, "l");
+  }
+
+  // Dark Espresso Legs
+  if (pose === "walk" || pose === "run") {
+    var ph = t % 4;
+    var st = (ph === 0 || ph === 2) ? 0 : (ph === 1 ? -1 : 1);
+    R(L, 7 + st, 15, 2, 3, "d"); R(L, 12 - st, 15, 2, 3, "d");
+  } else {
+    var ly = 15 - hop;
+    R(L, 7, ly, 2, 3, "d"); R(L, 12, ly, 2, 3, "d");
+  }
+  return L;
+}
+
+function penguin(s, pose, tick) {
+  var L = [];
+  var t = tick || 0;
+  var blink = (t % 28) === 27;
+  var flap = (t % 4) < 2;
+
+  // Belly Toboggan Slide in RUN!
+  if (pose === "run") {
+    // Trailing neon cyan scarf
+    R(L, 1, 10 + (flap ? 0 : 1), 4, 2, "g"); R(L, 3, 11, 2, 1, "a");
+    // Horizontal sliding body
+    R(L, 4, 11, 11, 5, "b"); R(L, 5, 11, 9, 2, "s");
+    R(L, 5, 15, 10, 3, "l");
+    // Flipper swept back & orange feet trailing
+    R(L, 8, 12, 4, 2, "d");
+    R(L, 2, 15, 3, 2, "p");
+    // Forward head & beak
+    R(L, 13, 9, 5, 6, "b"); R(L, 15, 11, 3, 3, "l");
+    R(L, 15, 11, 2, 2, "e"); R(L, 15, 11, 1, 1, "w");
+    R(L, 18, 12, 2, 2, "p");
+    // Scarf wrap
+    R(L, 12, 11, 2, 4, "g");
+    return L;
+  }
+
+  if (pose === "spin") {
+    var sp = t % 4;
+    R(L, 6, 4, 8, 12, "b");
+    if (sp !== 3) {
+      R(L, 7, 9, 6, 6, "l");
+      R(L, 7, 6, 2, 2, "e"); R(L, 11, 6, 2, 2, "e");
+      R(L, 9, 8, 2, 1, "p");
+    } else {
+      R(L, 7, 5, 6, 10, "d");
+    }
+    R(L, 6, 9, 8, 2, "g"); R(L, 13, 10, 2, 3, "a");
+    R(L, 7, 16, 2, 2, "p"); R(L, 11, 16, 2, 2, "p");
+    return L;
+  }
+
+  if (pose === "sleep") {
+    R(L, 5, 9, 10, 8, "b"); R(L, 6, 12, 8, 5, "l");
+    R(L, 6, 12, 8, 2, "g"); R(L, 13, 13, 3, 2, "a"); // Cozy scarf wrap
+    R(L, 7, 11, 2, 1, "w"); R(L, 11, 11, 2, 1, "w");
+    R(L, 9, 12, 2, 1, "p");
+    R(L, 7, 17, 2, 1, "p"); R(L, 11, 17, 2, 1, "p");
+    return L;
+  }
+
+  if (pose === "stretch") {
+    // Flippers raised wide + leaning tall
+    R(L, 2, 5, 4, 3, "b"); R(L, 14, 5, 4, 3, "b");
+    R(L, 6, 3, 8, 13, "b"); R(L, 7, 9, 6, 6, "l");
+    R(L, 6, 9, 8, 2, "g");
+    R(L, 7, 5, 2, 1, "w"); R(L, 11, 5, 2, 1, "w");
+    R(L, 9, 7, 2, 2, "p");
+    R(L, 7, 16, 2, 2, "p"); R(L, 11, 16, 2, 2, "p");
+    return L;
+  }
+
+  // Upright Cyber Tux (sit, stand, walk, air, drag, wave, groove, alert, happy, celebrate, feed)
+  var hop = (pose === "happy" || pose === "celebrate") ? ((t % 2) === 0 ? 2 : 0) : 0;
+  var dy = (pose === "groove" ? (flap ? 1 : 0) : 0) - hop;
+  var topY = Math.max(2, 4 + dy);
+
+  // Flippers
+  if (pose === "happy" || pose === "celebrate" || pose === "air" || pose === "alert") {
+    var fy = topY + (flap ? 2 : 5);
+    R(L, 3, fy, 3, 3, "b"); R(L, 14, fy, 3, 3, "b");
+  } else if (pose === "wave") {
+    R(L, 4, topY + 6, 2, 4, "b");
+    R(L, 14, topY + (flap ? 2 : 4), 4, 3, "b");
+  } else {
+    R(L, 4, topY + 6, 2, 5, "s"); R(L, 14, topY + 6, 2, 5, "s");
+  }
+
+  // Body & Snow-White Belly
+  R(L, 6, topY, 8, 12, "b");
+  R(L, 7, topY, 6, 1, "s");
+  R(L, 7, topY + 5, 6, 7, "l");
+
+  // Neon Cyan Scarf + Trailing Tail
+  R(L, 6, topY + 5, 8, 2, "g");
+  R(L, 13, topY + 6, 2, 3, "a");
+  if (pose === "air" || pose === "walk") {
+    R(L, 15, topY + 5 + (flap ? 0 : 1), 2, 2, "g");
+  }
+
+  // Eyes & Tangerine Beak
+  var ey = topY + 2;
+  if (pose === "happy" || pose === "celebrate" || pose === "groove") {
+    R(L, 7, ey + 1, 2, 1, "w"); R(L, 11, ey + 1, 2, 1, "w");
+    R(L, 9, ey + 2, 2, 2, "p");
+  } else if (blink) {
+    R(L, 7, ey + 1, 2, 1, "s"); R(L, 11, ey + 1, 2, 1, "s");
+    R(L, 9, ey + 2, 2, 1, "p");
+  } else {
+    R(L, 7, ey, 2, 2, "w"); R(L, 8, ey + 1, 1, 1, "e");
+    R(L, 11, ey, 2, 2, "w"); R(L, 11, ey + 1, 1, 1, "e");
+    R(L, 9, ey + 2, 2, 2, "p");
+  }
+
+  // Feed Silver-Cyan Fish Treat
+  if (pose === "feed") {
+    R(L, 16, 15, 3, 2, "g"); R(L, 19, 14, 1, 3, "a");
+  }
+
+  // Webbed Orange Feet
+  if (pose === "walk") {
+    var st = flap ? 1 : 0;
+    R(L, 6, 16 - st, 3, 2, "p"); R(L, 11, 16 - (1 - st), 3, 2, "p");
+  } else {
+    var py = 16 - hop;
+    R(L, 6, py, 3, 2, "p"); R(L, 11, py, 3, 2, "p");
+  }
+  return L;
+}
+
 // ---- public ------------------------------------------------------------------
 // Returns {w, h, rects} for a skin/pose/tick. Colors are looked up with colors(skinId).
 function build(skinId, pose, tick) {
-  var s = skin(skinId);
-  var rects;
-  if (s.kind === "drake")  rects = drake(s, pose, tick);
-  else if (s.kind === "mecha")  rects = mecha(s, pose, tick);
-  else if (s.kind === "spirit") rects = spirit(s, pose, tick);
-  else if (s.kind === "blob")   rects = blob(s, pose, tick);
-  else rects = quad(s, pose, tick);
-  return { w: W, h: H, rects: rects };
+  var s = skins[skinId] || skins.cat;
+  var t = tick || 0;
+
+  var L;
+  if (pose === "peek") {
+    L = peekPose(s, t);
+  } else {
+    // Map Phase 2 composite poses to base pose for body geometry
+    var basePose = pose;
+    if (pose === "fetch")   basePose = (t % 4) < 2 ? "happy" : "wave";
+    if (pose === "focus")   basePose = "sit";
+    if (pose === "curious") basePose = "sit";
+    if (pose === "sweat")   basePose = "alert";
+
+    if      (s.kind === "drake")      L = drake(s, basePose, t);
+    else if (s.kind === "mecha")      L = mecha(s, basePose, t);
+    else if (s.kind === "spirit")     L = spirit(s, basePose, t);
+    else if (s.kind === "avian")      L = avian(s, basePose, t);
+    else if (s.kind === "amphibian")  L = amphibian(s, basePose, t);
+    else if (s.kind === "biped_quad") L = biped_quad(s, basePose, t);
+    else if (s.kind === "penguin")    L = penguin(s, basePose, t);
+    else if (s.kind === "blob")       L = blob(s, basePose, t);
+    else                              L = quad(s, basePose, t);
+
+    // Phase 2 Pose Overlays (strictly inside 0..19 x 0..17)
+    if (pose === "fetch") {
+      // Bouncing pixel toy ball batted in front of pet
+      var arcY = [15, 12, 10, 12, 15][t % 5];
+      var arcX = [16, 17, 17, 16, 16][t % 5];
+      R(L, arcX, arcY, 3, 3, K(s, "a", "p"));
+      R(L, arcX, arcY, 1, 1, "w");
+    } else if (pose === "focus") {
+      // Mini glowing study terminal / notebook at bottom-right
+      R(L, 15, 16, 5, 2, "d");
+      R(L, 16, 13, 4, 3, "d");
+      R(L, 17, 14, 2, 1, (t % 6) < 3 ? K(s, "g", "l") : "w");
+    } else if (pose === "curious") {
+      // Subtle tilted ear/head accent + compact pixel '?' glint
+      var qy = (t % 4) < 2 ? 1 : 2;
+      R(L, 16, qy, 2, 1, K(s, "g", "p"));
+      R(L, 17, qy + 1, 1, 1, K(s, "g", "p"));
+      R(L, 17, qy + 3, 1, 1, "w");
+    } else if (pose === "sweat") {
+      // Subtle 1-cell nervous tremble (clamped to 20-cell width)
+      var dx = (t % 2) === 0 ? 0 : 1;
+      if (dx === 1) {
+        for (var i = 0; i < L.length; i++) {
+          if (L[i][0] + L[i][2] < 20) L[i][0] += 1;
+        }
+      }
+      // Animated falling sweat drop at top-right
+      var sy = 2 + (t % 3);
+      R(L, 17, sy, 2, 3, K(s, "g", "w"));
+      R(L, 17, sy, 1, 1, "w");
+    }
+  }
+
+  return { w: W, h: H, rects: L };
 }
 
 function colors(skinId) { return skin(skinId).c; }

@@ -45,10 +45,12 @@ PanelWindow {
             required property real ey
             x: ex; y: ey
             readonly property var glyph: ({ heart: "♥", zzz: "z", note: "♪", bang: "!", sparkle: "✦", poof: "",
-                                           crumb: "✦", confetti: "★", question: "?", sweat: "💧" })
+                                           crumb: "✦", confetti: "★", question: "?", sweat: "💧",
+                                           ball: "●", focus: "◈" })
             readonly property var tint: ({ heart: win.theme.coral, zzz: win.theme.primary, note: win.theme.secondary,
                                            bang: win.theme.coral, sparkle: win.theme.tertiary, poof: win.theme.dim,
-                                           crumb: "#fbbf24", confetti: "#f472b6", question: "#38bdf8", sweat: "#60a5fa" })
+                                           crumb: "#fbbf24", confetti: "#f472b6", question: "#38bdf8", sweat: "#60a5fa",
+                                           ball: "#fb7185", focus: "#a78bfa" })
             Text {
                 visible: e.kind !== "poof"
                 text: e.glyph[e.kind] || ""

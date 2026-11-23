@@ -30,5 +30,5 @@ Float rule for the panel: match window title `Pet Companion`.
 - `pet.perch = { enabled: true, x1: .., x2: .., y: .. }`   island top edge, logical px, optional
 
 ## IPC (target `pet`)
-panel toggle wave dance hop nap spin feed stretch celebrate respawn callHere perch alert <bool> clear skin <id> status
-Skin ids: cat shadow snow fox robot slime ghost dragon mecha kitsune
+panel toggle wave dance hop nap spin feed stretch celebrate fetch peek focus curious sweat respawn callHere perch alert <bool> clear skin <id> status
+Skin ids: cat shadow snow fox robot slime ghost dragon mecha kitsune owl axolotl redpanda penguin

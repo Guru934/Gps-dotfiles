@@ -39,6 +39,9 @@ Item {
     property real px: 200
     property real py: -100
     property int facing: 1
+    readonly property bool facingRight: facing > 0
+    property bool focusMode: false
+    property int zoomieDir: 1
     property string mode: "fall"
     property int tick: 0
     property string groundId: ""
@@ -58,10 +61,16 @@ Item {
         case "feed": return "feed"
         case "stretch": return "stretch"
         case "celebrate": return "celebrate"
+        case "fetch": return "fetch"
+        case "peek": return "peek"
+        case "focus": return "focus"
+        case "curious": return "curious"
+        case "sweat": return "sweat"
+        case "zoomies": return "run"
         }
         return "sit"
     }
-    readonly property bool moving: mode === "walk" || mode === "run" || mode === "fall" || mode === "jump" || mode === "drag"
+    readonly property bool moving: mode === "walk" || mode === "run" || mode === "fall" || mode === "jump" || mode === "drag" || mode === "zoomies"
     readonly property bool alertActive: mode === "alert"
 
     // vitals (restored/persisted by the owner)
@@ -194,7 +203,63 @@ Item {
         effect("sparkle", px, py - spriteH * 0.8);
     }
 
+    function fetch() {
+        if (!ground || mode === "alert") return;
+        focusMode = false;
+        mode = "fetch";
+        timer = 2.8;
+        mood = Math.min(100, mood + 10);
+        energy = Math.max(0, energy - 5);
+        effect("ball", px + (facing > 0 ? spriteW * 0.45 : -spriteW * 0.45), py - spriteH * 0.5);
+        effect("sparkle", px, py - spriteH);
+    }
+
+    function peek() {
+        if (!ground || mode === "alert") return;
+        mode = "peek";
+        timer = 3.5;
+    }
+
+    function focus(enable) {
+        var next = (typeof enable === "boolean") ? enable : !focusMode;
+        focusMode = next;
+        if (focusMode) {
+            if (mode !== "alert") {
+                mode = "focus";
+                vx = 0;
+                timer = 0;
+                effect("focus", px, py - spriteH);
+            }
+        } else if (mode === "focus") {
+            mode = "sit";
+            timer = rand(1.5, 3.0);
+        }
+    }
+
+    function curious() {
+        if (!ground || mode === "alert") return;
+        mode = "curious";
+        timer = 2.0;
+        effect("question", px, py - spriteH);
+    }
+
+    function sweat() {
+        if (mode === "alert") return;
+        mode = "sweat";
+        timer = 2.5;
+        effect("sweat", px + (facing > 0 ? 10 : -10), py - spriteH * 0.9);
+    }
+
+    function startZoomies() {
+        if (!ground || mode === "alert" || focusMode) return;
+        mode = "zoomies";
+        timer = 4.0;
+        zoomieDir = facing > 0 ? 1 : -1;
+        effect("sparkle", px, py - spriteH);
+    }
+
     function beginDrag() {
+        focusMode = false;
         mode = "drag"; ground = null; groundId = ""; vx = 0; vy = 0; dragVx = 0; lastDragX = px;
     }
     function dragTo(x, y) {
@@ -252,6 +317,28 @@ Item {
     }
 
     function decide() {
+        if (focusMode) {
+            mode = "focus";
+            vx = 0;
+            return;
+        }
+
+        // High-energy autonomous zoomies on sufficiently wide horizontal ledges
+        if (ground && energy > 85 && mood > 80 && Math.random() < 0.08) {
+            var minX = ground.x1 !== undefined ? ground.x1 : xMin;
+            var maxX = ground.x2 !== undefined ? ground.x2 : xMax;
+            if ((maxX - minX) >= spriteW * 2.5) {
+                startZoomies();
+                return;
+            }
+        }
+
+        // Occasional autonomous head-tilt inspection
+        if (ground && Math.random() < 0.10) {
+            curious();
+            return;
+        }
+
         var act = activity * (mood < 30 ? 0.7 : 1);
         var tired = sleepWhenIdle && energy < 20;
         var idle = sleepWhenIdle && cursorValid && cursorIdleSec > sleepAfter;
@@ -399,6 +486,53 @@ Item {
             if (fxTimer <= 0) { fxTimer = 0.5; effect("heart", px + rand(-8, 8), py - spriteH); }
             timer -= dt;
             if (timer <= 0) { mode = "sit"; timer = rand(1.5, 3); }
+            return;
+        }
+
+        if (mode === "focus") {
+            vx = 0;
+            return;
+        }
+
+        if (mode === "zoomies") {
+            timer -= dt;
+            energy = Math.max(0, energy - 0.4 * dt);
+            var speed = 135 * (0.7 + 0.3 * activity);
+            vx = zoomieDir * speed;
+            facing = zoomieDir > 0 ? 1 : -1;
+            px += vx * dt;
+
+            // Bounce cleanly at horizontal ledge or monitor bounds
+            var leftBound  = (ground && ground.x1 !== undefined) ? ground.x1 + spriteW * 0.5 : xMin + spriteW * 0.5;
+            var rightBound = (ground && ground.x2 !== undefined) ? ground.x2 - spriteW * 0.5 : xMax - spriteW * 0.5;
+            if (px <= leftBound) {
+                px = leftBound;
+                zoomieDir = 1;
+                effect("sparkle", px, py - spriteH * 0.6);
+            } else if (px >= rightBound) {
+                px = rightBound;
+                zoomieDir = -1;
+                effect("sparkle", px, py - spriteH * 0.6);
+            }
+
+            if (timer <= 0) {
+                vx = 0;
+                spin();
+            }
+            return;
+        }
+
+        if (mode === "fetch" || mode === "peek" || mode === "curious" || mode === "sweat") {
+            timer -= dt;
+            if (mode === "fetch" && Math.random() < dt * 1.8) {
+                effect("ball", px + rand(-14, 14), py - spriteH * 0.6);
+            } else if (mode === "sweat" && Math.random() < dt * 1.4) {
+                effect("sweat", px + rand(-10, 10), py - spriteH * 0.9);
+            }
+            if (timer <= 0) {
+                mode = focusMode ? "focus" : "sit";
+                timer = rand(1.5, 3.0);
+            }
             return;
         }
 

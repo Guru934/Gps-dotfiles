@@ -313,7 +313,8 @@ Scope {
     }
     readonly property var petSkins: [
         "cat", "shadow", "snow", "fox", "robot", "slime", "ghost",
-        "dragon", "mecha", "kitsune"
+        "dragon", "mecha", "kitsune",
+        "owl", "axolotl", "redpanda", "penguin"
     ]
     property string petSkin: "cat"
     property double petTick: 0

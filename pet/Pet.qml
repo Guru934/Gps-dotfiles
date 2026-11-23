@@ -140,6 +140,11 @@ Scope {
         function feed() { brain.feed() }
         function stretch() { brain.stretch() }
         function celebrate() { brain.celebrate() }
+        function fetch() { brain.fetch() }
+        function peek() { brain.peek() }
+        function focus() { brain.focus() }
+        function curious() { brain.curious() }
+        function sweat() { brain.sweat() }
         function respawn() { brain.respawn() }
         function callHere() { root.petActions.callHere() }
         function perch() { brain.goPerch() }
